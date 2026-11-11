@@ -1,0 +1,470 @@
+@16.01
+## What we are building
+A notification system lets other services say "tell user 42 their order shipped" without knowing how push, SMS or email work. Hello Interview's breakdown sets the requirements (the design part is paywalled):
+- Upstream services send notifications by **push, email or SMS**, either now or at a scheduled time.
+- They can also send **campaigns**: one message to a whole segment of users.
+- Users set **preferences**: which channels they've opted out of, and quiet hours.
+- Load: about **10 million a day** (about 100 per second), but a campaign might send **1 million in 5 minutes** (over 3,000 per second). Design for bursts of **5,000 per second**, about 50× the average.
+
+ByteByteGo's chapter on this design didn't load for me. The design below is the standard one taught there and elsewhere, written from general knowledge: separate queues per channel, workers, third-party providers, and a log for deduplication and retries.
+
+## The providers
+You never send to phones directly. Each channel goes through a provider:
+- **iOS push** through Apple Push Notification service (APNs), using a **device token** the app registers.
+- **Android push** through Firebase Cloud Messaging (FCM), also by device token.
+- **SMS** through a provider such as Twilio, to a phone number.
+- **Email** through a provider such as SendGrid or Amazon SES.
+
+Your system has to store **contact info** per user (device tokens, phone, email), collected when the app is installed or the user signs up.
+
+## The design
+%%flow Notification pipeline: accept fast, queue per channel, let workers talk to providers.
+[Accept] Order service -(send: user 42, template shipped)-> *Notification API -(check prefs, render template)-> Push queue
+[Deliver] Push queue -(workers)-> Push worker -(device token)-> APNs or FCM
+[Other channels] Notification API -(email job)-> Email queue -(workers)-> Email provider
+%%
+
+1. **Notification API**: authenticates the calling service, validates the request, looks up the user's contact info and **preferences** (drop it if the user opted out of that channel; delay it if it's quiet hours), renders a **template** (`"Your order {{id}} shipped"`), and writes the job to a queue.
+2. **One queue per channel.** If the SMS provider is down, SMS jobs pile up in their own queue while push and email carry on. Queues also absorb campaign bursts: the API accepts 1 million jobs quickly, and workers drain them at whatever rate providers allow.
+3. **Workers** take jobs, call the provider, and record the result.
+4. **Notification log** (a database table): one row per notification with its status (queued, sent, failed, retrying). It is used for retries, deduplication, support questions and analytics.
+
+**Scheduled notifications** go into a table or a delay queue keyed by send time; a scheduler moves due jobs into the channel queues. **Campaigns** are expanded in batches by a fan-out job that reads the segment and enqueues per-user jobs, so one campaign doesn't block urgent messages.
+
+**Priority**: Hello Interview asks how to deliver a high-priority notification (a login code) within 5 seconds during a 1-million-message campaign. The usual answer is separate high-priority queues and workers, so transactional messages never wait behind marketing ones.
+
+## No duplicates after a worker crash
+The queue gives **at-least-once** delivery: a worker takes a job, sends the push, then crashes before acknowledging it. The queue redelivers the job and another worker sends the push again. The user gets two "your order shipped" messages.
+
+The fix is **idempotency with a deduplication key**:
+- Each notification gets a unique **notification ID** when it's created (or a deterministic key like `order-123-shipped`, so even the upstream service retrying doesn't create two).
+- Before sending, the worker **claims** the ID in the notification log with an atomic insert or conditional update ("set status = sending where id = X and status = queued"). If the row is already sent or being sent, it skips.
+- After the provider accepts it, the worker marks it `sent`, then acknowledges the queue message.
+
+%%seq A redelivered job finds the notification already sent and skips it.
+Worker A > Log : claim n-789 (queued to sending) OK
+Worker A > APNs : send push
+APNs -> Worker A : accepted
+Worker A > Log : n-789 = sent
+Worker A > Worker A : crash before ack
+Worker B > Log : claim n-789: already sent, skip and ack
+%%
+
+There is still a tiny window: the worker crashes **after** the provider accepted it but **before** writing `sent`. On retry, the row says `sending` with an old timestamp. You either accept a rare duplicate, or pass your notification ID to the provider if it supports deduplication (some do, by message ID or an idempotency key). Exactly-once across a third party isn't possible; you minimise the window.
+
+## Retries and reliability
+- If the provider returns an error, put the job back with **exponential backoff and jitter**, up to a limit, then move it to a **dead-letter queue**.
+- Keep a job in the queue until it is in the log, so an accepted notification is never silently dropped. If the API writes to its database and the queue, use a transactional **outbox** (write the job to a table in the same transaction, and a relay publishes it) so the two can't disagree.
+- **Invalid tokens**: APNs and FCM report device tokens that no longer exist; delete them.
+- **Rate limits**: per provider (they throttle you) and per user (don't send someone 50 pushes an hour).
+- **Monitoring**: queue depth per channel is the key metric. A growing queue means workers or providers can't keep up. Track delivery and open rates per template.
+
+> Takeaway: accept notifications through one API that checks preferences and renders templates, then use one queue per channel (and per priority) with workers calling APNs, FCM, SMS and email providers. Queues give at-least-once delivery, so give each notification an ID and have workers claim it in a notification log before sending, retry with backoff, and move failures to a dead-letter queue.
+
+?? Give every notification a unique ID (or a deterministic key such as order-123-shipped) and keep a notification log. Before calling the provider, a worker atomically claims the ID (for example, update status from queued to sending); after the provider accepts, it marks it sent and only then acknowledges the queue message. If the worker crashes and the job is redelivered, the next worker sees the ID is already sent or being sent and skips it. A crash between the provider accepting and the log update can still cause a rare duplicate unless the provider supports deduplication by message ID.
+
+@16.02
+## The requirements
+Hello Interview's Ticketmaster breakdown:
+- Users can **view events**, **search** events, and **book tickets**.
+- **Availability** for viewing and searching, but **consistency** for booking: no seat may ever be sold twice.
+- A single hot event may have **10 million users** trying to buy at once.
+- Search under 500 ms. About 100 reads for every write.
+
+**Entities**: Event, Venue (with a seat map), Performer, Ticket (one per seat, with a status), and Booking (a user's order, grouping tickets).
+
+**Booking has two steps**: the user picks seats and the system **reserves** them for a few minutes while the user pays; then payment **confirms** the booking. The question is how to hold a seat for, say, 10 minutes and release it automatically if the user doesn't pay.
+
+## Option 1: a long database lock (bad)
+Start a transaction, `SELECT … FOR UPDATE` the seat rows, and hold the transaction open through checkout. Hello Interview rejects this: holding locks for minutes ties up database connections, invites deadlocks, and a crashed client can leave locks held indefinitely.
+
+## Option 2: status column plus a cleanup job (good)
+Add `status` (available, reserved, sold) and `reserved_until` to each ticket. Reserving is a short transaction:
+
+```
+UPDATE tickets SET status='reserved', reserved_until=now()+'10 min', user_id=42
+WHERE id IN (…) AND status='available';
+```
+
+If fewer rows were updated than requested, someone else got a seat; roll back. A cron job sets expired reservations back to available. The flaw: release happens only when the job runs, so seats stay unavailable for up to a minute after they expire, which hurts for a hot event.
+
+## Option 3: expiry checked in the query (great)
+Don't rely on the job for correctness. Treat a ticket as available if it is available **or** its reservation has expired:
+
+```
+UPDATE tickets SET status='reserved', reserved_until=now()+'10 min', user_id=42
+WHERE id = 7 AND (status='available'
+               OR (status='reserved' AND reserved_until < now()));
+```
+
+The moment a hold expires, the next buyer can claim it. A cleanup job can still tidy rows, but correctness doesn't depend on it.
+
+## Option 4: a Redis lock with a TTL (great; Hello Interview's choice)
+Keep the database for sold tickets only, and hold reservations in Redis:
+- `SET seat:evt9:A12 user42 NX EX 600`: **NX** means only set if no one holds it (atomic), **EX 600** means Redis deletes it after 10 minutes on its own.
+- If the SET succeeds, the user has the seat for 10 minutes. If it fails, someone else does.
+- To show the seat map, the service needs the set of held seats; Hello Interview suggests a **sorted set scored by expiry time**, so expired holds can be removed by score.
+
+%%seq Holding a seat with a self-expiring Redis key, then confirming on payment.
+User > Booking : reserve seat A12
+Booking > Redis : SET seat:A12 u42 NX EX 600
+Redis -> Booking : OK (held 10 min)
+User > Stripe : pay (card tokenised in browser)
+Stripe > Booking : webhook: payment succeeded
+Booking > DB : ticket A12 = sold, booking = confirmed
+Booking > Redis : DEL seat:A12
+%%
+
+Edge cases to handle:
+- **Several seats at once**: lock them all, and if any fails, release the ones you got.
+- **The lock expires during payment**: extend it when payment starts, and make the final write to the database conditional (`WHERE status='available'`), so the database stays the final guard even if Redis is wrong.
+- **Redis fails**: holds are lost, but the database's conditional write still prevents double selling.
+
+%%flow A seat's life: free, held with a timer, sold or released.
+[Hold] Available -(SET NX EX 600)-> *Held by user 42
+[Paid] Held by user 42 -(payment webhook)-> Sold
+[Unpaid] Held by user 42 -(10 minutes pass, key expires)-> Available
+%%
+
+## Payment
+- The browser sends card details straight to Stripe (Stripe.js turns them into a token), so your servers never see card numbers.
+- The server creates a Stripe **PaymentIntent** for the booking.
+- Stripe calls your **webhook** when payment succeeds. In one transaction, the handler marks the tickets sold and the booking confirmed.
+- **Stripe retries webhooks**, so the handler must be idempotent: if the booking is already confirmed, do nothing.
+
+## Hot events: the virtual waiting room
+When 10 million people arrive for one concert, letting them all at the seat map means endless failed reservations and a crushed booking service. Hello Interview's answer:
+- Before the seat map, users join a **queue** (a Redis sorted set ordered by arrival time).
+- A process **admits users in batches** into an "admitted" set with a TTL. The booking service refuses anyone not admitted.
+- Waiting users get their position by **SSE** (server-to-client updates are all that's needed).
+
+%%flow A virtual waiting room meters how many people reach the booking step.
+[Queue] 10M users -(join)-> *Waiting room (sorted set) -(admit 5,000 at a time)-> Admitted set with TTL
+[Book] Admitted users -(reserve)-> Booking service -(SET NX EX)-> Redis holds
+%%
+
+## Viewing and search
+- Event, venue and performer data barely changes: cache it aggressively (read-through with TTLs) and scale the stateless event service horizontally. Seat availability changes quickly, so cache it only briefly.
+- Search: database indexes can't do partial word matches well; PostgreSQL full-text search (tsvector with a GIN index) is better; **Elasticsearch** is best for fuzzy matching and relevance, fed from PostgreSQL by change data capture. Cache popular search results briefly in Redis, keyed by every parameter.
+
+> Takeaway: hold seats with a short, self-expiring reservation, either a Redis `SET NX EX 600` or a `reserved_until` column checked in the claiming query, never a long database lock. Confirm through an idempotent payment webhook with a conditional database write as the final guard, and put a virtual waiting room in front of hot events.
+
+?? Reserve with a lock that expires on its own. For example, Redis SET seat:A12 user42 NX EX 600 succeeds for only one buyer and disappears after 10 minutes; or a reserved_until column where the claiming UPDATE treats expired reservations as available. When payment succeeds, an idempotent webhook marks the ticket sold in the database with a conditional write. If the user doesn't pay, the key or timestamp simply expires and the next buyer can claim the seat immediately, with no cleanup job needed for correctness.
+
+@16.03
+## Why payments are hard
+Charging a card means calling a payment service provider (PSP) such as Stripe, Adyen or a bank, over a network. The Stripe post on idempotency lists where a call can fail:
+1. **Before it reaches the server**: nothing happened; retrying is safe.
+2. **While the server is working**: maybe half done.
+3. **After the server finished, but the response was lost**: the money moved, and you don't know it.
+
+A **timeout** could be any of these. Retrying blindly may charge the customer twice; not retrying may lose a payment. Hello Interview's payment breakdown (only its requirements are free: merchants create payments, users pay by card, merchants see status; about 10,000 transactions per second) frames this as "transaction safety despite asynchronous payment networks".
+
+## Idempotency keys
+Stripe's answer: an idempotent operation can be called any number of times with the side effect happening once. Payments aren't naturally idempotent, so you make them so with an **idempotency key**:
+- The client creates a unique key per operation and sends it in an `Idempotency-Key` header.
+- On a retry, the client sends the **same key**.
+- The server records the key with the request's state. A new key is processed normally. A key whose earlier attempt failed partway is resumed (an ACID transaction that rolled back makes this safe). A key whose earlier attempt **succeeded** gets the **stored result** returned, without charging again.
+- Retries use **exponential backoff** (wait about 2^n) with **jitter** (randomness), so thousands of clients don't retry in sync.
+
+%%seq Timeout, then retry with the same key: the second call returns the first call's result.
+Shop > PSP : charge $50, Idempotency-Key k-77
+PSP > PSP : charge succeeds, store result for k-77
+PSP -> Shop : response lost (timeout)
+Shop > Shop : wait 2s + jitter
+Shop > PSP : charge $50, Idempotency-Key k-77
+PSP -> Shop : stored result: charged ch_123 (no new charge)
+%%
+
+## Airbnb's Orpheus: idempotency inside your own system
+Airbnb's post describes the library its payment services use. Calls between its own services and to PSPs follow a **three-phase** structure:
+1. **Pre-RPC**: in one database transaction, record the request and its idempotency key (status: started).
+2. **RPC**: make the network call. **No database work** in this phase.
+3. **Post-RPC**: in a second transaction, record the response and whether any failure can be retried.
+
+Two strict rules: no network calls inside database transactions (they exhausted connection pools), and no database calls during the network call.
+
+%%flow Orpheus: database work and network calls never overlap.
+[Phase 1] Payment request -(one DB transaction)-> *Record key k-77, status started
+[Phase 2] Record key k-77 -(network call, no DB)-> PSP charge
+[Phase 3] PSP response -(one DB transaction)-> Store result, retryable or final
+%%
+
+Other rules from the post:
+- **Retryable vs non-retryable errors.** Network and server errors (5xx) are retryable. Validation errors (4xx, "can't refund a refund") are final, since retrying gives the same answer. Getting this wrong is dangerous both ways: marking a permanent error retryable can double-pay; marking a temporary one final leaves a payment stuck.
+- **Leases.** A request holds a lease on its key that expires after a time longer than the RPC timeout. A retry is allowed only after the lease expires, so two attempts never run at once.
+- **Read keys from the primary database**, never a replica. With replica lag, a retry might not see the stored result and charge again. They sharded the table by idempotency key to scale this.
+- **The payload must not change between retries**, or it's a different request.
+- **Choosing keys**: a random UUID per request, or a deterministic key per entity, like `payment-1234-refund`, so that refund can only ever happen once.
+
+The result, they report: five nines of consistency while payment volume doubled.
+
+## Answering "was the customer charged?"
+After a timeout, you have three safe options (the last two are general practice):
+1. **Retry with the same idempotency key.** If the first call succeeded, you get its result; if not, the charge happens now. Either way, exactly one charge.
+2. **Ask the PSP.** Query the payment's status by your own reference or the idempotency key. Don't decide anything until you know.
+3. **Reconcile.** Keep the payment in a `pending` or `unknown` state, never `failed`. A background job compares your records against the PSP's settlement reports and webhooks, and fixes any mismatch. Webhooks from the PSP ("payment succeeded") also move pending payments forward, and webhook handlers must be idempotent because PSPs resend them.
+
+Never treat a timeout as a failure and ask the customer to pay again with a new key: that is how double charges happen.
+
+## The rest of the system
+- **Payment states**: created, pending, succeeded, failed, refunded; transitions are recorded, never overwritten.
+- **Ledger**: money movements recorded as immutable **double-entry** entries (every debit has a matching credit), so balances can always be recomputed and audited (general knowledge; Hello Interview's ledger section is paywalled).
+- **Card data** never touches your servers: the PSP's client library turns it into a token.
+
+> Takeaway: a timed-out payment call may or may not have charged the customer. Make every money-moving call idempotent with a key that is reused on every retry, retry with backoff and jitter, keep unknown payments pending, and confirm with the PSP's status API, webhooks and reconciliation. Keep database transactions and network calls separate, and read idempotency records from the primary.
+
+?? You don't know: the request may have failed before reaching the PSP, or the charge may have succeeded and only the response was lost. Mark the payment pending, not failed. Then either retry with the same idempotency key, so the PSP returns the original result if it charged and charges once if it didn't, or query the PSP for the payment's status using your reference or key. Webhooks and a reconciliation job against the PSP's records settle anything left. Never retry with a new key, which risks a double charge.
+
+@16.04
+## The requirements
+Hello Interview's Facebook post search breakdown:
+- Users create and like posts, **search by keyword**, and sort results by **recency** or **like count**.
+- Median query under 500 ms. **New posts searchable within about 1 minute.** Old and unpopular posts still findable.
+- Scale: about **10,000 new posts per second**, **100,000 likes per second**, 10,000 searches per second. Over 10 years about 3.6 trillion posts, about 3.6 PB of raw data.
+
+Fuzzy matching, personalisation and privacy filters are out of scope.
+
+## Design: an inverted index fed by a stream
+%%flow Posts and likes flow through Kafka into keyword indexes; search reads the indexes.
+[Ingest] Post service -(new post)-> *Kafka -(ingestion workers tokenise)-> Index shards by keyword
+[Likes] Like service -(like events)-> Kafka -(milestone updates)-> Likes sorted sets
+[Query] Search API -(read keyword lists)-> Index shards by keyword -(re-rank top N with fresh likes)-> Results
+%%
+
+- **Inverted index**: for each keyword, a list of post IDs. Hello Interview stores it in **Redis**: a list per keyword ordered by time for recency, and a sorted set per keyword scored by likes for popularity. (Redis isn't durable by default, so it suggests MemoryDB or rebuilding from Kafka.)
+- **Ingestion through Kafka**: the post service publishes each new post; a fleet of ingestion workers tokenises the text and appends the post ID to each keyword's lists. Kafka absorbs bursts, so ingestion keeps up without slowing post creation.
+- **Shard by keyword** across many Redis instances to spread writes.
+
+## How new posts become searchable within seconds
+The path is short and asynchronous: post saved → event on Kafka → a worker appends the ID to each keyword list, usually within seconds. The 1-minute budget leaves slack for bursts. Key choices:
+- Don't index inside the post-creation request; publish an event and return.
+- Index **incrementally** (append to existing lists) rather than rebuilding.
+- Keep search caches short-lived: Hello Interview caps the search result cache TTL **under 1 minute**, so a cached result never hides new posts for longer than the requirement allows. CDN caching of results uses cache-control headers on the same terms.
+
+**In Elasticsearch** the same idea is called **near real-time** search. Hello Interview's Elasticsearch deep dive explains that writes are batched into **segments**, which are **immutable**. Immutability makes writes fast, caching easy, concurrency simple and compression good; the costs are periodic **merges** and temporary extra storage. Deletes are just marks, cleaned up during merges, and an update is a delete plus a new insert. From general knowledge (not that page): new documents sit in an in-memory buffer and become searchable when a **refresh** writes a new segment, by default **every 1 second**, and a write-ahead **translog** protects them before they're flushed to disk.
+
+%%flow Elasticsearch: documents become searchable when a refresh turns the buffer into a segment.
+[Write] New post -(index request)-> In-memory buffer + translog -(refresh about every 1s)-> *New immutable segment
+[Read] Search -(query all segments)-> Results include the new post -(background)-> Merge small segments
+%%
+
+## Likes: too many writes to index exactly
+100,000 likes per second would mean 100,000 sorted-set updates per second, each in the shard of every keyword the post contains. Hello Interview's options:
+- **Batch** likes over about 30 seconds per post. That helps viral posts a lot but barely helps the many posts that get one like.
+- **Two-stage, approximate** (chosen): update a post's score in the index only at **milestones** (1, 2, 4, 8, 16, … or powers of 10). The index's order is then roughly right. At query time, fetch the top **2N** candidates by the approximate score, get their exact like counts from the like service, and re-rank to return the top N.
+
+! Example: ranking by likes
+! A post has 1,000 likes recorded in the index (its last milestone) but 1,900 actually. Another has 1,500 indexed and 1,500 actual. A query for the top 10 fetches the top 20 by indexed score, both included, then looks up live counts and puts the 1,900-like post first. Few index writes, correct final order.
+
+## Keeping storage in check
+3.6 PB of posts can't all live in Redis. Hello Interview caps each keyword's index at about **1,000 to 10,000** entries, and moves indexes for rarely searched keywords to **cold blob storage** (S3 or R2). Search checks Redis first and falls back to blob storage on a miss: slower, but old posts stay findable.
+
+## When to reach for Elasticsearch
+The deep dive's guidance: Elasticsearch is a **search index, not a primary database**. Keep the source of truth elsewhere and sync it in (often by change data capture). It suits read-heavy workloads; results are eventually consistent; denormalise so one query answers a request; deep pagination past about 10,000 results gets expensive; and under about 100,000 documents you may not need it at all. A query runs in two phases: the coordinating node sends it to every relevant shard (**query** phase: find matching IDs and scores), merges the results, then fetches the documents (**fetch** phase).
+
+> Takeaway: keep search off the write path. Publish new posts to a stream, let workers append them to an inverted index sharded by keyword, and keep result caches shorter than the freshness target. Elasticsearch does the same with segments refreshed about every second. For counts like likes, update the index approximately and re-rank the top candidates with exact values.
+
+?? Indexing is asynchronous and incremental. When a post is created, the post service publishes an event (to Kafka); ingestion workers tokenise it and append its ID to each keyword's index entry, typically within seconds, without slowing post creation. In Elasticsearch, new documents become searchable at the next refresh, about every second. Result caches use a TTL shorter than the freshness requirement (under a minute) so they never hide new posts for long.
+
+@16.05
+## Two questions, two time scales
+A recommender answers "what should this user see next?" in tens of milliseconds, choosing from millions of items. You can't score millions of items per request with a good model, so the work is split along two axes. Eugene Yan's *System design for recommendations and search* (covered in 12.08) names them:
+- **Offline vs online**: what is computed in batch ahead of time, and what is computed per request.
+- **Retrieval vs ranking**: cheaply narrowing millions of items to hundreds, then carefully ordering those hundreds.
+
+| | Retrieval (millions to hundreds) | Ranking (hundreds to the final list) |
+| **Offline** | train embedding models; embed all items; build ANN indexes; item-to-item similarity tables | train the ranking model; compute user and item features into a feature store |
+| **Online** | embed the user or query; nearest-neighbour lookup; filters | fetch features for each candidate; score with the model; apply business rules |
+
+## What's computed offline
+Batch jobs, hourly or daily, over logs of views, clicks, purchases and ratings:
+- **Item embeddings** (a vector per item), for example from a two-tower model or from word2vec-style training on user sessions, as Alibaba does by random walks over an item graph built from sessions.
+- **The ANN index** over those embeddings (Facebook search quantises them into a Faiss index), or a precomputed "similar items" table per item.
+- **The ranking model** itself, trained on past impressions and whether they were clicked or bought.
+- **Features**: per user (favourite categories, 30-day purchase counts), per item (click-through rate, price, age), loaded into a **feature store**.
+- Sometimes **whole recommendation lists** for each user, written to a key-value store (cheap to serve, but stale and wasted on inactive users).
+
+The Google recommendation course (12.08) describes the same pipeline: **candidate generation**, then **scoring**, then **re-ranking**.
+
+## What's computed online
+Per request, within a latency budget of tens of milliseconds:
+1. **Embed the request**: user ID, context (time, device, location), and recent actions. Recent clicks in this session matter a lot and weren't known offline.
+2. **Retrieve candidates** from several generators at once: ANN neighbours of the user vector, items similar to the last item viewed, popular items in the user's region, new items from followed creators.
+3. **Filter**: already seen or bought, out of stock, not allowed in this country.
+4. **Rank**: fetch features for each candidate from the feature store (plus real-time features such as "clicked this category 2 minutes ago"), score with the model.
+5. **Re-rank** with business rules: diversity (not 10 items from one seller), freshness, promotions.
+
+%%flow The recommender: offline jobs build what the online path looks up.
+[Offline] Interaction logs -(daily training)-> Embedding model -(embed all items)-> ANN index and feature store
+[Online] Request -(embed user + session)-> ANN retrieval -(500 candidates)-> *Ranking model -(top 50)-> Re-rank to 10
+%%
+
+## Why the split works
+Ranking with a model that costs 1 ms of compute per item over 10 million items would be 10,000 CPU-seconds per request. ANN retrieval over 10 million vectors takes a few milliseconds, and ranking 500 candidates in a batch is cheap. Eugene Yan describes retrieval as fast but coarse (a 99.99% reduction) and ranking as slower but precise.
+
+LinkedIn's talent search is a concrete multi-stage example from his post: a first model retrieves and scores, the top **1,000** get richer features and a second model, and **125** are shown.
+
+## Freshness and consistency
+- **Train-serve skew**: if features are computed one way for training and another way at serving time, the model sees different inputs live than it learned on. Using one feature store for both reduces this.
+- **New items** (cold start) have no interactions, so content-based embeddings (from text or images) or a dedicated "new items" generator gives them exposure.
+- **Streaming features** fill the gap between daily batches: a stream processor updates "items viewed in the last hour" in the feature store within seconds.
+
+> Takeaway: offline, train models, embed every item, build ANN indexes and compute features. Online, embed the user and session, retrieve a few hundred candidates from several generators, filter, fetch fresh features, rank with the model and re-rank for business rules. Retrieval is cheap and coarse; ranking is expensive and precise; a shared feature store keeps training and serving consistent.
+
+?? Offline (batch): training the embedding and ranking models, computing embeddings for every item, building ANN indexes and item-to-item similarity tables, and computing user and item features into a feature store (sometimes whole per-user lists). Online (per request): embedding the user, query and recent session, retrieving candidates via ANN and other generators, filtering out seen or unavailable items, fetching features (including real-time ones), scoring with the ranking model, and re-ranking for diversity and business rules.
+
+@16.06
+## Requirements
+ByteByteGo's chat chapter: **50 million daily users**, one-to-one and group chats up to **100 members**, online presence, **several devices per account**, push notifications, text up to 100,000 characters, and history kept forever. Hello Interview's WhatsApp breakdown adds: delivery under **500 ms** to online users, guaranteed delivery, offline messages kept up to **30 days**, and keeping messages on servers no longer than necessary. Its numbers: 200 million active users × 20 messages a day ≈ **4 billion messages a day** (about 40,000 per second), with each host holding **1 to 2 million** connections, so hundreds of chat servers.
+
+## Connections
+Polling wastes requests (most responses are empty); long polling is awkward across stateless servers. Both sources use **WebSockets**: one persistent, two-way connection per device. That makes the chat servers **stateful**: a user is connected to one specific server. Everything else (login, profiles, friends) stays as normal stateless HTTP services. ByteByteGo uses **service discovery** (ZooKeeper) to hand each client the best chat server at login.
+
+The hard part follows: the sender is on server 3, the recipient on server 17. Hello Interview's chosen answer is **Redis Pub/Sub**: each chat server subscribes to a channel per connected user, and a sender's server publishes to the recipient's channel. Pub/Sub delivers at most once, so durability comes from writing the message down **first**.
+
+## Delivering to an offline user on two devices
+The key structure is the **inbox**: messages waiting to be delivered to a particular device.
+1. Alice sends a message. Her chat server stores it in the **Message** table and creates an **Inbox** entry for each of Bob's devices (Hello Interview tracks devices in a Clients table, up to 3 per user).
+2. It acknowledges Alice ("sent").
+3. It publishes to Bob's channel. Bob is offline, so nobody is subscribed. A push notification goes out through APNs or FCM instead.
+4. Later, Bob's **phone** connects. It asks for its undelivered inbox entries, receives the message, and **acknowledges** it. The server deletes the phone's inbox entry.
+5. Bob's **laptop** connects later. Its own inbox entry is still there, so it gets the message too, then acknowledges.
+6. Once every device has acknowledged, the server has no need to keep the message (WhatsApp's goal). Anything unacknowledged expires after 30 days.
+
+%%seq An offline user's two devices each pull their own copy from the inbox.
+Alice > Chat srv 3 : send "hi" to Bob
+Chat srv 3 > DB : save message, inbox rows for phone + laptop
+Chat srv 3 -> Alice : sent
+Chat srv 3 > Push : Bob offline: push notification
+Phone > Chat srv 17 : connect, fetch inbox
+Chat srv 17 -> Phone : "hi"
+Phone > Chat srv 17 : ack, delete phone inbox row
+Laptop > Chat srv 9 : connect later, fetch inbox, ack
+%%
+
+ByteByteGo describes the alternative used when history is kept forever: each device remembers the highest message ID it has seen (`cur_max_message_id`). On connect, it fetches every message for this user with a higher ID. Each device syncs independently without per-device inbox rows.
+
+%%flow Two ways a device catches up after being offline.
+[Inbox per device] Message stored -(one inbox row per device)-> *Device fetches and acks -(row deleted)-> Server forgets
+[Cursor per device] Message stored forever -(device sends last seen ID)-> Fetch newer messages -(update cursor)-> History kept
+%%
+
+## Storing messages
+- ByteByteGo puts chat history in a **key-value or wide-column store** (HBase for Messenger, Cassandra for Discord), because the data is huge, append-heavy, and mostly read as "recent messages in this conversation".
+- Group messages are keyed by `(channel_id, message_id)`. `message_id` must be **unique and sortable** within the channel; timestamps alone can collide. A Snowflake-style ID or a per-channel sequence both work.
+- **Discord** stores messages partitioned by **channel plus a time bucket** with Snowflake IDs, so a channel's recent messages sit together (18.03 covers this). Its move from 177 Cassandra nodes to 72 ScyllaDB nodes cut p99 read latency from 40 to 125 ms down to about 15 ms.
+
+**Ordering**: Hello Interview doesn't enforce strict order. Servers stamp messages on arrival and clients sort by that, so everyone sees the same order, even if occasionally a message appears above one sent slightly later.
+
+## Groups and presence
+- **Small groups**: ByteByteGo copies each message into every member's inbox (WeChat does this with groups up to 500). Each client checks only its own inbox. For big groups, copying to every inbox is too expensive; read from a per-channel log instead. Hello Interview similarly switches from per-user to per-chat pub/sub channels above about 25 members.
+- **Presence**: on connect a user is online; clients send **heartbeats** (say every 5 seconds) and are marked offline only if none arrives for about 30 seconds, so a train going through a tunnel doesn't make them flicker offline. Changes are published to friends. In a 100,000-member group, that would be 100,000 events per change, so large groups fetch presence on demand.
+- **Media** goes to blob storage through presigned URLs; messages carry only a reference.
+
+> Takeaway: each device holds a WebSocket to a stateful chat server, and servers reach each other through pub/sub channels per user. Durability comes from writing the message and per-device inbox entries (or keeping a per-device cursor) before delivering. Offline devices fetch and acknowledge on reconnect, and a push notification prompts them to.
+
+?? The sender's server first saves the message and creates an undelivered inbox entry for each of the recipient's devices, then acknowledges the sender. Because the recipient is offline, a push notification is sent through APNs or FCM. When one device comes online it connects to a chat server, fetches its pending inbox entries, receives the message and acknowledges it, which deletes that device's entry. The second device does the same whenever it connects, because its entry is still there. Alternatively each device stores the last message ID it has and fetches everything newer on connect.
+
+@16.07
+## Requirements
+Hello Interview's Facebook news feed: users create posts and follow others, and see a **feed of followed users' posts, newest first**, with paging. Up to **2 billion users**, unlimited follows and followers, posting and loading under 500 ms, and posts may appear up to **1 minute** late. ByteByteGo's version: 10 million daily users, up to 5,000 friends, mobile and web.
+
+## Fan-out on read vs on write
+Module 11.05 covered the core trade-off:
+- **Fan-out on read (pull)**: store posts by author; at read time fetch posts from everyone the user follows and merge them. Nothing wasted on inactive users, but slow for someone following thousands.
+- **Fan-out on write (push)**: when someone posts, insert the post ID into each follower's precomputed feed. Reads are a single lookup, but a post by someone with 50 million followers means 50 million writes.
+
+Both sources settle on the **hybrid**: push for most users, and for accounts with huge follower counts, don't fan out; merge their recent posts in at read time.
+
+## The publishing path
+ByteByteGo's flow:
+1. The web server authenticates and rate-limits the post.
+2. The **post service** saves the post to the database and cache.
+3. The **fan-out service** gets the author's follower IDs from the social graph, filtering out people who muted the author.
+4. It puts the follower IDs and the post ID on a **queue**.
+5. **Fan-out workers** add the post ID to each follower's feed cache.
+
+%%flow Publishing: the post is stored once; only its ID is pushed into followers' feeds.
+[Store] Author -(POST /posts)-> Post service -(save once)-> Posts DB and content cache
+[Fan out] Post service -(author not a celebrity)-> Queue -(workers)-> *Each follower's feed list (post IDs)
+[Skip] Post service -(author is a celebrity)-> no fan-out; pulled at read time
+%%
+
+**Store IDs, not posts.** The feed cache holds only post IDs (with a configurable limit, since people rarely scroll far back). Hello Interview's sizing: 200 post IDs × about 10 bytes = **about 2 KB per user**, and 2 billion users ≈ **4 TB** in total, which is cheap.
+
+## Reading the feed
+ByteByteGo's retrieval flow: get the user's post ID list from the feed cache, then **hydrate**: fetch post contents and author details from the content and user caches, plus whether the user liked each one and the counts. Hello Interview uses a cursor (a timestamp) for paging.
+
+ByteByteGo lists five caches behind this:
+| Cache | Holds |
+| News feed | post ID list per user |
+| Content | post bodies; popular posts in a hot tier |
+| Social graph | followers and following |
+| Action | whether a user liked or commented on a post |
+| Counters | likes, replies, follower counts |
+
+## Where ranking happens
+Both sources describe a **chronological** feed. Real feeds are ranked, and the standard place for ranking is **at read time, over a precomputed candidate set** (general practice, in the shape of 16.05):
+- **Precomputed**: the candidate pool (post IDs pushed into the feed list, plus celebrity posts merged at read time), and slowly changing features like affinity scores between users, author quality and post embeddings, computed in batch.
+- **At read time**: take the latest few hundred candidates, fetch fresh signals (like counts in the last hour, whether you've already seen it), score them with a ranking model, apply rules (diversity, no three posts in a row from one author), and return a page.
+
+Ranking at write time would freeze the order before engagement data exists and redo work for every follower; ranking at read time uses current signals and only for users who actually open the app. Some systems cache the ranked first page for a few minutes.
+
+%%flow The read path: a precomputed pool, merged and ranked when the user opens the app.
+[Candidates] Feed list (pushed IDs) -(merge)-> *Candidate pool -(plus)-> Recent celebrity posts (pulled)
+[Rank] Candidate pool -(fresh features)-> Ranking model -(rules: diversity, seen)-> Page of 20
+[Hydrate] Page of 20 -(content, user, counter caches)-> Feed response
+%%
+
+## Hot posts
+A viral post gets read by millions of feeds at once. Hello Interview notes that a cache sharded by post ID still puts that post on one shard, a hot key. Its fix is to **replicate** hot content across many cache instances so any instance can serve it.
+
+> Takeaway: store posts once and push only post IDs into followers' feed lists, except for celebrities whose posts are pulled at read time. At read time, merge the candidates, rank them with fresh signals, then hydrate from caches. Feed lists are tiny (about 2 KB per user), so precomputing them is cheap; replicate hot posts to avoid hot cache keys.
+
+?? Ranking happens at read time: when the user opens the app, the service takes the precomputed candidates (post IDs fanned out to their feed list on write, plus recent posts from celebrities pulled at read time), fetches fresh features such as recent engagement, scores them with the ranking model, applies rules like diversity, and hydrates the top page from caches. Precomputed ahead of time are the per-user lists of candidate post IDs, the social graph, and slow-changing features such as user-author affinity and post embeddings, plus the trained model itself.
+
+@16.08
+## The problem
+"Pizza within 2 km" combines two filters: a **text** match (the business is a pizza place: its name, category or menu matches "pizza") and a **geographic** filter (within 2 km of the user). Then results are sorted, usually by some mix of relevance, distance and rating. Hello Interview's Yelp breakdown sets the scale at 100 million daily users and 10 million businesses, but its deep dives are paywalled; this lesson builds on the free proximity-search material in Module 12 (12.01 to 12.03) and general knowledge of search engines.
+
+## Which filter goes first?
+Neither, ideally: use one index that handles both, and let the query planner choose based on **selectivity**: run the filter that cuts the most results first, then apply the other to the survivors.
+- **"Pizza" in Manhattan**: thousands of pizza places worldwide match the text, but within 2 km of a point there may be 300 businesses of any kind. The geo filter is more selective. Find businesses in the area, then check which match "pizza".
+- **"Ethiopian restaurant" in a big area**: maybe 20 match the text anywhere nearby. The text filter is more selective.
+- **A rare word** like a restaurant's exact name: the text filter shrinks results to a handful, then check distance.
+
+If you must build it from parts, the rule of thumb is: **geo first for common terms in dense areas, text first for rare terms**. Both approaches then compute exact distance on the candidates.
+
+%%flow Two orders for the same query; the more selective filter should run first.
+[Geo first] All businesses -(geohash cells covering 2 km)-> *300 nearby -(text match "pizza")-> 25 results
+[Text first] All businesses -(inverted index "pizza")-> 40,000 pizza places -(distance under 2 km)-> 25 results
+%%
+
+## Doing both in one engine
+Search engines like **Elasticsearch** (or OpenSearch, Solr) handle this natively. A business document has a text field (name, categories, description) and a `geo_point`. A query is a `bool` query with:
+- a **must** clause: full-text match on "pizza", which produces a relevance score;
+- a **filter** clause: `geo_distance` of 2 km from the user's location. Filters don't affect scoring and are cached.
+
+Inside each shard, the engine intersects the posting list for "pizza" with the documents passing the geo filter (geo points are indexed in a spatial tree, the BKD tree), so it never loads all pizza places or all nearby businesses fully. Then it **sorts** by a combined score: text relevance, a **distance decay** function (closer is better), and rating. This is the standard choice for Yelp-like search: businesses rarely move, and you also need filters (open now, price, category) and relevance scoring.
+
+%%flow One search engine query: text and geo filters intersected inside each shard.
+[Query] "pizza" near user -(must: match pizza)-> Posting list
+[Filter] near user -(filter: geo_distance 2 km, BKD tree)-> Nearby set
+[Combine] Posting list + Nearby set -(intersect, score: relevance x distance decay x rating)-> *Top 20
+%%
+
+**PostgreSQL** can do the same with PostGIS (`ST_DWithin` on a GiST index) plus full-text search (`tsvector` with a GIN index); the planner picks which index to start from using its statistics about selectivity.
+
+## The rest of a Yelp-like design
+- **Data**: businesses in a relational database (the source of truth), synced to the search index by change data capture. Businesses change rarely, so index lag of seconds to minutes is fine.
+- **Reviews and ratings**: store reviews in the database. Keep `review_count` and `rating_sum` on the business row and update them in the same transaction as each new review, so the average is cheap to read (rather than averaging all reviews on every query). A unique constraint on `(user_id, business_id)` enforces one review per user per business.
+- **Caching**: popular searches ("pizza" around a city centre) can be cached for a short time by query, rounded location (a geohash cell) and filters.
+- **Sharding**: the search index can be sharded by region so a local query touches few shards, though cross-border queries need care.
+
+! Example: "pizza within 2 km" in a dense city
+! The user is in Manhattan. The engine's geo filter finds about 4,000 businesses within 2 km; "pizza" matches 120 of them. Each is scored: relevance (name contains "pizza" scores higher than a menu mention), distance decay (a place 300 m away keeps most of its score; one 1.8 km away loses much of it), and rating. The top 20 come back in about 50 ms. In a small town the same query finds only 30 businesses within 2 km and 3 pizza places; there, a wider radius would help, so many apps expand the radius automatically when results are few.
+
+> Takeaway: for text plus location, use one engine that indexes both (Elasticsearch with geo_point and a geo_distance filter, or PostGIS plus full-text in PostgreSQL), let the more selective filter drive the search, and rank with relevance, distance decay and rating. If you hand-build it, go geo-first for common terms in dense areas and text-first for rare terms, and always finish with an exact distance check.
+
+?? It depends on which filter is more selective, and the best answer is a single index that does both, such as Elasticsearch with a text match plus a geo_distance filter, or PostGIS with full-text search, where the engine intersects them. For "pizza", a common term, in a dense area, the 2 km geo filter shrinks the set most, so filter by location (geohash cells or a spatial index) first and then match "pizza". For a rare term, matching text first gives a tiny set to distance-check. Either way, finish with exact distances and rank by relevance, distance and rating.

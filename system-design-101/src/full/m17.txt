@@ -1,0 +1,351 @@
+@17.01
+## Requirements
+Hello Interview's Uber breakdown:
+- Riders get a **fare estimate**, request a ride, and are **matched** with a nearby available driver. Drivers accept or decline, then navigate.
+- Matching finishes (match or failure) within about **1 minute**.
+- **Strong consistency for matching**: a driver must never hold two rides at once.
+- High throughput at peaks, such as **100,000 requests from one place** when a stadium empties.
+
+**Entities**: Rider, Driver, Fare (estimated price and ETA), Ride (its lifecycle from request to completion) and Location (driver position and last update time).
+
+**API**: `POST /fare`, `POST /rides {fareId}`, `POST /drivers/location {lat, lng}`, and `PATCH /rides/:id` for a driver to accept or decline. The article stresses that the driver or rider ID comes from the session token, never the request body, and that the server must not trust client-supplied fares or timestamps.
+
+## Services
+%%flow Uber's main services: location in Redis, matching behind a queue, notifications to drivers.
+[Locations] Driver app -(location every 5s)-> Location service -(GEOADD)-> *Redis geo index
+[Requests] Rider app -(POST /rides)-> Ride service -(enqueue)-> Kafka -(consume)-> Matching service
+[Offer] Matching service -(GEOSEARCH nearby)-> Redis geo index -(lock + offer)-> Notification service to driver
+%%
+
+- **Ride service**: computes fares (with a third-party maps API for distance and time), stores Fares and Rides, and starts matching.
+- **Location service**: receives driver location updates and answers "which drivers are near here?".
+- **Matching service**: picks drivers by distance, availability and other factors, and offers the ride.
+- **Notification service**: pushes offers to drivers through APNs and FCM.
+
+## Driver locations
+**10 million drivers** reporting every **5 seconds** is about **2 million writes per second**. Writing each to a normal database is too much, and finding "drivers near this point" needs a spatial index (Module 12). Hello Interview's choice is **Redis geo commands**: `GEOADD` stores each driver as a member of a sorted set scored by its geohash, and `GEOSEARCH` finds drivers within a radius (12.02 covers how).
+- Remove **stale drivers** whose last update is older than, say, 30 seconds (the app closed, or the phone died).
+- Losing a few seconds of locations in a Redis failure is acceptable, since a fresh update arrives within 5 seconds. Persistence and Sentinel failover limit the damage.
+- **Reduce updates on the client**: send less often when the driver is parked, more often when moving fast or near a pickup.
+
+## Never matching two riders to one driver
+This is the question. Two matching workers, each handling a different rider, both search nearby and both pick driver D. If both send offers, D might accept both, or the second rider waits on a driver who's already taken.
+
+Hello Interview compares approaches:
+- **Lock inside each matching process** (bad): workers on different machines don't see each other's locks, and a crash leaves a lock behind.
+- **A status column in the database** (`outstanding_request`) with in-memory timeouts (good): the database update can be conditional, but the timeout is lost if the process crashes.
+- **A distributed lock in Redis with a TTL** (best): before offering a ride to driver D, the matcher runs `SET lock:driver:D ride-17 NX EX 10`. Only one matcher can succeed, because `NX` sets the key only if it doesn't exist. The driver has **10 seconds** to respond; if they don't, the key expires on its own and D becomes available again. The ride's status in the database records the final assignment.
+
+%%seq Two matchers want the same driver; the atomic lock lets only one offer.
+Matcher A > Redis : SET lock:driver:D rideA NX EX 10
+Redis -> Matcher A : OK
+Matcher B > Redis : SET lock:driver:D rideB NX EX 10
+Redis -> Matcher B : nil (taken) so try next driver
+Matcher A > Driver D : offer ride A (10 s to accept)
+Driver D > Matcher A : accept
+Matcher A > DB : ride A: driver D (conditional on ride still open)
+%%
+
+The database write should also be conditional (assign D only if D has no active ride and ride A is still unassigned), so even a Redis mistake can't create a double assignment. The cost of this design is depending on Redis being available; with locks expiring after 10 seconds, a Redis failover loses only in-flight offers.
+
+## Not dropping requests
+If a matching instance crashes while holding a rider's request in memory, the rider waits forever. Hello Interview puts requests on a **queue** (Kafka), and the matcher commits the offset only after the request is matched or definitively failed, so a crash means another instance picks the request up. Partition the queue **by geography** so each matcher handles an area, and scale matchers with demand.
+
+**Drivers who don't respond**: after 10 seconds the matcher must offer the ride to the next driver, and the next, until someone accepts or the minute is up. Hello Interview suggests modelling this as a **durable workflow** (Temporal or AWS Step Functions): "offer, wait up to 10 s, on timeout try the next" survives crashes and restarts instead of living in one process's memory.
+
+%%flow One ride request, offered to drivers in turn until one accepts or a minute passes.
+[Loop] Ride request -(nearest free driver, lock 10s)-> Offer to driver 1 -(no answer, lock expires)-> Offer to driver 2
+[Done] Offer to driver 2 -(accept)-> *Ride assigned -(or after 1 minute)-> No driver found
+%%
+
+## Scaling
+Shard by **geography**: each region's riders and drivers mostly interact locally. Consistent hashing over regions spreads load; queries near a region boundary need to ask both shards (scatter-gather). Read replicas help with ride history and fares.
+
+> Takeaway: keep driver locations in an in-memory geo index (Redis GEOADD and GEOSEARCH) that tolerates losing a few seconds of updates. Put ride requests on a queue so nothing is dropped. Before offering a ride, take a Redis lock on the driver with SET NX and a 10-second TTL so only one rider's offer can reach them, back it with a conditional database write, and drive the offer-timeout-retry loop with a durable workflow.
+
+?? Lock the driver before offering. The matcher runs an atomic SET lock:driver:ID ride NX EX 10 in Redis: only one matcher can create the key, so only one rider's offer goes to that driver, and any other matcher moves on to the next driver. If the driver doesn't answer within 10 seconds, the key expires and the driver is free again. When the driver accepts, the assignment is written to the database conditionally (only if the driver has no active ride and the ride is still open), so the database stays the final guard.
+
+@17.02
+## The scale
+Hello Interview's YouTube breakdown: about **1 million uploads** and **100 million views** a day, videos up to tens of GB, playback that adapts to slow networks, and resumable uploads. ByteByteGo's YouTube chapter is paywalled, and Module 13 already covered the pipeline pieces: multipart uploads (13.04), transcoding in parallel chunks (13.05), adaptive bitrate streaming (13.06) and signed URLs (13.07). This lesson puts them together and answers the CDN question.
+
+## Upload and processing
+1. The client sends metadata and gets **presigned URLs**, then uploads straight to S3 with **multipart upload** in 5 to 10 MB parts, reporting each part's number and ETag. To resume, it asks which parts exist and skips them.
+2. S3's "upload complete" event starts processing.
+3. A **DAG** of jobs, run by an orchestrator such as Temporal: split the original into segments (ffmpeg), **transcode each segment in parallel** into several resolutions and bitrates, process audio and captions, write **manifests** (HLS or DASH playlists) that list every segment of every version, then mark the video ready. Workers pass S3 URLs between steps, not files.
+4. Metadata lives in Cassandra, partitioned by video ID, with a cache in front.
+
+## Playback
+The player downloads the **manifest**, picks a quality based on its bandwidth, and downloads segments of a few seconds each, switching quality as conditions change. Hello Interview's key observation: if the CDN holds the manifest and segments, playback doesn't touch your backend at all, apart from fetching metadata.
+
+%%flow Upload goes to storage and a transcoding DAG; playback is just manifest and segment fetches.
+[Upload] Creator -(multipart PUT, presigned)-> S3 original -(upload event)-> *Transcode DAG
+[Outputs] Transcode DAG -(segments x renditions + manifest)-> S3 origin
+[Watch] Viewer -(manifest, then segments)-> CDN edge -(miss)-> S3 origin
+%%
+
+## Which videos go to the CDN?
+Hello Interview says CDNs could cache popular videos, segments and manifests, but doesn't set a rule. The rest of this section is general practice, consistent with Netflix's Open Connect approach from 13.06.
+
+Video popularity is extremely **skewed**: a small fraction of videos gets most of the views, and a huge **long tail** gets a few views each.
+- **Popular and new-but-trending videos**: on the CDN, in edge caches near viewers. Bandwidth is the dominant cost of video, and serving from an edge in the viewer's network is far cheaper and faster than from origin.
+- **The long tail** (old or rarely watched videos): served from **origin** (object storage, maybe through a regional mid-tier cache). Keeping millions of rarely watched videos in every edge would waste edge storage that's better spent on hits; a video watched twice a month gains little from being at the edge.
+- **Not all of a popular video**: viewers mostly watch the first minutes, and mostly in a couple of renditions. Caches naturally hold the hot segments (the start, the common bitrates) and evict the rest.
+
+How it happens:
+- **Pull caching (the default)**: the CDN fetches a segment from origin on the first request and keeps it while it stays popular; least-recently-used segments get evicted. This sorts popular from unpopular automatically.
+- **Push / pre-positioning**: for videos you *know* will be big (a premiere, a trending creator's new upload), push them to edges ahead of time, often during off-peak hours. Netflix fills its Open Connect appliances overnight based on predicted popularity.
+- **Tiered caching**: edge caches fall back to a regional "shield" cache before origin, so a long-tail video requested in ten cities fetches from origin once.
+
+%%layers Where a video segment is served from, by popularity.
+Edge cache near viewer | hot titles and their opening segments; pre-positioned for premieres *
+Regional shield cache | moderately popular; protects origin from repeated misses
+Origin object storage | every rendition of every video; the long tail lives here
+%%
+
+**Costs** (general knowledge, not in the source): storage is many renditions per video (often several times the original size); transcoding is CPU-heavy and done once per upload; CDN egress is usually the largest bill, which is why caching hit rates matter so much. Some platforms transcode the long tail into fewer renditions, or lazily on first view, to save storage and compute.
+
+! Example: two videos
+! A trending music video gets 5 million views in its first day. Its first 30 seconds at 720p and 1080p are requested in every city, so they sit in nearly every edge cache; the CDN hit rate for it is above 99%, and origin serves it a few hundred times. A 2014 lecture recording gets 3 views a week. Each view misses the edge (it was evicted long ago), maybe hits the regional shield, and otherwise streams from origin. That's fine: it's a tiny share of traffic, and caching it everywhere would push out videos people actually watch.
+
+> Takeaway: upload directly to object storage in parts, transcode segments in parallel into several renditions with manifests, and stream with adaptive bitrate so playback is just file fetches. Let the CDN pull and keep what's popular (and pre-position predictable hits); serve the long tail from origin through a shield cache, because popularity is highly skewed and edge space is limited.
+
+?? Popular and trending videos, especially their first segments and common bitrates, are served from CDN edge caches near viewers, where most traffic and most bandwidth cost is concentrated; predictable hits like premieres can be pushed to edges in advance. The long tail of rarely watched videos is served from origin storage, usually through a regional shield cache, because caching millions of rarely watched videos at every edge would evict popular content for little gain. In practice pull-through caching with LRU eviction sorts this out automatically.
+
+@17.03
+## The design in brief
+Hello Interview's Dropbox breakdown (and lessons 13.09 to 13.11 on Dropbox's block model) give the core:
+- **Upload**: the client asks for presigned URLs, splits large files into **5 to 10 MB chunks**, uploads them in parallel straight to blob storage, and the server verifies the parts (S3 `ListParts`) before marking the file uploaded. A **SHA-256 fingerprint** of each chunk and of the file lets uploads resume and avoids re-uploading data the server already has.
+- **Metadata**: a database (DynamoDB or Postgres) holds each file's ID, name, size, owner, status and list of chunks.
+- **Local to remote**: a client agent watches the file system and queues changed files.
+- **Remote to local**: each device keeps a **WebSocket or SSE** connection for change events, and also polls `GET /files/changes?since=…` every few minutes in case it missed one.
+- **Delta sync**: only chunks whose fingerprints changed are uploaded, using **content-defined chunking** so an insertion near the start doesn't change every later chunk (13.10).
+
+%%flow Sync: the changed chunks go up, a metadata commit makes a new version, other devices are told.
+[Upload] Laptop -(changed chunks only)-> *Blob storage -(chunks verified)-> Metadata: new version of file
+[Notify] Metadata -(change event)-> Phone and desktop -(fetch missing chunks)-> Local copy updated
+%%
+
+## Two devices edit the same file offline
+Your laptop and your desktop both have `report.docx` at version 5. You go offline on both, edit the file on each, and reconnect. What should happen?
+
+Hello Interview's breakdown only covers **last write wins**: whichever save reaches the server last becomes the file. It notes this can silently lose one edit, and that a "conflicted copy" approach would need to be designed separately. That design is below, from general knowledge of how sync services (Dropbox included) behave.
+
+**Detect the conflict with a base version.** Every upload says which version it was edited from: "this is my edit of **version 5**". The server accepts a commit only if 5 is still the latest version, a compare-and-set on the file's version number (13.09 describes Dropbox's commit protocol as checking exactly this kind of precondition).
+1. The laptop reconnects first: "new content, based on v5". v5 is current, so this becomes **v6**.
+2. The desktop reconnects: "new content, based on v5". But the latest is now v6. The server **rejects** the commit as a conflict.
+
+**Resolve without losing work.** For arbitrary files (a Word document, a PSD), the service can't merge contents. So it keeps both:
+- v6 (the laptop's edit) stays as the file.
+- The desktop's edit is saved next to it as a new file, such as `report (Desktop's conflicted copy 2026-11-09).docx`.
+- Both versions sync to every device, and the user decides how to combine them.
+
+%%seq Both devices edited version 5; the second commit conflicts and becomes a conflicted copy.
+Laptop > Server : commit report.docx, base v5
+Server -> Laptop : OK, now v6
+Desktop > Server : commit report.docx, base v5
+Server -> Desktop : conflict: latest is v6
+Desktop > Server : upload as "report (conflicted copy).docx"
+Server -> Desktop : sync v6 + conflicted copy to all devices
+%%
+
+## Why not last write wins, or merging?
+| Approach | What happens | Good for |
+| Last write wins | the later save replaces the earlier one; one person's edits vanish | settings, data where losing an edit is harmless |
+| Conflicted copy | both versions kept as separate files; the user merges | arbitrary files: documents, images, spreadsheets |
+| Automatic merge | changes combined (OT, CRDTs, line-based merge) | formats the system understands: text, structured documents (15.05) |
+
+Dropbox doesn't understand most file formats, so it can't merge. A conflicted copy loses nothing and makes the problem visible. Version history (13.11) is a second safety net: even if something is overwritten, the previous version is still recoverable.
+
+**Details that matter:**
+- The **base version** must be recorded when editing starts (the version on disk when the device went offline), not when it reconnects.
+- If both devices produced **identical content** (same file hash), there's no real conflict; accept it silently.
+- **Deletes vs edits**: one device deletes the file while another edits it. Usually the edit wins and the file comes back, because losing work is worse than an undeleted file.
+- **Folders**: renaming a folder on one device while adding a file to it on another must not lose the file; the server applies operations to IDs, not paths.
+
+> Takeaway: sync uploads only changed chunks (content-defined, fingerprinted) and commits a new version only if the device's base version is still current. When two offline edits collide, the second commit is rejected; since the service can't merge arbitrary file formats, it keeps the second edit as a conflicted copy beside the winning version, so no work is lost, and version history backs that up.
+
+?? When the devices reconnect, each tries to commit its edit stating the version it started from. The first one's base version is still current, so it becomes the new version. The second one's base is now out of date, so the server detects a conflict instead of overwriting. Because a sync service can't merge arbitrary file formats, it keeps both: the first edit stays as the file and the second is saved alongside as a "conflicted copy", and both sync to all devices for the user to reconcile. Last-write-wins would silently lose one edit; version history can recover older versions too.
+
+@17.04
+## Requirements
+Hello Interview's metrics monitoring breakdown (requirements free, design paywalled):
+- Ingest metrics like CPU, memory, latency and custom counters; query and graph them with filters, aggregations and time ranges; alert on rules like "p99 latency over 500 ms for 5 minutes", notifying by email, Slack or PagerDuty.
+- **5 million points per second** from 500,000 servers (each sends 100 metrics every 10 seconds). At 100 to 200 bytes per point with labels, that's about **1 GB per second** raw.
+- Dashboards answer within seconds, even over weeks of data. Alerts fire within **1 minute** of the data. Alerting must be reliable even if dashboards are eventually consistent. Late and out-of-order data must be handled.
+
+The question here is storage: **10 million series**, cheap, with the **last hour** fast to query. The storage techniques below come from general knowledge, mainly Facebook's Gorilla paper (2015) and the Prometheus storage engine, since the source's design sections are paywalled.
+
+## What a time series is
+A **series** is one metric with one set of labels: `http_latency_ms{service="checkout", host="web-17", route="/pay"}`. Each series is a stream of `(timestamp, value)` points. 10 million series × 1 point every 10 seconds = **1 million points per second**, 86.4 billion a day.
+
+Stored naively, a point is 16 bytes (8-byte timestamp + 8-byte float), so a day is about **1.4 TB** before indexes and labels. The data has strong patterns, though, and compression exploits them.
+
+## Compression: about 1.4 bytes per point
+Gorilla's two tricks:
+- **Timestamps: delta of delta.** Points arrive at a steady interval: 10:00:00, 10:00:10, 10:00:20… The deltas are 10, 10, 10, and the **deltas of the deltas** are 0, 0, 0. A zero takes **1 bit**. Occasional jitter (a delta of 11) takes a few bits.
+- **Values: XOR with the previous value.** Consecutive values are often equal or close. XOR of two equal floats is zero (1 bit). For close values, the XOR has many leading and trailing zeros, so only the few meaningful bits in the middle are stored.
+
+Gorilla reported an average of **1.37 bytes per point** instead of 16, about **12×** smaller. That made it possible to keep the last 26 hours of Facebook's metrics in memory.
+
+%%flow Delta-of-delta timestamps and XOR values shrink a point from 16 bytes to about 1.4.
+[Time] 10:00:00, :10, :20, :31 -(deltas 10, 10, 11)-> delta of delta 0, +1 -(mostly 1 bit each)-> *tiny
+[Value] 42.0, 42.0, 42.5 -(XOR with previous)-> 0, small change -(store only changed bits)-> tiny
+%%
+
+At 1.37 bytes per point, our 10M series cost about **4.9 GB per hour** (3.6 billion points) and about **118 GB per day**.
+
+## The last hour in memory
+Recent data is queried constantly (every dashboard refresh, every alert rule every minute) and is still being written. So:
+- Keep the most recent **hours** (say 2 to 26) as compressed blocks **in memory**, one open block per series being appended to. The last hour of 10M series is about 5 GB compressed, which fits on a few machines, sharded by series.
+- A **write-ahead log** on disk protects the in-memory data from crashes.
+- Every couple of hours, finished blocks are written to disk (or object storage) as **immutable files**, with an index from label values to series IDs.
+
+This is how Prometheus works (2-hour blocks, compacted into larger ones) and how Gorilla served queries in milliseconds.
+
+## Cheap long-term storage: downsample
+Nobody needs 10-second resolution from six months ago. **Rollups** pre-aggregate old data into coarser points, keeping min, max, sum and count (so averages can be recomputed correctly):
+| Age | Resolution | Points per series per day |
+| last 2 days | raw, 10 s | 8,640 |
+| up to 30 days | 1 minute | 1,440 |
+| up to 1 year | 1 hour | 24 |
+
+A query for "last 6 months" reads hourly rollups: 4,380 points per series instead of 1.5 million. Old blocks go to object storage, which is cheap; retention rules delete beyond a year.
+
+%%layers Tiered storage for metrics: recent data hot and detailed, old data cold and coarse.
+In memory | last few hours, raw, compressed ~1.4 B/point; dashboards and alerts *
+Local disk blocks | last days, raw, immutable compressed files
+Object storage | weeks to a year, 1-minute and 1-hour rollups
+%%
+
+## Cardinality: the real cost driver
+Each distinct label combination is a new series. Adding a `user_id` label to a request metric with 10 million users turns one series into 10 million. Hello Interview lists **cardinality explosion** as a deep dive. Defences: never put unbounded values (user IDs, request IDs, full URLs) in labels; use **route templates** (`/orders/:id`, not `/orders/123`); limit series per metric and reject or drop above a cap; and put per-request detail in traces and logs (14.01), not metrics.
+
+## Connecting to SLOs and alerts
+The SRE book's advice from 14.01 applies to this system too: store latency as **histograms** (bucket counts), not averages, so you can compute any percentile and add buckets up across hosts. Alert rules (14.02's burn-rate alerts) are evaluated every minute against the in-memory tier; Hello Interview requires alerts within a minute, which the hot tier makes possible. Ingestion usually goes through a buffer like **Kafka**, so a spike or a slow storage node doesn't drop data, and alert evaluation reads the newest data with priority.
+
+> Takeaway: compress series with delta-of-delta timestamps and XOR-encoded values (about 1.4 bytes a point instead of 16), keep the last few hours in memory with a write-ahead log for fast dashboards and alerts, write immutable blocks to disk and object storage, and downsample old data into minute and hour rollups. Control label cardinality, because each label combination is another series.
+
+?? Compress each series Gorilla-style: delta-of-delta encoding for timestamps (regular intervals cost about 1 bit) and XOR of consecutive values for floats, about 1.4 bytes per point instead of 16. Keep the most recent hours as compressed in-memory blocks sharded by series, protected by a write-ahead log, so last-hour queries and alert rules hit RAM (about 5 GB for 10M series at 10-second resolution). Flush older blocks to disk and object storage as immutable files, downsample them into 1-minute and 1-hour rollups with min, max, sum and count, and delete beyond retention. Keep label cardinality bounded.
+
+@17.05
+## The goal
+Move a 2 TB table (say `orders`) from the old database to a new one (a new cluster, a new engine, or a sharded setup) while the application keeps running, with no downtime and no lost or wrong data. This combines Stripe's four-step migration (14.05), shadow reads (14.06) and, for schema changes on the same MySQL server, gh-ost's copy-and-swap.
+
+Some sizing first (my estimate, not from the sources): copying 2 TB at 100 MB/s takes about 20,000 seconds, roughly **5.5 hours**; throttled to 50 MB/s to protect production, about **11 hours**. The copy runs for hours while the table keeps changing, so the plan must capture changes made during the copy.
+
+## The phases
+Stripe's four steps (dual write, change reads, change writes, remove old), expanded for a whole table:
+
+%%flow Zero-downtime migration: each phase can be rolled back until the old store is removed.
+[Copy] 1. Capture changes -(then)-> 2. Backfill 2 TB in batches -(then)-> 3. Verify checksums
+[Switch] 4. Shadow reads -(no mismatches)-> 5. Reads on new DB -(then)-> 6. Writes on new DB
+[Finish] 7. Old table kept as fallback -(weeks later)-> *8. Remove old table
+%%
+
+**0. Prepare.** Create the table in the new database. Make sure the application can talk to both. Put the switches (where reads go, where writes go) behind **feature flags**, so each step is a config change, not a deploy.
+
+**1. Start capturing changes.** From this moment on, every change to `orders` must also reach the new database. Two ways:
+- **Dual writes in the application**: every insert, update and delete goes to both. Simple, but if the second write fails you must retry or record it, and it adds latency.
+- **Change data capture (CDC)**: read the old database's replication log (MySQL binlog, Postgres logical replication) and apply each change to the new database. This is what gh-ost does within MySQL. It doesn't touch application code and doesn't miss writes from other services or scripts.
+
+Stripe ramped its dual writes gradually while watching database load.
+
+**2. Backfill.** Copy existing rows in batches (by primary key ranges, say 10,000 rows at a time), **throttled** so production isn't overwhelmed, and **resumable** from a checkpoint. A backfilled row must never overwrite a newer change that arrived through step 1: use upserts that skip rows already newer in the target (compare `updated_at` or a version column), or apply CDC from a position recorded before the copy started. Stripe avoided scanning production at all: it found the rows to migrate from a database **snapshot** in Hadoop.
+
+**3. Verify.** Compare row counts and **checksums** per primary key range between the two databases, and fix differences. Stripe re-ran its job afterwards to confirm nothing was missing; gh-ost's test-on-replica mode leaves both tables so you can compare them.
+
+**4. Shadow reads.** With GitHub's Scientist (14.06), read from both on real traffic, return the old result, and log mismatches. Ramp up until mismatches are zero or explained.
+
+**5. Switch reads** to the new database. Writes still go to both (or the old one plus CDC), so you can **switch reads back** instantly if something's wrong.
+
+**6. Switch writes.** Make the new database the only one written to. This is the riskiest moment. Approaches:
+- If you dual write, flip the "primary" so the new database is written first, then stop writing the old one.
+- With CDC, briefly pause writes (seconds), wait for CDC lag to reach zero, flip the write target, resume. gh-ost does the equivalent with its atomic table rename at **cut-over**, which can be postponed until a quiet moment.
+- Optionally keep **reverse replication** (new to old) for a while, so a rollback doesn't lose recent writes.
+
+Stripe found this the hardest step, because writes were spread across many code paths. It changed them a few hundred lines at a time and made the old accessor **raise an error** to flush out forgotten callers.
+
+**7. Bake.** Keep the old table, unchanged but intact, for days or weeks as a fallback.
+
+**8. Remove** the old table and the dual-write and CDC code.
+
+%%seq Write cut-over with CDC: a few seconds of paused writes, no lost data.
+Ops > App : pause writes to orders (flag)
+CDC > NewDB : apply remaining binlog events
+CDC -> Ops : lag = 0
+Ops > App : write target = NewDB, resume
+App > NewDB : new writes
+Ops > Ops : keep OldDB untouched as fallback for 2 weeks
+%%
+
+## What to watch for
+- **Long transactions and locks**: never `SELECT * FROM orders` in one transaction; batch by key ranges.
+- **Replication lag** on the old database caused by the backfill reads; gh-ost throttles itself on replica lag, and your backfill should too.
+- **Auto-increment IDs**: the new database must keep generating IDs past the old maximum, or use IDs generated by the app.
+- **Foreign keys and joins** across the two databases during the transition.
+- **Other writers**: batch jobs, admin tools, other services. CDC catches them; application dual writes don't.
+
+> Takeaway: to move a 2 TB table with no downtime, start capturing changes first (dual writes or CDC), backfill in throttled, resumable batches that never overwrite newer data, verify with checksums, shadow-read with comparison, switch reads, then switch writes with a brief pause or atomic cut-over, keep the old table as a fallback, and only then delete it. Every step before deletion can be rolled back.
+
+?? 1. Create the new table and put read and write targets behind flags. 2. Start capturing all changes to the new database, by dual writes or by change data capture from the old database's log. 3. Backfill existing rows in throttled, resumable batches, never overwriting newer data that arrived through step 2. 4. Verify with counts and checksums per key range. 5. Shadow-read both and compare on live traffic until mismatches are zero. 6. Switch reads to the new database. 7. Switch writes, with a brief pause until CDC lag is zero or an atomic cut-over, optionally keeping reverse replication. 8. Keep the old table as a fallback for a while, then remove it and the migration code.
+
+@17.06
+## Requirements
+Hello Interview's Instagram breakdown gives the scale (its design is paywalled): users post photos and videos with a caption, follow others, and see a chronological feed of people they follow. **500 million daily users**, **100 million posts a day**, feed in under **500 ms**, photos up to 8 MB and videos up to 4 GB. Likes, comments, search and stories are out of scope.
+
+This lesson is the walkthrough the question asks for. It assembles parts from earlier modules: presigned uploads (13.01), image variants (13.02), the feed design (16.07, 11.05) and CDNs.
+
+## Step 1: upload the photo
+1. The app asks the **post service** to start a post: `POST /posts/uploads {type: photo, size}`. The service checks the user and creates a post record with status `pending` and a **media ID**.
+2. It returns a **presigned URL** for `raw/{media_id}.jpg` in object storage.
+3. The phone uploads the file **straight to object storage**. Phones often resize and compress first, so an 8 MB photo might upload as 1 to 2 MB.
+
+The API servers never handle image bytes.
+
+## Step 2: process the media
+1. Object storage emits an "object created" event onto a queue.
+2. **Media workers** validate the file, strip location metadata if needed, and generate **variants**: a thumbnail for grids, a few widths for different screens, and modern formats like WebP or AVIF. Videos go through the transcoding pipeline (17.02) instead.
+3. Variants are written to object storage under predictable keys, and served through a **CDN**.
+4. The post record becomes `ready` with the variant URLs.
+
+## Step 3: create the post and fan out
+1. The app (or the media worker, on completion) finalises the post with its caption. The post service saves it once in the **posts store**, keyed by post ID (with time-sortable IDs, like Instagram's own shard-embedding 64-bit IDs from 04.08).
+2. The post service publishes `post_created {post_id, author_id}`.
+3. The **fan-out service** checks the author's follower count:
+   - **Normal author** (say under 100,000 followers): read follower IDs from the social graph in pages, and enqueue batches. **Fan-out workers** push the post ID onto the front of each follower's **feed list** in Redis, trimmed to the most recent few hundred.
+   - **Celebrity**: don't fan out. Their posts are pulled at read time (the hybrid from 16.07).
+
+%%flow From the phone to followers' feeds: bytes, processing, post record, then fan-out of IDs.
+[Upload] Phone -(presigned PUT)-> Object storage -(object created)-> *Media workers make variants
+[Post] Phone -(caption, media id)-> Post service -(save once)-> Posts store
+[Fan-out] Post service -(post_created)-> Queue -(followers in batches)-> Feed lists in Redis
+%%
+
+## Step 4: a follower opens the app
+1. The **feed service** reads the follower's feed list (post IDs), merges in recent posts from celebrities they follow, and takes the newest page.
+2. It **hydrates** the IDs: post details from a post cache, author names and avatars from a user cache.
+3. The response contains **CDN URLs** for the photo variants sized for this device. The phone loads images directly from the nearest CDN edge.
+
+%%seq A follower's feed request: IDs from the precomputed list, bytes from the CDN.
+Follower > Feed svc : GET /feed
+Feed svc > Redis : feed list for follower (post IDs)
+Feed svc > Posts : recent posts of followed celebrities
+Feed svc > Cache : hydrate posts + authors
+Feed svc -> Follower : page of posts with CDN image URLs
+Follower > CDN : GET photo 1080w.webp
+%%
+
+## Why each choice
+- **Presigned upload**: 100 million posts a day of photos and videos would otherwise flow through API servers.
+- **Async processing**: the user sees "posted" quickly; thumbnails appear within seconds.
+- **Fan-out on write for most**: reads vastly outnumber writes, so precomputing feeds makes the 500 ms target easy. Feed lists hold IDs only, so they are small.
+- **Pull for celebrities**: pushing one post to 300 million feeds would take minutes and enormous write capacity.
+- **CDN for media**: the bytes are the heaviest part of the feed; edges near users make images load fast.
+
+## Instagram's early lessons
+Instagram's 2011 post *What Powers Instagram* couldn't be fetched in this session (the blog blocks automated readers); this paragraph is from my memory of it, so treat the details as approximate. With a handful of engineers and millions of users, the team's principles were to **keep it very simple**, **not reinvent the wheel**, and **use proven technologies**. The stack: Django on Amazon EC2 behind load balancers and nginx; **PostgreSQL** for users and photo metadata, sharded, with streaming replicas; photos stored on **S3** and served through **CloudFront**; **Redis** for the feed and sessions; **memcached** for caching; a task queue for fan-out and other async work; and push notifications through APNs. The shape of that design (object storage plus CDN for bytes, a relational store for metadata, Redis feeds and async workers) is the one in this lesson. Lesson 18.01 looks at it more closely.
+
+> Takeaway: upload the photo directly to object storage with a presigned URL, process variants asynchronously and serve them from a CDN, store the post once, then fan out only its ID into followers' Redis feed lists, skipping celebrities, whose posts are merged at read time. Reading a feed is a list lookup, hydration from caches, and image loads from the CDN.
+
+?? The app gets a presigned URL from the post service and uploads the photo directly to object storage. An upload event triggers workers that generate thumbnails and sized variants, stored and served via the CDN. The app finalises the post with its caption; the post service stores it once and publishes a post-created event. Fan-out workers fetch the author's followers in batches and push the post ID onto each follower's feed list in Redis, unless the author is a celebrity, whose posts are merged in at read time. When a follower opens the app, the feed service reads their list, merges celebrity posts, hydrates the posts from caches, and returns CDN URLs the phone loads from the nearest edge.

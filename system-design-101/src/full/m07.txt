@@ -1,0 +1,733 @@
+@07.01
+## What a storage engine has to survive
+A storage engine is the part of a database that turns "put this key" and "get that key" into bytes on a disk. James Smith's Build Your Own Database From Scratch starts from the obvious design, keeping data in a file and rewriting it, and shows why that breaks. Two forces shape every engine: the disk is slow and has its own rules, and the process can crash at any instant, including halfway through a write.
+
+The CMU 15-445 course page linked here is only the syllabus. The storage lectures themselves are videos, so the points on hardware below come from the standard material those lectures cover, not from the page.
+
+## Sequential beats random
+Andy Warfield's S3 post gives the hard-drive numbers. Since IBM's first disk in 1956, capacity grew about 7.2 million times, but seek time improved only about 150 times, because arms and platters are mechanical. A drive still does roughly 120 random operations per second, about the same as in 2006. A random read pays for a seek and a rotation. A sequential read pays for those once and then streams at full bandwidth.
+
+SSDs have no arm, but the gap is still there, only smaller:
+- Flash is read and written in pages (a few KB) and erased in much larger blocks, so a small random overwrite forces the drive to relocate data and later garbage-collect it.
+- Large sequential writes fill whole blocks and keep the drive's internal garbage collection cheap.
+- The OS and the drive prefetch and merge sequential requests, so fewer, bigger I/Os go down the stack.
+
+%%flow A random write pays the mechanical cost every time; a sequential write pays it once and then streams.
+[Random: 4 KB updates scattered] Write 1 -(seek + rotate)-> Write 2 -(seek + rotate)-> Write 3
+[Sequential: appended to a log] *Write 1 -(no seek)-> *Write 2 -(no seek)-> *Write 3
+%%
+
+## Durability is a contract with the OS
+A `write()` call only copies bytes into the OS page cache. They reach the disk later. To be sure, you call `fsync`. Smith's chapter makes the point that fsync is the only durability barrier you get, and that it is slow (milliseconds), so engines batch many updates per fsync. The engine also has to cope with a write being torn by a crash: part of a page old, part new.
+
+%%seq A write is only durable once fsync returns; before that it sits in memory.
+App > OS page cache : write()
+OS page cache -> App : returns at once
+App > OS page cache : fsync()
+OS page cache > Disk : flush dirty pages
+Disk -> OS page cache : on stable storage
+OS page cache -> App : fsync returns
+%%
+
+! Example: a counter file
+! A service stores a counter by overwriting the 8 bytes at offset 0, about 2,000 times a second. Each overwrite is a random write plus an fsync, so the disk caps throughput. Switching to appending each increment to a log and fsyncing once per batch of 100 turns the work into sequential writes and 20 fsyncs a second.
+
+> Takeaway: disks reward large sequential I/O and punish small random I/O, and nothing is durable until fsync returns. Every storage engine design is a way to turn random updates into sequential writes while surviving a crash mid-write.
+
+?? A random I/O pays a fixed cost before any data moves. On a hard drive that is a seek plus rotation (milliseconds); on an SSD it is page-level mapping and later garbage collection, because flash can't overwrite in place and erases whole blocks. Sequential I/O pays that cost once and then streams, and the OS and drive can prefetch and merge it into large requests.
+
+@07.02
+## Two families
+Nearly every engine is one of two shapes:
+- **B-tree (update in place)**: data lives in fixed-size pages organised as a balanced tree. An update finds the page and rewrites it. Postgres, MySQL InnoDB and SQLite work this way.
+- **LSM tree (log-structured merge)**: writes go to memory and a log, then are flushed as sorted immutable files that are merged in the background. RocksDB, LevelDB, Cassandra and ScyllaDB work this way.
+
+## The B-tree side
+Markus Winand's Use The Index, Luke ("Anatomy of an SQL Index") says a database index combines two structures, and that these two "explain most of the database's performance characteristics":
+- **Leaf nodes in a doubly linked list.** Keeping entries physically sorted would mean moving data on every insert. Instead each leaf node is one database page holding sorted entries (the key plus a ROWID pointing at the table row), and each leaf points to the previous and next leaf. Order is kept at two levels, within a page and between pages, and an insert "just needs to change some pointers". The list can be read forwards or backwards.
+- **A balanced search tree above them.** Each branch entry holds the biggest key of the node below it. A lookup starts at the root, takes the first entry greater than or equal to the search key, and follows it down until it reaches a leaf. The tree is balanced, meaning the root-to-leaf distance is the same everywhere, and its depth grows logarithmically: "real world indexes with millions of records have a tree depth of four or five."
+
+His "Slow Indexes" page names the three steps of a lookup: the tree traversal, following the leaf node chain, and fetching the table data. Only the first is bounded. The last two can touch many pages, which is why a query can be slow even when it uses an index. He also dismisses the myth of a "degenerated" or "unbalanced" index: rebuilding one doesn't help in the long run, because the tree is always balanced.
+
+%%flow An index lookup: a few hops down a balanced tree, then sideways along linked leaves, then one table access per match.
+Root -(first key >= 57)-> Branch -(follow)-> *Leaf page -(next leaf)-> Leaf page -(ROWID)-> Table row
+%%
+
+B-trees are good at reads: a point lookup touches one page per level, and the top levels stay in cache. The cost is on writes. Changing a few bytes rewrites a whole page (often 4 to 16 KB), and pages are scattered, so writes are random.
+
+## The LSM side
+The RocksDB overview describes the write path: a write goes to the write-ahead log and an in-memory memtable. When the memtable fills, it is written out as a sorted string table (SST) file. Files are arranged in levels and compacted, that is, merged and rewritten, in the background. Writes are sequential and cheap. Reads may have to check the memtable and several files, which is why RocksDB leans on Bloom filters and a block cache.
+
+%%flow The same update on each engine: rewrite a page in place, or append and sort later.
+[B-tree] Update -(find page)-> Read 8 KB page -(modify, rewrite)-> *Page on disk
+[LSM tree] Update -(append)-> WAL + memtable -(flush later)-> *Sorted file
+%%
+
+| | B-tree | LSM tree |
+| Write pattern | Random, in place | Sequential, append and merge |
+| Point read | One path down the tree | Memtable plus several files, helped by Bloom filters |
+| Range scan | Walk linked leaves | Merge sorted runs from several levels |
+| Background work | Page splits, vacuum | Compaction |
+| Best fit | Read-heavy, transactional | Write-heavy, large data, SSD-friendly compression |
+
+! Example: metrics ingestion
+! A monitoring system writes 500,000 data points a second and mostly reads recent windows. A B-tree would do hundreds of thousands of random page writes per second. An LSM engine absorbs them in the memtable and writes large sorted files, and compaction keeps reads bounded. The same team's user-account table, with few writes and many lookups, stays on Postgres.
+
+> Takeaway: B-trees optimise reads by keeping data sorted in place; LSM trees optimise writes by appending and sorting later. Choose by your read/write mix and how much background compaction you can afford.
+
+?? Choose an LSM tree when the workload is write-heavy or the data is large: logging, metrics, time series, event stores, message queues. It turns writes into sequential appends, compresses well and is gentle on SSDs. Choose a B-tree when reads, especially point lookups and predictable latency, dominate.
+
+@07.03
+## The naive version
+Build Your Own Database's first chapter starts from a dictionary saved to a file. The obvious approach is to open the file, truncate it, write the new contents and close it. The chapter lists what goes wrong:
+- A crash after truncating but before writing loses everything.
+- A crash mid-write leaves a file that is half new and half old, or half written.
+- A concurrent reader can see the partial file.
+- Without fsync, the OS may not have put any of it on disk yet.
+
+## The rename trick
+The standard fix is to never touch the live file:
+1. Write the full new contents to a temporary file in the same directory.
+2. `fsync` the temporary file so its bytes are on disk.
+3. `rename()` it over the old file. On POSIX filesystems rename within one filesystem is atomic: readers see either the old file or the new one, never a mix.
+4. `fsync` the directory, because the rename is a change to the directory entry and also needs to be made durable.
+
+%%seq The rename trick: readers see the old file until a single atomic rename swaps in the complete new one.
+App > Disk : write data.tmp
+App > Disk : fsync(data.tmp)
+App > Disk : rename(data.tmp, data)
+App > Disk : fsync(directory)
+Disk -> App : new file durable
+%%
+
+This makes each update atomic, but it rewrites the whole file every time, so it only works for small data.
+
+## Append-only logs
+The chapter's next step is to append each update as a record to a log instead. Writes are now small and sequential, and the file can be rebuilt by replaying the log. A crash can still tear the last record, so each record carries a length and a checksum. On startup, the reader replays records until one fails its checksum and discards the tail. Over time the log grows, so it has to be compacted, which is the idea every later lesson in this module builds on.
+
+%%flow A checksummed log record: on recovery, replay until the first record whose checksum fails, then cut the torn tail.
+Record 1 OK -> Record 2 OK -> Record 3 OK -> *Record 4 torn -(truncate here)-> End
+%%
+
+The cstack "Let's Build a Simple Database" tutorial (only its table of contents was readable) follows the same path on a SQLite clone: a REPL, an in-memory table, persistence to a file with a pager that reads and writes fixed-size pages, then a B-tree.
+
+! Example: saving config safely
+! An app saves settings.json. It writes settings.json.tmp, calls fsync on it, renames it to settings.json, then fsyncs the directory. If power fails at any point, on reboot the app finds either the old settings.json or the new one, plus perhaps a stray .tmp file it deletes.
+
+> Takeaway: never update a file in place if a crash must not corrupt it. Write a new file and atomically rename it, or append checksummed records to a log, and fsync at the right points.
+
+?? Write the new version to a temporary file in the same directory, fsync it, atomically rename it over the original, then fsync the directory. Readers see the old or the new file, never a mix. For frequent small updates, append checksummed records to a log and, on recovery, drop any trailing record whose checksum fails.
+
+@07.04
+## Why binary
+Text formats such as JSON are easy to debug but large and slow to parse. Binary formats store numbers in their native shape and can be read without parsing everything. Two well-documented examples show the design choices.
+
+## Protocol Buffers encoding
+The protobuf encoding guide describes a format built for messages:
+- **Varints**: integers use 1 to 10 bytes. Each byte holds 7 bits of value and a continuation bit. The number 150 encodes as `96 01`.
+- **Tags**: each field is written as a key then a value. The key is `(field_number << 3) | wire_type`. Field 1 with wire type 0 (varint) gives key `08`, so field 1 = 150 is the three bytes `08 96 01`.
+- **Wire types** say how long the value is (varint, 64-bit, length-delimited, 32-bit), so a reader can skip a field it doesn't know.
+- **ZigZag** (`sint32`, `sint64`) maps small negative numbers to small positive ones, so -1 takes one byte instead of ten.
+
+%%flow Field 1 = 150 on the wire: one tag byte, then the varint, 7 bits per byte with a continuation bit.
+Tag 08 -(field 1, varint)-> *Byte 96 -(more follows)-> *Byte 01 -(= 150)-> Done
+%%
+
+Skipping unknown fields is what makes protobuf evolve safely: an old reader ignores fields added by a newer writer.
+
+## SQLite's file format
+The SQLite format document shows a format built for a whole database file. The file is a sequence of fixed-size pages. The first 100 bytes are a header that starts with the 16-byte magic string `SQLite format 3\0`, followed by the page size, a file change counter and separate read and write version numbers. If a reader sees a write version it doesn't know, it opens the file read-only; if it doesn't know the read version, it refuses to open it. Rollback journals and the WAL file have formats of their own, because crash recovery is part of the format.
+
+%%layers The first 100 bytes of a SQLite file tell any reader what it is and whether it may open it.
+*Magic: SQLite format 3\0 | 16 bytes, identifies the file
+Page size | how to cut the file into pages
+Read / write versions | refuse, or open read-only
+Change counter and more | then the B-tree pages follow
+%%
+
+## Design checklist
+- A magic number at the start, so tools can recognise the file and reject the wrong one.
+- A version, so newer software can still read old files and old software can refuse new ones cleanly.
+- Explicit lengths or fixed sizes, so readers can skip what they don't need.
+- Checksums on blocks or records, to detect corruption.
+- A fixed byte order (endianness).
+
+! Example: a log segment header
+! A team designs a segment file: 4 bytes magic `SEG1`, 2 bytes format version, 2 bytes flags, 8 bytes base offset, then records of [4-byte length][4-byte CRC32][payload]. A year later they add compression, bump the version to 2 and set a flag. Old readers see version 2 and refuse the file with a clear error instead of misreading compressed bytes as records.
+
+> Takeaway: a binary format should identify itself, state its version, make every piece's length explicit and carry checksums. Then it can evolve and fail loudly instead of silently.
+
+?? A magic number lets any program instantly tell this file type from another and reject garbage or the wrong file. A version number lets readers handle format changes: new code can still read old files, and old code can detect a newer file and refuse it cleanly instead of misinterpreting the bytes.
+
+@07.05
+## Reading part of an object
+Object stores and HTTP servers can return a slice of a file. MDN's range-requests guide explains the mechanism:
+- A server advertises support with `Accept-Ranges: bytes`.
+- The client sends `Range: bytes=1000-1999`.
+- The server replies `206 Partial Content` with `Content-Range: bytes 1000-1999/10737418240`.
+- Several ranges can be asked for at once, returned as a multipart response.
+- `If-Range` with an ETag means "give me the range only if the file hasn't changed, otherwise send the whole thing", which protects resumed downloads.
+- A range past the end gets `416 Range Not Satisfiable`.
+
+%%seq A range request: the server returns only the asked-for bytes with status 206.
+Client > Server : GET, Range: bytes=1000-1999
+Server -> Client : 206 Partial Content
+Server -> Client : Content-Range: bytes 1000-1999/10 GB
+%%
+
+## You need an index to know which bytes
+A byte range is only useful if you know where the record is. The Parquet file format answers this by putting the index in the file. A Parquet file starts and ends with the 4-byte magic `PAR1`. Data is split into row groups, each split into column chunks made of pages. The file metadata (schema, where every row group and column chunk starts, min/max statistics) is written in a footer at the end, followed by the footer's length.
+
+Putting metadata at the end lets the writer stream data out in one pass and write the index once it knows the offsets. A reader does the reverse:
+1. Read the last 8 bytes to get the footer length and check the magic.
+2. Read the footer with one range request.
+3. Use statistics to skip row groups that can't match, and fetch only the needed column chunks with range requests.
+
+%%layers A Parquet file: data first, index (footer) last, so it can be written in one pass and read footer-first.
+Magic PAR1 | 4 bytes
+Row group 1 | column chunks, pages
+Row group 2 | column chunks, pages
+*Footer metadata | schema, offsets, min/max stats
+Footer length + PAR1 | last 8 bytes, read first
+%%
+
+! Example: one column from a 10 GB file in S3
+! A query needs `user_id` for events on one day. The engine range-reads the last 8 bytes of the 10 GB Parquet file, then the 200 KB footer. Statistics show 3 of 80 row groups cover that day. It issues 3 range GETs for the `user_id` chunks, about 30 MB total, instead of downloading 10 GB.
+
+> Takeaway: range requests let you read any slice of a large object, and a footer index tells you which slices. Together they make object storage behave like a random-access file.
+
+?? Store an index (for example a footer listing record or block offsets) in the object or alongside it. The client fetches the index with a small range request, looks up the byte offset and length of the record, then sends `Range: bytes=start-end` and gets back a 206 with just those bytes.
+
+@07.06
+## Never edit, always add
+Table formats on object storage, such as Apache Iceberg and Delta Lake, never modify a data file once it is written. To change data they write new files, then atomically publish a new version of the table that says which files are part of it.
+
+## Delta Lake's transaction log
+The Delta protocol keeps a `_delta_log` directory next to the data. Each commit is a JSON file named by a 20-digit version number, such as `00000000000000000010.json`. A commit contains actions:
+- `add`: this data file is now part of the table.
+- `remove`: this file is no longer part of the table (the file itself stays until cleaned up).
+- `metaData`: schema and table settings changed.
+
+The current state is computed by replaying the log in order. To avoid replaying thousands of files, Delta periodically writes a checkpoint (Parquet) that summarises the state up to a version. A writer commits by creating the next version file, and only one writer can create a given name, so concurrent writers serialize. Readers pick a version and see exactly that snapshot (snapshot isolation). Reading an older version is time travel. `VACUUM` deletes files no longer referenced by recent versions, by default those older than 7 days.
+
+%%flow Each commit is a new numbered JSON file; replaying them in order gives the current set of data files.
+v0: add A, B -> v1: add C -> v2: remove A, add D -> *Table at v2 = B, C, D
+%%
+
+## Iceberg
+Iceberg's spec (mostly navigation on the page fetched) states the same goals: reads use a committed snapshot and are never affected by concurrent writes, and a write is either fully visible or not at all. Row-level deletes are recorded in separate delete files rather than by rewriting data files.
+
+## Why immutability helps
+- **Concurrency**: readers never see a half-written file, so they need no locks. Writers only race on the tiny commit step.
+- **Rollback**: an old version is still a valid list of files, so undo means pointing at it again.
+- **Caching and replication**: an immutable file can be cached or copied forever without invalidation.
+- **Cost**: storage grows until old versions are vacuumed, and small updates rewrite whole files (or add delete files that slow reads until compacted).
+
+! Example: a bad backfill
+! A job rewrites last month's sales with a bug at version 412. Analysts notice an hour later. Because versions 411 and earlier still reference the old files, the team restores the table to version 411 in seconds. No data had been overwritten.
+
+> Takeaway: write new files, then publish a new version with one atomic commit. Readers get consistent snapshots without locks, and rollback is just choosing an older version.
+
+?? If files never change, a reader can never see a partial write and needs no lock; it just reads the set of files in the version it started with. Writers only coordinate on the single atomic commit. Every old version remains a complete list of files, so rolling back means pointing at an earlier version, until old files are deleted.
+
+@07.07
+## The log as the core abstraction
+Jay Kreps's essay "The Log" defines a log as an append-only, totally ordered sequence of records, each with a sequential number. He argues it underlies databases, replication and data integration:
+- **State machine replication**: if replicas start in the same state and apply the same log in the same order, they end in the same state.
+- **Table and stream duality**: a table is a snapshot of the log at a point; the log is the history of changes to the table.
+- **Integration**: with N systems that all exchange data, you get about N² pipelines. A central log turns that into N writers and readers.
+
+He describes LinkedIn running Kafka at over 60 billion writes a day, made possible by partitioning the log, batching reads and writes, and zero-copy transfer from disk to network.
+
+## Log-structured storage
+Applied to storage, the idea is: append every write to the end of a file and never update in place. Writes are fast and sequential, and crash recovery is easy because only the tail can be damaged.
+
+Ilya Grigorik's post on SSTables and LevelDB shows how you get fast reads back. Keep recent writes in a sorted in-memory table (memtable). When it is full, write it out as a sorted string table (SSTable): an immutable file of key-value pairs sorted by key, with an index. Deletes are written as tombstones, markers that say "this key is gone". Background compaction merges SSTables, keeps the newest value for each key and drops overwritten values and tombstones.
+
+%%flow The log-structured path: sorted in memory, flushed as immutable sorted files, merged in the background.
+Write -(append)-> Memtable -(when full)-> SSTable 1 -(compaction)-> *Merged SSTable
+%%
+
+## What you pay later
+- **Garbage**: old versions and deleted keys take space until compaction removes them.
+- **Compaction I/O**: data is rewritten several times, which is write amplification (07.12).
+- **Read cost**: a key might be in several files, so reads need indexes and Bloom filters.
+- **Latency spikes**: compaction competes with foreground traffic for disk and CPU.
+
+! Example: overwriting a hot key
+! A user's session record is updated 1,000 times in an hour. A log-structured engine writes 1,000 records, each sequential and cheap. Until compaction runs, 999 of them are dead weight on disk, and compaction must read them all to keep the last one.
+
+> Takeaway: append-only storage makes writes fast and crash-safe. The bill comes later as garbage, compaction I/O and reads that may have to search several files.
+
+?? You pay in space for stale versions and tombstones until compaction runs, in extra I/O because compaction rereads and rewrites data (write amplification), in slower reads that may check several files, and in latency spikes when compaction competes with live traffic.
+
+@07.08
+## Bitcask in one picture
+The Bitcask paper (Basho, for Riak) describes a deliberately simple log-structured engine:
+- A Bitcask is a directory of data files. Only one file is active for writing; when it reaches a size limit it is closed and becomes immutable.
+- Every write appends a record: CRC, timestamp, key size, value size, key, value.
+- An in-memory hash table, the **keydir**, maps every key to the file id, value position, value size and timestamp of its latest record.
+
+%%flow A Bitcask read: one hash lookup in RAM, then exactly one disk read at a known offset.
+get(k) -(hash lookup)-> *keydir in RAM -(file id, offset)-> Data file -(one seek)-> Value
+%%
+
+A read looks up the keydir and does one disk read at a known position, at most one seek. Writes are pure appends. The paper reports 5,000 to 6,000 writes per second on a laptop at the time, and fast recovery, because only the active file can be damaged.
+
+## Deletes and merging
+A delete appends a tombstone record and removes the key from the keydir. Old values and tombstones stay in closed files until a **merge** runs: it reads the immutable files, keeps only the live latest values and writes new merged files. Alongside each merged file it writes a **hint file**, a compact list of keys and positions. On startup, Bitcask rebuilds the keydir from hint files instead of scanning every data file.
+
+## The limit
+Because the keydir holds every key, the number of keys is bounded by RAM. Values can be huge and live on disk, but a billion small keys need tens of gigabytes of memory. The keydir is also a hash table, so there is no ordered iteration or range scan.
+
+! Example: sizing a Bitcask node
+! A cache stores 200 million keys averaging 40 bytes, with about 30 bytes of keydir overhead per entry. That is about 14 GB of RAM just for the keydir, regardless of value size. A 32 GB node fits; doubling the keys would not.
+
+> Takeaway: Bitcask gives one-seek reads and append-only writes by keeping every key in an in-memory hash. The price is that RAM bounds the key count and there are no range queries.
+
+?? Holding every key in RAM limits the total number of keys to what memory can hold, and the hash index means no range scans. A delete appends a tombstone and removes the key from the keydir; the merge process later drops dead values and tombstones and writes hint files for fast restart.
+
+@07.09
+## The idea from the paper
+O'Neil, Cheng, Gawlick and O'Neil's 1996 paper introduced the log-structured merge tree for workloads with very high insert rates, such as history tables. It has a small component C0 in memory and a larger component C1 on disk. Inserts go into C0. When C0 grows past a threshold, a **rolling merge** moves a contiguous range of entries from C0 into C1, reading and writing C1 in large multi-page blocks, so disk access is sequential. Multiple components C0, C1, ..., Ck generalise this.
+
+The paper's cost example compares a B-tree with an LSM tree for the same insert rate: about $56,400 of disk arms for the B-tree versus about $11,400 for the LSM tree, because the LSM tree amortises each disk page write across many inserts. It also uses the "five-minute rule" (data accessed more often than every five minutes or so is cheaper to keep in memory) to reason about how much to keep in C0.
+
+## A write in RocksDB today
+The RocksDB overview turns this into a modern engine. A `Put(key, value)`:
+1. Appends the record to the write-ahead log (WAL), optionally fsynced.
+2. Inserts it into the active memtable, a sorted in-memory structure (a skip list by default).
+3. Returns to the caller.
+4. When the memtable is full it becomes immutable and a new one takes writes.
+5. A background thread flushes the immutable memtable to a new SST file in level 0.
+6. Compaction later merges L0 files into L1, L1 into L2, and so on, each level about 10 times larger.
+7. Once the data is safely in SST files, the old WAL can be deleted.
+
+%%seq A RocksDB write returns after the WAL and memtable; flush and compaction happen later, off the request path.
+Client > DB : Put(k, v)
+DB > WAL : append
+DB > Memtable : insert
+DB -> Client : OK
+Memtable > L0 file : flush when full
+L0 file > L1 file : compaction
+%%
+
+! Example: one write traced
+! `Put("user:42", "...")` writes 120 bytes to the WAL and the memtable and returns in microseconds. Ten minutes later the 64 MB memtable fills and is flushed as a new L0 file. An hour later compaction rewrites the record into an L1 file and, weeks later, an L3 file. The user saw only the first step.
+
+> Takeaway: an LSM tree buffers writes in memory, makes them durable with a sequential log, and moves them to disk in large sorted batches. Merging those batches in the background is what keeps reads manageable.
+
+?? The write is appended to the WAL for durability and inserted into the in-memory memtable, then acknowledged. When the memtable fills it is frozen and flushed as a sorted immutable SST file in level 0. Background compaction later merges it down through larger levels, and WAL segments are deleted once their data is in SSTs.
+
+@07.10
+## Three pieces
+- **Memtable**: the RocksDB MemTable page describes it as an in-memory sorted structure that serves reads and writes until it is flushed. The default is a skip list; hash-based variants exist for prefix workloads. `write_buffer_size` (64 MB by default) sets its size, and `max_write_buffer_number` (2 by default) limits how many memtables, active plus immutable, can exist before writes stall.
+- **WAL**: the RocksDB WAL page explains that every write goes to the log first so the memtable can be rebuilt after a crash. A WAL file is retired once all the column families it covers have been flushed. `max_total_wal_size` forces flushes so the log can't grow without limit, and `disableWAL` trades durability for speed.
+- **SSTable**: Grigorik's post describes the sorted, immutable on-disk file the memtable becomes, with an index of keys to offsets so a lookup doesn't scan it.
+
+%%layers Where a recent write lives at each moment, and what makes it durable.
+*WAL on disk | durable copy until flushed
+Active memtable | takes new writes, in RAM
+Immutable memtable | waiting to flush, in RAM
+SST files | sorted, immutable, on disk
+%%
+
+## Flush triggers
+The MemTable page lists when a flush happens:
+- The memtable reaches `write_buffer_size`.
+- Total memtable memory across column families reaches the database-wide limit.
+- The total WAL size reaches `max_total_wal_size`, which flushes the oldest memtables so old WAL files can be freed.
+
+## Why the WAL is still needed
+The memtable is RAM. Between a write and the next flush, which could be minutes and tens of megabytes later, the data exists nowhere on disk except in the WAL. If the process crashes, RocksDB replays the WAL to rebuild the memtable. Writing an SST on every write would destroy the whole point of batching; the WAL is the cheap sequential log that covers the gap.
+
+! Example: crash between flushes
+! A node accepts 40 MB of writes into its 64 MB memtable, then loses power. On restart there are no new SST files, but the WAL holds all 40 MB. RocksDB replays it into a fresh memtable and carries on. With `disableWAL` those writes would be lost.
+
+> Takeaway: the memtable makes writes fast, the SSTable makes them compact and sorted on disk, and the WAL makes them durable in between. Remove the WAL and every unflushed write is lost on a crash.
+
+?? The memtable lives in RAM and is only flushed when it fills, so recent writes would be lost on a crash. The WAL is a cheap sequential append, fsynced as configured, that records every write until its memtable is safely in an SSTable. On restart the engine replays it to rebuild the memtable.
+
+@07.11
+## Where a read looks
+A point lookup checks, in order, the active memtable, any immutable memtables, the L0 files (which can overlap, so each is checked), then at most one file per lower level, since those levels are non-overlapping. It stops at the first match. A key that exists is often found early. A key that does not exist forces a check of every place, which makes missing keys the worst case.
+
+%%flow A point read checks newest to oldest and stops at the first hit; a Bloom filter lets it skip files cheaply.
+Get(k) -> Memtable -(miss)-> L0 files -(miss)-> *L1 Bloom: no -(skip)-> L2 Bloom: maybe -(read 1 block)-> Found
+%%
+
+## Index blocks
+RocksDB's Index Block Format page explains how a lookup inside an SST file avoids scanning it. The file is made of data blocks (around 4 KB by default). The index block has one entry per data block: a key that is at least the last key in that block, and a BlockHandle (offset and size). A binary search on the index finds the one block that could hold the key, so one block read is needed. For large files the index itself can be split into partitions, with a small top-level index, so only the needed part is in memory.
+
+## Bloom filters
+The RocksDB Bloom Filter page describes a per-file filter that answers "definitely not here" or "maybe here". Many keys are hashed into a bit array; a lookup hashes its key and checks the bits. False negatives are impossible, false positives are tunable. The page's numbers:
+- About 9.9 bits per key gives a 1% false-positive rate.
+- About 4.9 bits per key gives 10%.
+- About 15.5 bits per key gives 0.1%.
+
+RocksDB's "full filter" covers the whole file in one filter, checked before any data block is read. The older block-based filter had one filter per data block. The Ribbon filter variant saves about 30% of the memory for the same accuracy, at more CPU to build.
+
+## Putting it together
+With filters, a missing-key lookup in a 7-level tree costs a few in-memory filter checks and, about 1% of the time per file, a wasted block read. Without them, it would read one block from every level.
+
+! Example: checking usernames
+! A signup form checks whether a name is taken, and 95% of checks are for names that don't exist. Each lookup without filters touches 6 files on SSD. With 10 bits per key, each file is skipped 99% of the time, so the average drops to about 0.06 block reads per lookup.
+
+> Takeaway: LSM reads search newest to oldest and stop at the first hit, so missing keys search everything. Bloom filters skip files that can't contain the key, and index blocks narrow each file to one block.
+
+?? A key that exists is usually found in a recent level and the search stops. A missing key has to be checked in the memtables and every level, so it costs the most. A Bloom filter per file says "definitely not here" for most files using a few bits per key in memory, so the engine skips those files without disk reads; at 10 bits per key only about 1% of files are read needlessly.
+
+@07.12
+## Three amplifications
+Mark Callaghan's post "Read, write & space amplification - pick 2" defines the three costs:
+- **Read amplification**: "the amount of work done per logical read operation". It can be measured for in-memory databases, for on-disk databases with no cache (worst case) and with some cache (average case).
+- **Write amplification**: "the amount of work done per write operation".
+- **Space amplification**: "the ratio of the size of the database to the size of the data in the database".
+
+His claim: "An algorithm can optimize for at most two from read, write and space amplification", so one engine is unlikely to beat another at all three. His examples: "a B-Tree has less read amplification than an LSM while an LSM has less write amplification than a B-Tree." He also notes when the costs land. A B-tree pays its read cost immediately, because it must read a page to modify it; an LSM defers it to background compaction. Space amplification grows from fragmentation in a B-tree and from old versions of rows in an LSM. (The same idea was later formalised elsewhere as the RUM conjecture; the post doesn't use that name.)
+
+## Compaction styles
+The RocksDB Compaction page compares the two main strategies:
+- **Leveled**: each level is about 10 times bigger than the one above and holds non-overlapping files. Moving data down one level means merging it with the overlapping files in the next level, rewriting them. Data is rewritten roughly once per level, times the fan-out factor, so write amplification is high (often 10 to 30). Reads and space are good, because each key lives in about one place per level.
+- **Tiered (universal in RocksDB)**: files of similar size are grouped into sorted runs and merged only when enough pile up. Each byte is rewritten fewer times, so write amplification is lower, but there are more overlapping runs (more read amplification) and duplicates linger (more space amplification). RocksDB's `max_size_amplification_percent`, 200 by default, triggers a full merge when the extra space exceeds 200%.
+
+%%flow Leveled compaction: data moves down one level at a time, rewritten with the overlapping files of a level about ten times bigger.
+Memtable -(flush)-> L0 -(merge)-> L1 1 GB -(merge, rewrite)-> L2 10 GB -(merge, rewrite)-> *L3 100 GB
+%%
+
+| | Leveled | Tiered / universal |
+| Write amplification | High | Low |
+| Read amplification | Low | Higher |
+| Space amplification | Low (about 1.1x) | Higher, can reach 2x+ |
+| Good for | Read-heavy, space-sensitive | Write-heavy ingest |
+
+! Example: an SSD's lifetime
+! An app writes 50 GB a day. With leveled compaction at about 20x write amplification, the SSD absorbs about 1 TB a day of writes; a drive rated for 1,000 TB written lasts about 3 years. Switching to universal compaction at about 5x cuts that to 250 GB a day, at the cost of reads checking more files and needing more free disk.
+
+> Takeaway: compaction trades read, write and space amplification against each other. Leveled minimises reads and space by rewriting data many times; tiered rewrites less but leaves more files to search and more duplicates on disk.
+
+?? Write amplification is the bytes physically written to storage divided by the bytes the application wrote. Leveled compaction keeps each level non-overlapping, so pushing data down means rewriting it with overlapping files in a level about ten times larger, again at each level. Tiered compaction merges only when several similar-sized runs exist, so each byte is rewritten fewer times.
+
+@07.13
+## Two kinds of storage
+A database stores small, structured records it can index, query and update in place. Object storage stores large blobs, addressed by a key, that are written once and read whole or by range. They are built for different jobs, and big systems use both.
+
+## Haystack
+Facebook's Haystack paper (OSDI 2010) is the classic case. Photos were first stored on NFS-mounted filers, one file per photo. Because of directory and inode metadata, reading a photo took 3 or more disk operations, and the metadata did not fit in memory. At the scale described (260 billion images, about 20 PB, 1 billion new photos a week, up to 1 million images per second at peak), the metadata lookups were the bottleneck.
+
+Haystack's fix was to pack many photos, called needles, into large files of about 100 GB (physical volumes) and to keep a small in-memory index of where each needle starts, about 10 bytes per photo. A read needs one disk operation. Three parts work together:
+- **Directory**: maps logical volumes to physical volumes and builds photo URLs.
+- **Cache**: an internal CDN-like cache for popular photos.
+- **Store**: the machines holding volumes and their in-memory indexes.
+
+%%flow Haystack versus NFS: the metadata moves into RAM, so a photo read becomes one disk operation.
+[NFS, one file per photo] Read -(directory)-> Inode -(lookup)-> *Data: 3+ disk ops
+[Haystack] Read -(RAM index, ~10 bytes/photo)-> *Volume offset: 1 disk op
+%%
+
+Deletes just set a flag. Compaction later copies live needles into new files. About 25% of photos were deleted each year.
+
+## The S3 view
+Andy Warfield's S3 post describes S3 as hundreds of microservices over a storage fleet of millions of hard disks, designed for 11 nines of durability. A single customer's burst can be spread across over a million disks. A database cannot offer that capacity or cost per byte for blobs, and object storage cannot offer queries or transactions.
+
+## The usual split
+- Object store: the bytes (images, video, backups, logs, Parquet).
+- Database: metadata about them (owner, key, size, checksum, created time, permissions), indexed for queries.
+
+! Example: a photo-sharing app
+! Each upload goes to object storage at `photos/{user}/{uuid}.jpg`. A row in Postgres stores the user, caption, upload time, the key and a SHA-256. The feed query hits Postgres by user and time; the client then fetches the image bytes through a CDN that pulls from object storage.
+
+> Takeaway: put large immutable blobs in object storage and the small queryable facts about them in a database. Each system is cheap and fast at the job the other is bad at.
+
+?? Images are large, written once and read whole, which object storage serves cheaply, durably and at huge scale through a CDN. Databases are expensive per byte and slow down when filled with blobs, but are good at indexing and querying small records. Storing metadata in the database and bytes in object storage lets each do what it is good at.
+
+@07.14
+## The parts of S3
+Andy Warfield's post (adapted from his FAST '23 keynote) describes S3 at a high level:
+- A **front-end fleet** serves the REST API: authentication, request routing and the HTTP protocol.
+- A **namespace service** maps bucket and key to where the object's data lives.
+- A **storage fleet** of hard disks holds the data. On each disk, **ShardStore**, rewritten in Rust, manages the bytes.
+- **Background services** handle replication, tiering, repair and other data work.
+
+Each part is owned by a team that runs its own fleet behind an API contract. The post doesn't break down the metadata tier further.
+
+## A PUT, step by step
+The post doesn't trace a request byte by byte, so this sequence combines its components with how such systems are generally built:
+1. The front end authenticates the request and picks storage nodes for the new object.
+2. Data is split and erasure-coded into shards (k data plus m parity) and written to many disks across separate failure domains.
+3. Once enough shards are durable, the metadata (key, version, location of shards, checksum) is committed in the namespace service.
+4. The front end returns 200. Only now can a GET find the object.
+
+%%seq A PUT is only visible once its metadata commits; the bytes are written first.
+Client > Front end : PUT bucket/key
+Front end > Storage nodes : write k + m shards
+Storage nodes -> Front end : shards durable
+Front end > Namespace : commit key -> shards
+Front end -> Client : 200 OK
+%%
+
+## Heat and scale
+The post's main operational idea is heat, the request load on a disk at a given time. A hard drive does only about 120 random I/Os a second, and drives keep growing (26 TB at the time, 200 TB forecast), so I/O per terabyte keeps falling. S3 spreads each customer's objects across many disks so that one customer's burst lands on many drives, and aggregating millions of bursty workloads smooths the total load. Redundancy helps here too: with replicas or erasure coding, reads can avoid a busy disk.
+
+## Strong consistency
+Werner Vogels's 2021 post explains how S3 became strongly consistent (read-after-write for all operations, including LIST). The old eventual consistency came from a metadata cache built to stay available: a write could go through one cache node while a read was served by another holding a stale entry. The fix added a **witness**, a component notified on every object change that acts as a read barrier: the cache asks it whether its entry is stale and, if so, reads from the persistence tier. The witness keeps a small amount of in-memory state, so it is fast and easily replaced. The team verified the protocol with proofs and model checking, which they say took more effort than the code. The change was made at no extra cost and with no performance or availability trade-off announced.
+
+%%seq The witness acts as a read barrier: the cache serves a value only if the witness says it is current.
+Writer > Persistence : PUT k (v2)
+Persistence > Witness : k changed
+Reader > Cache : GET k
+Cache > Witness : is my v1 stale?
+Witness -> Cache : yes
+Cache > Persistence : read k
+Cache -> Reader : v2
+%%
+
+! Example: upload then list
+! Before December 2020, a job could PUT `reports/2020-11.csv` and immediately LIST `reports/` without seeing it, because LIST read a stale cache entry. Pipelines added sleeps or a separate manifest. With the witness, the LIST is guaranteed to include the new key.
+
+> Takeaway: S3 separates the HTTP front end, the namespace metadata and the disk fleet. The metadata commit is the moment an object exists, and the witness keeps cached metadata from serving stale answers.
+
+?? The front end handles HTTP, authentication and routing, and decides where to write. The storage nodes, running ShardStore on each disk, durably store the erasure-coded shards across failure domains. The metadata (namespace) service records the key, version and shard locations; once it commits, the object is visible to reads.
+
+@07.15
+## Two ways to split keys across servers
+- **Range partitioning**: the key space is divided into contiguous sorted ranges, each owned by one server: `a` to `f` on server 1, `f` to `m` on server 2, and so on.
+- **Consistent hashing**: keys are hashed onto a ring and each server owns arcs of the ring. Neighbouring keys land on unrelated servers.
+
+%%flow The same five keys under each scheme: ranges keep a prefix together, hashing scatters it.
+[Range partitioning] invoices/01, /02, /03 -(all in one range)-> *Server A
+[Consistent hashing] invoices/01 -(hash)-> Server C -(next key)-> Server A -(next key)-> Server D
+%%
+
+## Consistent hashing
+Hello Interview's consistent hashing lesson starts from the naive scheme, `hash(key) % N`. Change N by adding or removing one database and almost every key maps to a different server, forcing massive data movement. The fix is a ring: servers and keys are hashed onto the same circular space (for example 0 to 2^32 − 1), and a key belongs to the first server clockwise from it.
+- Adding a server only moves the keys between it and its predecessor. In the lesson's example, adding DB5 at position 90 moves about 15% of all events.
+- Removing a server moves only its keys, to the next server clockwise.
+- **Virtual nodes**: each server is placed at many points ("DB1-vn1", "DB1-vn2", ...). Without them, a failed server's whole load lands on one neighbour, doubling its load; with them, the load spreads across all remaining servers, and a new server takes small slices from many.
+- Real users: Cassandra, DynamoDB and CDNs. Redis Cluster uses a variant: 16,384 fixed hash slots (`CRC16(key) mod 16384`) assigned to nodes.
+
+The lesson doesn't discuss range queries, but the consequence follows directly: hashing destroys key order, so a query for all keys with a prefix has to ask every server.
+
+%%flow Adding a node to a ring moves only the arc it takes over.
+Key at 80 -(clockwise)-> DB1 at 100 -(add DB5 at 90)-> *Key now on DB5
+%%
+
+## Range partitioning in Windows Azure Storage
+The Windows Azure Storage paper (Calder et al., SOSP 2011) explains why WAS chose ranges. Blobs, tables and queues are stored in huge **Object Tables** whose primary key is `AccountName, PartitionName, ObjectName`. Each table is split into **RangePartitions**, contiguous ranges of rows from a low key to a high key, each served by one partition server.
+
+The paper gives the reasons directly: range partitioning makes performance isolation easier, because a customer's objects are stored together in a set of RangePartitions. That gives efficient object enumeration (listing) and lets WAS throttle and isolate abusive accounts. The downside it names is sequential access patterns: if keys increase steadily, all new traffic hits the last range. Customers who need to spread that load are expected to hash or bucket their PartitionName themselves.
+
+| | Range partitioning | Consistent hashing |
+| Key order kept | Yes | No |
+| List or scan by prefix | Cheap, a few partitions | Must ask every node |
+| Hot spots | Sequential keys hit one range | Spread by hash |
+| Rebalancing | Split, merge, move ranges | Move ring arcs |
+| Typical use | Object metadata, Bigtable, Azure Storage | Dynamo-style stores, Cassandra, caches |
+
+! Example: listing a folder
+! A bucket has 50 million objects and a user lists `invoices/2024/`. With range partitioning, the 120,000 matching keys sit in one or two adjacent ranges, read in order. With hashing, they are scattered across every node, so the system must query all of them and merge the results to return the first 1,000 sorted keys.
+
+> Takeaway: range partitioning keeps keys sorted, so prefix listing and range scans are cheap and a tenant's data stays together, but sequential keys create hot ranges that must be split. Hashing spreads load and moves little data when nodes change, but gives up order.
+
+?? With range partitioning, keys are stored in sorted order and contiguous key ranges live on the same server, so all keys with a prefix sit together and can be listed by reading one or a few ranges in order. Hashing scatters neighbouring keys across all nodes, so a prefix listing has to query every node and merge the results.
+
+@07.16
+## The partition layer in Windows Azure Storage
+The WAS paper describes a three-layer design inside each **storage stamp**, a cluster of 10 to 20 racks with 18 disk-heavy storage nodes per rack (about 2 PB raw in the first generation, up to 30 PB in the next). Stamps are kept around 70% utilised, never above 80%, so there is room to absorb a rack failure. A separate **Location Service** assigns accounts to stamps and updates DNS.
+
+%%layers The three layers inside one storage stamp; the partition layer is the subject of this lesson.
+Front-end servers | stateless: authenticate, route by cached partition map
+*Partition layer | objects, RangePartitions, transactions, consistency
+Stream layer | append-only extents, replicated 3 ways
+%%
+
+The partition layer's parts:
+- **Partition Map Table**: records every RangePartition of every Object Table and which partition server is serving it. Front ends cache it to route each request.
+- **Partition Manager (PM)**: splits the Object Tables into RangePartitions, assigns each to exactly one partition server with no overlaps, and load-balances. Several PM instances run; the one holding the leader lock in the Lock Service is active.
+- **Partition Servers (PS)**: serve requests for their assigned RangePartitions, about ten each on average. A PS may serve a partition only while it holds a lease from the Lock Service, which guarantees one owner at a time and so strong consistency.
+- **Lock Service**: a Paxos-based service for PM leader election and PS leases.
+
+Each RangePartition is stored LSM-style on the stream layer: a **commit log stream** of recent changes, a **metadata stream** (the root, naming the other streams), a **row data stream** of checkpoints and their index, and for blobs a **blob data stream**. In memory the PS keeps a memory table, an index cache, a row data cache and **Bloom filters** per checkpoint.
+
+## How the PM reacts to load
+The PM tracks, per RangePartition: transactions per second, average pending transactions, throttling rate, CPU, network, request latency and data size. Every 15 seconds it sorts partitions by these split triggers and acts on a few:
+- **Load balance**: move a busy RangePartition to a lightly loaded PS. The old PS checkpoints and stops; the new one loads it and starts serving. Because the data lives in the shared stream layer, nothing is copied.
+- **Split**: the PM decides to split; the PS picks the key. Size splits roughly halve the data; load splits use Adaptive Range Profiling to find the key that splits the traffic. The PS checkpoints partition B, pauses briefly, and uses a "MultiModify" stream operation to create streams for C and D that point at **the same extents** in the same order, then starts serving C and D. The PM updates the map and moves one of them to another PS.
+- **Merge**: cold neighbouring ranges are moved to one PS and merged, keeping the number of RangePartitions between watermarks, typically about 10 times the number of partition servers.
+
+%%seq A split: metadata work only, because both halves keep pointing at the same extents.
+PM > PS-7 : split B into C and D
+PS-7 > PS-7 : checkpoint B, pause
+PS-7 > Stream layer : MultiModify: C, D reuse B's extents
+PS-7 -> PM : serving C and D
+PM > Map table : C on PS-7, D on PS-12
+PM > PS-12 : load and serve D
+%%
+
+! Example: a viral container
+! One customer's container suddenly gets 20,000 requests a second, all inside RangePartition B on PS-7. On the next 15-second pass the PM sees B at the top of its split list. PS-7 profiles B's traffic, splits it at a middle key into C and D, and the PM moves D to idle PS-12. Within seconds the load is split across two servers, and no blob data was copied.
+
+> Takeaway: a partition manager owns the key-range-to-server map and keeps it balanced by moving, splitting and merging ranges. Keeping the data in a shared stream layer makes all three cheap, metadata-only operations.
+
+?? It splits the hot range at a key chosen from the traffic pattern into two smaller ranges, or moves the whole range to a less loaded partition server if one has spare capacity. In WAS the split creates new streams that reuse the same extents, so no data is copied, and the partition manager updates the partition map table so front ends route requests to the new owners.
+
+@07.17
+## Bytes and metadata are different workloads
+Object bytes are large, immutable once written, and read sequentially or by range. Object metadata (key, size, version, owner, ACL, checksum, where the bytes live) is tiny, changes often, and must be indexed and listed. Putting both in one structure makes each worse.
+
+Haystack is the clearest demonstration. On NFS, each photo read needed 3 or more disk operations just to resolve directory entries and inodes before the data. Haystack separated the two: the per-photo metadata it needs to locate a photo was cut to about 10 bytes and kept in memory, and the bytes sit in 100 GB volume files. One disk operation per read. The Directory holds the mapping of logical volumes to machines, a separate metadata store from the bytes.
+
+S3, as Warfield describes it, also separates a namespace service from the storage fleet that holds the data, each run by its own team. WAS does the same with its partition layer (objects and their index) on top of its stream layer (bytes).
+
+%%flow Reads go through metadata first; listing never touches the bytes at all.
+[GET] Client -(key)-> *Metadata store -(shard locations)-> Byte store -(range read)-> Client
+[LIST] Client -(prefix)-> *Metadata store -(sorted keys)-> Client
+%%
+
+## Why the separation pays off
+- **Different scaling**: metadata needs fast random lookups and range scans, so it lives in a partitioned, indexed store (often in memory or on SSD). Bytes need cheap capacity, so they live on dense hard drives.
+- **Listing and querying**: listing a prefix reads only metadata, never the bytes.
+- **Atomic visibility**: the object becomes visible at the instant its metadata row is committed. Data can be written first, safely, because nobody can find it yet.
+- **Moving data**: repair, tiering and compaction can relocate bytes and then update a pointer, without the user's key changing.
+- **Garbage collection**: bytes not referenced by any metadata row can be found and deleted.
+
+! Example: overwrite with versioning
+! A user uploads a new `logo.png`. The storage layer writes the new bytes to fresh disks. Only then does the metadata store add version 7 pointing at them and mark it latest. A GET that started earlier reads version 6 to the end; one that starts after the commit gets version 7. Neither sees a mix.
+
+> Takeaway: keep small, mutable, queryable metadata in an indexed store and large immutable bytes in a capacity store. Committing the metadata is what makes an object exist.
+
+?? Metadata is small, frequently updated and needs indexing and listing; bytes are large, immutable and need cheap capacity. Separating them lets each use the right hardware and data structure, lets listing avoid touching data, makes a metadata commit the atomic moment an object becomes visible, and lets data be moved or repaired by updating a pointer.
+
+@07.18
+## The stream layer in WAS
+The bottom layer of Windows Azure Storage stores everything as append-only **streams**. From the paper:
+- A **stream** is an ordered list of pointers to **extents**. It can be appended to and read randomly.
+- An **extent** is a sequence of appended **blocks** and is the unit of replication. The partition layer targets 1 GB extents.
+- A **block** (up to 4 MB) is the unit of reads and writes, and carries its own checksum, verified on every read.
+- Only the last extent of a stream can be appended to. When it reaches its target size it is **sealed** at a block boundary and becomes immutable.
+- The **Stream Manager (SM)** is a Paxos cluster that tracks the namespace, which extents make up each stream and where their replicas live. It is off the critical path of appends. It also re-replicates lost replicas, garbage-collects unreferenced extents and schedules erasure coding. Its state fits in 32 GB of memory for up to 50 million extents and 100,000 streams per stamp.
+- **Extent Nodes (EN)** store extent replicas as files on their disks: blocks, checksums and an index from offset to block.
+
+%%layers A stream is a list of extents; only the last one accepts appends.
+Stream //log/partition-B | ordered list of extent pointers
+Extent 1 | sealed, immutable
+Extent 2 | sealed, immutable
+*Extent 3 | unsealed: appends go here
+%%
+
+## How an append works
+The SM assigns each new extent three replicas on extent nodes in different fault and upgrade domains, one primary and two secondaries. The client sends appends to the primary, which picks the offset, orders concurrent appends and forwards them. The primary acknowledges the client only after all three replicas have the append on disk. Each EN writes appends first to a dedicated journal drive, which cut average append latency from 30 ms to 6 ms in the paper.
+
+%%seq An append is acknowledged only when all three replicas have it.
+Partition server > Primary EN : append block
+Primary EN > Secondary EN 1 : append at offset X
+Primary EN > Secondary EN 2 : append at offset X
+Secondary EN 1 -> Primary EN : ok
+Secondary EN 2 -> Primary EN : ok
+Primary EN -> Partition server : success
+%%
+
+If a replica is unreachable, the writer asks the SM to **seal** the extent. The SM asks the reachable replicas for their commit length and seals at the smallest one, then forces any replica that comes back later to sync to exactly that length, so all copies are bitwise identical. The writer continues in a new extent.
+
+## Why append-only at the bottom
+- **Simple replication**: an append-only extent has one thing replicas can disagree on, its length, and sealing settles it.
+- **Immutability for everything above**: sealed extents never change, so they can be erasure-coded, geo-replicated, cached and shared between streams. That is what makes splits and merges in the partition layer metadata-only.
+- **Sequential I/O**: appends are disk-friendly, and the partition layer keeps its own index (LSM-style) to find rows.
+
+The cost is the usual one for logs: deleted and overwritten data stays until the partition layer garbage-collects and rewrites live data.
+
+! Example: a partition server crash
+! PS-3 dies while appending to extent 9 of its commit log stream. The SM asks the extent nodes holding extent 9 for their lengths, seals it at the smallest, and a new extent 10 is started. The PM assigns PS-3's RangePartitions to PS-8, which reads the metadata stream, replays the commit log from the last checkpoint and serves traffic. No data was in an ambiguous state.
+
+> Takeaway: an append-only lowest layer makes replicas easy to keep in agreement and turns sealed data immutable, so everything above it can be moved, shared, erasure-coded and recovered cheaply.
+
+?? An append-only extent has only one possible disagreement after a failure, its length, so replicas can be reconciled by sealing at an agreed commit length. Sealed data never changes, which makes replication, erasure coding, caching and sharing extents between streams safe without locks, and keeps appends sequential. The cost is garbage collection of dead data.
+
+@07.19
+## Replication versus erasure coding
+Andy Warfield's S3 post describes both techniques. Replication keeps full copies on different disks: capacity-expensive, but simple, and reads can go to any copy. Erasure coding, such as Reed-Solomon, splits an object into k data shards plus m parity shards; any k of the k + m are enough to rebuild it. It tolerates the same failures with much less capacity, and like replication it lets reads avoid busy disks.
+
+%%flow 3x replication versus 10 + 4 erasure coding for the same 1 TB.
+[3x replication] 1 TB -(copy x3)-> *3 TB stored, 2 failures OK
+[10 + 4 erasure coding] 1 TB -(split 10, add 4 parity)-> *1.4 TB stored, 4 failures OK
+%%
+
+## Reed-Solomon at Backblaze
+Brian Beach's Backblaze post (2015) announced their open-source, MIT-licensed Java Reed-Solomon library. Backblaze splits each file into **17 data shards plus 3 parity shards**, 20 pieces stored on different Storage Pods, and can rebuild the file from any 17. The math is matrix algebra over bytes: lay the data out as a matrix, multiply by a coding matrix to produce the parity rows; to recover, cross out the rows of the missing pieces, invert what's left of the coding matrix and multiply it by the surviving pieces. The library handles up to 256 shards in total and encoded 149 MB/s on one thread of a Storage Pod CPU. Storage overhead is 20/17, about 1.18x.
+
+## WAS: replicate first, erasure-code later
+The WAS paper uses both, at different stages:
+- **Intra-stamp replication** (stream layer) is synchronous and on the write path: three replicas across fault domains, so an acknowledged write survives disk, node and rack failures. The durability contract is at least three durable copies, even through a cluster-wide power failure.
+- **Erasure coding** is applied in the background to sealed blob extents: each extent is split at block boundaries into N fragments plus M Reed-Solomon fragments, cutting the cost from 3x to **1.3x to 1.5x**.
+- **Inter-stamp replication** (partition layer) is asynchronous geo-replication of objects to another stamp for disaster recovery, committed on the secondary within 30 seconds on average.
+
+Erasure coding also helps reads. WAS sends reads with a deadline; an extent node that can't meet it says so at once and the client tries another. For erasure-coded data on a busy disk, it reads all fragments and uses the first N to come back.
+
+## The trade
+| | 3x replication | 10 + 4 erasure coding |
+| Storage overhead | 3.0x | 1.4x |
+| Failures tolerated | 2 | 4 |
+| Read, healthy | Read one copy | Read from 10 shards |
+| Repair one lost unit | Copy 1 unit from a replica | Read 10 units to rebuild 1 |
+| Write | Write 3 copies | Encode, write 14 shards |
+| Good for | Hot, small, changing data | Cold or sealed, large data |
+
+The hidden cost of erasure coding is repair: rebuilding one lost shard needs reads from k other machines, so a disk failure creates about k times as much network traffic as with replication. That is why systems like WAS replicate data while it is being written and erasure-code it once it is sealed.
+
+! Example: 1 PB of backups
+! Stored with 3x replication, 1 PB of data needs 3 PB of raw disk. With 10 + 4 erasure coding it needs 1.4 PB, saving 1.6 PB, and survives four simultaneous failures instead of two. When a 20 TB disk dies, though, rebuilding its shards reads about 200 TB from other disks instead of 20 TB.
+
+> Takeaway: replication is simple and fast to repair but costs 3x; erasure coding gives equal or better durability at 1.2x to 1.5x but makes repairs and some reads more expensive. Large systems replicate on write and erasure-code sealed data.
+
+?? 3x replication stores 3 bytes for every byte (200% overhead) and tolerates 2 failures; repairing a lost copy reads 1 unit from a surviving replica. 10 + 4 erasure coding stores 1.4 bytes per byte (40% overhead) and tolerates 4 failures, but rebuilding one lost shard requires reading 10 shards from other machines, so repair traffic is about 10 times higher.
+
+@07.20
+## The end-to-end argument
+Saltzer, Reed and Clark's "End-to-End Arguments in System Design" (1981, revised for ACM TOCS in 1984) states the principle: "The function in question can completely and correctly be implemented only with the knowledge and help of the application standing at the end points of the communication system. Therefore, providing that questioned function as a feature of the communication system itself is not possible. (Sometimes an incomplete version of the function provided by the communication system may be useful as a performance enhancement.)"
+
+Their main example is "careful file transfer" from host A to host B. The paper lists what can go wrong:
+1. The file on A's disk may now read back incorrectly because of disk hardware faults.
+2. The file system, the transfer program or the network software may make a mistake buffering or copying the data, on A or B.
+3. The processor or its memory may have a transient error during copying, on A or B.
+4. The network may drop, change, lose or duplicate packets.
+5. Either host may crash partway through.
+
+Making the network perfectly reliable fixes only threat 4. The only complete check is end to end: after writing, B reads the file back, computes a checksum and compares it with one computed by A, retrying if they differ. Lower-level reliability is still worth having, but only as a performance enhancement that catches errors earlier and makes retries rarer.
+
+%%flow Where a per-hop checksum protects data, and the gaps where only an end-to-end checksum can catch corruption.
+*Sender checksum -> Sender memory -(TCP-checked hop)-> Gateway memory -(TCP-checked hop)-> Receiver disk -(compare)-> *End-to-end verify
+%%
+
+The paper's real anecdote: a network of local networks joined by gateways used a checksum on every hop. A gateway developed a transient fault while copying data between its buffers and swapped byte pairs about once in every million bytes. Every hop's checksum passed, because the corruption happened inside the gateway's memory. Operating system source files sent through it were corrupted, and the owners had to repair them by comparing against old printed listings.
+
+## Why TCP's checksum is not enough
+- It only covers the wire between two TCP endpoints. Load balancers and proxies that terminate TCP, application buffers, memory bit flips and storage firmware are all outside it, exactly the gateway problem above.
+- It is a 16-bit sum, which misses a meaningful fraction of corruptions at large volumes.
+- Warfield's S3 post gives the scale reason: hard drives misread about once per 10^15 bits. At exabyte scale, rare errors happen daily.
+
+## How S3 does it
+AWS's "Checking object integrity" pages describe end-to-end checks exposed to clients:
+- Supported algorithms: CRC64NVME (the default), CRC32, CRC32C, SHA-1, SHA-256, MD5, XXHash64, XXHash3, XXHash128 and SHA-512. The client sends one as `x-amz-checksum-...`; S3 computes its own on what it received and validates it before storing the object and the checksum.
+- AWS SDKs calculate a checksum automatically if you don't supply one; if neither the client nor the SDK does, S3 computes CRC64NVME itself.
+- With streaming uploads the checksum can be sent as a **trailing** header after the body, via `x-amz-trailer`.
+- For multipart uploads there are two types. **Full object** checksums cover every byte from first to last (CRC64NVME, CRC32, CRC32C). **Composite** checksums combine per-part checksums (CRC32, CRC32C, SHA and MD5 families, XXHash).
+- `GetObject` and `HeadObject` return the stored checksum when checksum mode is enabled, so a client can verify what it downloaded.
+- The ETag is an MD5 of the data only for single-part uploads that are plaintext or SSE-S3 encrypted. For multipart uploads it is an MD5 of the parts' MD5s with "-N" appended, so it is not a checksum of the object.
+- For data at rest, S3 Batch Operations' **Compute checksum** recalculates checksums for billions of objects without downloading them and produces an integrity report.
+
+%%seq S3 validates the client's checksum before storing; the client can verify again on download.
+Client > Client : compute CRC64NVME
+Client > S3 : PUT + x-amz-checksum-crc64nvme
+S3 > S3 : recompute and compare
+S3 -> Client : 200 (or reject on mismatch)
+Client > S3 : GET, checksum mode enabled
+S3 -> Client : bytes + stored checksum
+Client > Client : recompute and compare
+%%
+
+! Example: a corrupting proxy
+! A company's upload service sits behind a TLS-terminating proxy with a faulty memory module that flips about one bit in 10^12 bytes. TCP checksums pass on both hops, just like the gateway in the paper. The client computed a SHA-256 before upload and sends it as `x-amz-checksum-sha256`; S3's computed value doesn't match, the PUT is rejected, and the client retries cleanly instead of storing a corrupt file.
+
+> Takeaway: only the endpoints can confirm that what was stored is what was sent. Checksum at the source, verify at the destination and at rest; lower-layer checks just catch errors sooner.
+
+?? TCP's checksum only protects data while it is on the wire between two TCP endpoints, and it is weak (16 bits). Corruption can happen in memory, inside proxies and gateways, in application code, on disk or in firmware, all outside that hop; Saltzer, Reed and Clark's gateway swapped bytes while every hop's checksum passed. Only a checksum computed by the original sender and verified by the final receiver, and rechecked at rest, confirms the data is intact end to end.

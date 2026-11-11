@@ -1,0 +1,714 @@
+@06.01
+## Why distributed is different
+On one machine, a function call either returns or the whole program crashes. Across a network, every call has extra steps that can fail on their own. AWS's Builders' Library article "Challenges with distributed systems" (Jacob Gabrielson) lists the eight steps of a single request and reply:
+1. Client puts the request on the network.
+2. Network delivers it to the server.
+3. Server validates it.
+4. Server updates its state.
+5. Server puts the reply on the network.
+6. Network delivers the reply.
+7. Client validates the reply.
+8. Client updates its state.
+
+Client, server and network do not share fate, so any one step can fail while the others succeed. The nastiest outcome is **UNKNOWN**: the client timed out and cannot tell whether the server did the work. That is why idempotency (02.09) matters so much.
+
+Testing also explodes. Each remote call can end in several outcomes (failed to send, retryable error, fatal error, unknown, success), so 10 single-machine test cases can become about 200. Distributed bugs often stay hidden for months until a rare combination of failures triggers them, and then they spread along the network. The article's example: one amazon.com catalog server with a full disk returned empty responses very fast; the load balancer saw the fast responses as healthy and sent it more traffic, taking down the site.
+
+%%seq The eight steps of one remote call: any one can fail while the others succeed.
+Client > Network : 1. put request on network
+Network > Server : 2. deliver request
+Server > Server : 3. validate, 4. update state
+Server > Network : 5. put reply on network
+Network -> Client : 6. deliver reply
+Client > Client : 7. validate, 8. update state
+%%
+
+## The models we reason with
+Martin Kleppmann's Cambridge notes (with an accompanying lecture series) define a **system model**: explicit assumptions about the network, the nodes and timing.
+- **Network**: reliable (messages arrive, maybe reordered), fair-loss (messages can be lost or duplicated but retrying eventually works; the usual assumption), or arbitrary (an attacker can tamper).
+- **Nodes**: crash-stop (a crashed node never returns), crash-recovery (it restarts, losing memory but keeping disk), or Byzantine (it can behave arbitrarily, even maliciously).
+- **Timing**: synchronous (known upper bounds on delay and processing), partially synchronous (usually bounded, but sometimes not, for unknown periods), or asynchronous (no bounds at all).
+
+Real systems are best modelled as partially synchronous with crash-recovery nodes. Algorithms that rely on synchrony can break when a GC pause or network hiccup violates their timing assumptions.
+
+## Classic impossibilities
+- **Two generals**: two armies must attack together but can only communicate by messengers who might be captured. No finite number of acknowledgements makes both certain. Lesson: you cannot get certainty of agreement over an unreliable channel, so design for outcomes you can reconcile (an online shop can refund a charge).
+- **Byzantine generals**: with traitors who lie, agreement needs fewer than one third of nodes to be faulty (3f + 1 nodes to tolerate f). Most datacenter systems assume crash faults, not Byzantine ones.
+
+%%flow From the outside, every failure looks the same: silence.
+[Crashed] Request -> *Node dead -> No reply
+[Slow] Request -> *GC pause 5 s -> No reply (yet)
+[Lost] Request -> *Packet dropped -> No reply
+%%
+
+## Crashed or slow?
+A failure detector usually works by timeouts: send a message, and if no reply arrives in time, suspect the node. But no reply can mean the node crashed, the node is slow (a GC pause, overload), the request was lost, or the reply was lost. From the outside these look identical. A **perfect** failure detector only exists in a synchronous system; in practice we get an **eventually perfect** one, which may wrongly suspect a slow node for a while but is eventually right.
+
+Consequences you design around:
+- A node declared dead may still be alive and acting (two leaders, 06.07).
+- Timeouts trade fast detection against false alarms.
+- Anything decided after a timeout must be safe even if the "dead" node comes back.
+
+! Example: the unknown payment
+! The order service calls payments with a 2 s timeout. At 2 s there is no answer. Possibilities: the request never arrived, the payment service crashed before charging, it charged and crashed before replying, or the reply is still in flight. The order service cannot tell which. It retries with the same idempotency key, so whichever happened, the customer is charged at most once.
+
+> Takeaway: in a distributed system any step of a call can fail independently, and a timeout cannot distinguish a dead node from a slow one. Design so decisions made on a timeout are safe even when the suspected node is alive.
+
+?? A node only learns about a peer through messages. If no reply arrives, the peer may have crashed, be paused or overloaded, or the request or reply may be lost or delayed in the network. All of these look the same from outside: silence. With no bound on network delay or processing time, any timeout can expire on a healthy but slow peer.
+
+@06.02
+## What a consistency model is
+Jepsen defines consistency models as rules about which histories of operations a system is allowed to produce. A stronger model forbids more anomalies, which makes programming easier but usually costs latency or availability. Jepsen's map arranges them in a hierarchy: strict serializable at the top, with serializable and linearizable below it, then snapshot isolation, repeatable read, read committed, and on the other side sequential, causal and various session guarantees.
+
+## Two families
+There are two separate ideas that people mix up:
+- **Isolation (transactions, multiple objects)**: what concurrent transactions see of each other. Serializable, snapshot isolation, read committed (03.06).
+- **Consistency of replicated data (single objects, real time)**: whether every reader sees the latest write. Linearizable, sequential, causal, eventual.
+
+## Linearizability
+Jepsen: each operation appears to take effect atomically at a single point between its start and its end, and that order respects real time. If write A finishes before read B starts, B must see A (or something newer). The system behaves as if there were one copy of the data. It applies to a single object (a key, a register). Linearizability cannot stay available during a network partition: some nodes must refuse requests.
+
+%%seq A linearizability violation: a read that starts after a write completed still returns the old value.
+Client A > Replica 1 : write x = 2
+Replica 1 -> Client A : ok (write complete)
+Client B > Replica 2 : read x (lagging)
+Replica 2 -> Client B : x = 1, not linearizable
+%%
+
+## Serializability
+Transactions (possibly touching many objects) produce the same result as some serial order. That order need not match real time: a serializable database may order a transaction that started later before one that finished earlier, as long as the outcome matches some serial schedule.
+
+**Strict serializability** combines both: serializable, and the serial order respects real time. Google Spanner offers it.
+
+| | Linearizable | Serializable | Strict serializable |
+| About | Single operations on one object | Transactions over many objects | Transactions over many objects |
+| Real-time order | Yes | No | Yes |
+| Example violation | Read misses a write that already completed | Write skew between transactions | Either |
+
+## Eventual consistency and its stronger cousins
+Werner Vogels' "Eventually Consistent" (2008) describes the client's view:
+- **Strong**: after a write completes, every later read sees it.
+- **Weak**: reads may not see it; the delay is the **inconsistency window**.
+- **Eventual**: if no new writes happen, all reads eventually return the last value. DNS is the classic example.
+
+Useful in-between guarantees, which can be combined:
+- **Read-your-writes**: you always see your own updates.
+- **Session consistency**: read-your-writes within a session.
+- **Monotonic reads**: once you have seen a value, you never see an older one.
+- **Monotonic writes**: one client's writes are applied in order.
+- **Causal**: if one write could have influenced another, everyone sees them in that order.
+
+Vogels calls monotonic reads and session consistency the most practical for developers. Most "eventually consistent" product bugs are really missing session guarantees: a user posts a comment, refreshes, and it is gone because the read hit a lagging replica.
+
+%%layers Consistency models from strongest to weakest.
+*Strict serializable | transactions, in real-time order
+Linearizable | single objects, real-time order
+Causal | causes seen before effects
+Read-your-writes / monotonic reads | per-session guarantees
+Eventual | replicas converge, eventually
+%%
+
+## Choosing
+- Money movement, unique usernames, inventory decrements, leader election: need linearizable or serializable operations.
+- Social feeds, like counts, recommendations: eventual is fine, ideally with read-your-writes for the author.
+
+! Example: profile photo update
+! Alice changes her photo; the write goes to the primary. Her next page load reads from a replica 2 seconds behind and shows the old photo, so she uploads again. The fix is not full linearizability: route Alice's own reads to the primary for 10 seconds after she writes (read-your-writes), while everyone else reads from replicas and sees the change within seconds (eventual).
+
+> Takeaway: linearizability is about single objects in real time; serializability is about transactions in some serial order. Most apps need strong guarantees for a few operations and session guarantees like read-your-writes for the rest.
+
+?? Linearizability is a guarantee about single operations on one object: each appears to happen at one instant, consistent with real time, so a read always sees any write that completed before it began. Serializability is a guarantee about transactions over many objects: the result equals some serial order, which need not match real time. Strict serializability requires both.
+
+@06.03
+## Why replicate
+Replication keeps copies of the same data on several machines: to survive a machine failure (durability and availability), to serve more reads, and to put data closer to users. The hard part is keeping the copies in agreement while data changes.
+
+## Single-leader replication
+One node (leader, primary) accepts writes and sends changes to followers (replicas, secondaries). Reads can go to any node. This is how most relational databases work (the Primer's master-slave replication).
+- **Synchronous** replication waits for followers to confirm before acknowledging a write: no data loss on leader failure, but slower writes, and a slow follower stalls writes.
+- **Asynchronous** replication acknowledges immediately: fast, but a leader crash can lose recently acknowledged writes, and followers serve stale reads (replication lag).
+- Common middle ground: one synchronous follower, the rest asynchronous.
+
+The Primer's list of costs: data loss if the leader fails before replicating, lag that grows with more replicas, failover that needs logic to promote a follower, and extra hardware.
+
+%%flow Single-leader replication: all writes go through one leader, which streams changes to followers.
+Writes -> *Leader -(replication log)-> Follower 1, 2 -(serve)-> Reads, possibly lagging
+%%
+
+## Multi-leader replication
+Several nodes accept writes (the Primer's master-master), often one per datacenter. Writes stay local and fast, and each datacenter keeps working if others are cut off. The price is **write conflicts**: two leaders change the same record concurrently. You need a resolution rule: last writer wins by timestamp (simple, loses data), merge logic, or CRDTs (data types designed to merge automatically).
+
+## Leaderless replication and quorums
+In Dynamo-style systems (Cassandra, Riak, DynamoDB's ancestor), the client or a coordinator sends each write to all N replicas and waits for W acknowledgements; reads ask R replicas and take the newest value. Vogels' "Eventually Consistent" gives the rule: if **W + R > N**, every read set overlaps every write set, so at least one replica in any read has the latest acknowledged write.
+
+| N | W | R | Effect |
+| 3 | 2 | 2 | Overlapping quorums; tolerates one node down for both reads and writes |
+| 3 | 3 | 1 | Fast reads, but any node down blocks writes |
+| 3 | 1 | 3 | Fast writes, but reads need every node |
+| 3 | 1 | 1 | Fastest, eventually consistent; reads can miss writes |
+
+Kleppmann's caveat (06.04): even with W + R > N, edge cases (sloppy quorums, concurrent writes, partial failures) mean quorums do not by themselves guarantee linearizability.
+
+How stale replicas catch up (from Kleppmann's notes and Dynamo-style systems):
+- **Read repair**: when a read sees an old value on one replica, it writes the newer value back to it.
+- **Anti-entropy**: a background process compares replicas (often with Merkle trees of hashes) and copies missing data.
+- **Hinted handoff**: if a replica is down, another node holds its writes and hands them over when it returns.
+
+%%flow A leaderless quorum with N = 3, W = 2, R = 2: the read set and write set always share a replica.
+Write -(acked by)-> *Replicas A, B -(read from B, C)-> B has the new version -> Reader picks newest
+%%
+
+## State machine replication
+The strongest form: all replicas apply the same sequence of commands in the same order, so they end in the same state. Getting every replica to agree on that order is consensus (06.06), which is what Raft and ZooKeeper provide.
+
+## Availability arithmetic
+The Primer gives the formulas: components **in sequence** multiply availabilities (two 99.9% parts give about 99.8%), components **in parallel** give 1 − (1 − A)² (two 99.9% replicas give about 99.9999%, if failures are independent).
+
+! Example: tuning a Cassandra table
+! N = 3 replicas per key. Writes use QUORUM (W = 2), reads use QUORUM (R = 2). One node can be down and both reads and writes still succeed, and every read overlaps the latest successful write. For a metrics table where stale reads are fine, the team uses W = 1, R = 1 for lower latency, accepting that a read may miss a write for a short time.
+
+> Takeaway: single-leader is simple but has lag and failover; multi-leader and leaderless add write availability at the cost of conflicts. With quorums, W + R > N makes read and write sets overlap.
+
+?? Any 2 of the 3 replicas that acknowledged the write and any 2 replicas a read contacts must share at least one replica, because 2 + 2 = 4 > 3. So every read reaches at least one replica holding the latest acknowledged write, and the reader picks the newest version by its timestamp or version number.
+
+@06.04
+## What CAP actually says
+The CAP theorem says that when the network is partitioned (some nodes cannot talk to others), a replicated system must choose: keep answering on every node (Availability) or keep every answer consistent (Consistency). The System Design Primer's summary: networks fail, so partition tolerance is required, and the real choice is between C and A during a partition.
+
+Martin Kleppmann's post "Please stop calling databases CP or AP" points out how narrow CAP's definitions are:
+- **Consistency** in CAP means **linearizability** (06.02), a very strong guarantee unrelated to the C in ACID.
+- **Availability** means every request to a non-failed node gets a non-error response, eventually. Not "most requests", not "fast".
+- It models a single register, considers only network partitions (not crashes, disk failures or bugs), and says nothing about latency.
+
+%%flow During a partition a replica must choose: answer (maybe stale) or refuse.
+Partition cuts replica B off -> Client asks B -(choose A)-> Answer from B's copy -(choose C)-> *Refuse until healed
+%%
+
+## Why the labels mislead
+Kleppmann's examples:
+- A typical single-leader database is neither: a client cut off from the leader cannot write (not available), and reads from async followers can be stale (not linearizable).
+- ZooKeeper is usually called CP, but its default reads are not linearizable (you need `sync` first).
+- Dynamo-style stores with quorum settings are not fully available (a minority partition cannot reach a quorum) and quorums do not guarantee linearizability.
+- One system can offer different guarantees per operation.
+
+He suggests talking about specific consistency models and per-operation trade-offs instead, and notes CAP even treats a system that takes two minutes to respond as "available".
+
+## PACELC
+Daniel Abadi's paper argues CAP misses the trade-off you live with every day. CAP only applies during partitions, which are rare. But any replicated system faces a trade-off all the time: to be consistent, a write must reach other replicas (possibly far away) before it is acknowledged, which costs **latency**.
+
+**PACELC**: if there is a Partition, choose Availability or Consistency; Else, choose Latency or Consistency.
+
+Abadi's classifications:
+| System | During partition | Normal operation |
+| Dynamo, Cassandra, Riak | Availability | Latency |
+| BigTable, HBase | Consistency | Consistency |
+| VoltDB/H-Store, Megastore | Consistency | Consistency |
+| MongoDB | Availability | Consistency |
+| PNUTS (Yahoo) | Consistency | Latency |
+
+Why it is more useful: it explains why systems like Cassandra weaken consistency even when nothing is broken (to cut latency), and it forces you to state the normal-case cost of your choice, which is what users feel every day.
+
+Abadi traces this to how replication works: sending updates to all replicas at once needs ordering (latency); sending through a leader means either waiting for replicas (latency) or reading possibly stale replicas (consistency); quorum schemes reduce staleness at a latency cost.
+
+%%flow PACELC: if partitioned, choose availability or consistency; else, choose latency or consistency.
+Is there a partition? -(yes)-> A or C -(no, normal operation)-> *Latency or consistency
+%%
+
+## How to use this in interviews
+Do not say "we pick AP". Say per operation: "Likes and view counts tolerate staleness, so they replicate asynchronously and read from the nearest replica. Payments and username claims need a single, strongly consistent source, so they go through the leader and fail if it is unreachable."
+
+! Example: global shopping cart
+! A store runs in two regions. During a partition between them, the cart stays writable in both (PA): a user adding items in either region succeeds, and carts are merged afterwards (union of items). In normal operation, writes are acknowledged locally and replicated asynchronously (EL), so adding to cart takes 20 ms instead of 120 ms. Checkout, by contrast, goes to the region that owns the order and accepts the latency (EC).
+
+> Takeaway: CAP only covers what happens during a partition and uses very strict definitions. PACELC adds that, even without partitions, replicated systems trade latency against consistency, which is the choice users feel every day.
+
+?? PACELC says that if there is a partition a system must choose availability or consistency, and else, in normal operation, it must choose lower latency or consistency. It is more useful than CAP because partitions are rare, while the latency-versus-consistency trade-off of replication affects every request, and it explains why systems weaken consistency even when nothing is failing.
+
+@06.05
+## Why physical time is not enough
+Clocks on different machines drift and are only roughly synchronised (04.11). If machine A's event has timestamp 10:00:00.005 and machine B's has 10:00:00.003, you cannot conclude B's happened first. Leslie Lamport's 1978 paper "Time, Clocks, and the Ordering of Events in a Distributed System" builds ordering on causality instead.
+
+## Happens-before
+Event a **happened before** event b (a → b) if:
+- a and b are on the same process and a came first, or
+- a is sending a message and b is receiving that message, or
+- there is a chain a → c → b.
+
+If neither a → b nor b → a, the events are **concurrent**: there is no way either could have influenced the other, and the system cannot say which came first.
+
+%%seq Happens-before: a send happens before its receive, so A's event causally precedes B's.
+Node A > Node A : event a1
+Node A > Node B : message m
+Node B > Node B : event b1 (after m)
+Node C > Node C : event c1 (concurrent)
+%%
+
+## Lamport clocks
+Each process keeps a counter:
+- Increment it before each event (IR1).
+- Attach it to every message sent. On receiving, set the counter to max(own, message's) + 1 (IR2).
+
+This guarantees the **clock condition**: if a → b then L(a) < L(b). Ties are broken by process ID to get a **total order** consistent with causality. Lamport uses this to build a mutual exclusion algorithm without a central coordinator, and notes the same idea gives replicated state machines: apply commands in timestamp order.
+
+The limitation: L(a) < L(b) does **not** imply a → b. Two concurrent events get different numbers, and you cannot tell from the numbers whether one caused the other or they were independent.
+
+Lamport also notes an anomaly: if a user does A, then phones a friend who does B, the system may order B first, because the phone call is outside the system. He shows physical clocks with bounded skew can fix this; Google Spanner's TrueTime later took this approach seriously.
+
+%%seq Lamport clocks: take max(local, received) + 1 on receive, so causal order respects the counters.
+Node A > Node A : event, L = 1
+Node A > Node B : send with L = 2
+Node B > Node B : L was 0, now max(0, 2) + 1 = 3
+Node B > Node C : send with L = 4
+%%
+
+## Vector clocks
+Kleppmann's notes describe vector clocks: each process keeps a vector with one counter per process.
+- On a local event or send, increment your own entry; attach the vector to messages.
+- On receive, take the element-wise maximum with the message's vector, then increment your own entry.
+
+Compare vectors element-wise:
+- V(a) ≤ V(b) in every entry, and not equal: a happened before b.
+- Neither ≤ the other (for example ⟨2,2,0⟩ and ⟨0,0,1⟩): a and b are **concurrent**.
+
+This is exactly the converse Lamport clocks lack: **V(a) < V(b) if and only if a → b**. So vector clocks can detect concurrency. The cost is size: one entry per process (or per replica), which grows with the number of writers.
+
+%%flow Vector clocks can tell concurrent updates apart: neither vector dominates the other.
+[A then B] [A:1, B:0] -(B sees it, updates)-> *[A:1, B:1] dominates: ordered
+[Concurrent] [A:2, B:1] -(vs)-> *[A:1, B:2] neither dominates: conflict
+%%
+
+## Where these appear
+- **Conflict detection** in multi-leader and leaderless stores: Dynamo used vector clocks so that two concurrent updates to a cart were both kept and merged, rather than one silently overwriting the other.
+- **Causal broadcast**: deliver messages so that causes always arrive before effects (Kleppmann's notes define FIFO, causal and total order broadcast).
+- **Last-writer-wins** with Lamport or hybrid logical clocks gives a total order cheaply, but silently discards one of two concurrent writes.
+
+| | Lamport clock | Vector clock |
+| Size | One integer | One integer per node |
+| If a → b | L(a) < L(b) | V(a) < V(b) |
+| Detects concurrency | No | Yes |
+| Gives total order | Yes, with tie-break | No (partial order) |
+
+! Example: concurrent cart updates
+! Replicas X and Y both start a cart at vector [X:1, Y:0]. During a partition, the user adds a book via X, giving [X:2, Y:0], and adds a pen via Y, giving [X:1, Y:1]. When they sync, neither vector is ≤ the other, so the store knows the updates are concurrent and keeps both versions for the app to merge (book and pen). With Lamport timestamps or wall-clock last-writer-wins, one item would have been silently dropped.
+
+> Takeaway: happens-before is the true order of events in a distributed system. Lamport clocks respect it and give a cheap total order; vector clocks capture it exactly and can tell concurrent events apart.
+
+?? Vector clocks can detect that two events are concurrent: if neither vector is less than or equal to the other, neither event could have caused the other. Lamport clocks only guarantee that a cause has a smaller timestamp than its effect; a smaller Lamport timestamp does not tell you whether the events were causally related or concurrent.
+
+@06.06
+## The problem consensus solves
+Consensus means several servers agreeing on a value, such that once decided, the decision never changes, even if some servers crash. The Raft website frames the main use: a **replicated state machine**. Each server has a log of commands and a state machine (for example a key-value table). If every server applies the same commands in the same order, every server ends in the same state. Consensus is how they agree on that order.
+
+Consensus is what lets a cluster keep a single consistent view (who is leader, what the configuration is, which writes are committed) while tolerating failures. Paxos solved it first; Raft was designed to be equivalent in fault tolerance and performance but easier to understand, by splitting the problem into leader election, log replication and safety.
+
+## How Raft works
+The site gives the overview; the mechanics below are from the Raft paper (Ongaro and Ousterhout, "In Search of an Understandable Consensus Algorithm") that the site links to. The Secret Lives of Data visualisation is a good way to watch it run.
+
+**Terms and leader election**
+- Time is divided into numbered **terms**. Each term has at most one leader.
+- Every server is a follower, candidate or leader. Followers expect regular heartbeats from the leader.
+- If a follower hears nothing for its **election timeout** (randomised, for example 150 to 300 ms), it becomes a candidate, increments the term, votes for itself and asks the others for votes.
+- Each server votes for at most one candidate per term. A candidate with votes from a **majority** becomes leader. Randomised timeouts make split votes rare.
+- A server only votes for a candidate whose log is at least as up to date as its own. The paper defines "up to date" by the last entry: a later term wins; with equal terms, the longer log wins. So a new leader always has every committed entry.
+
+**Log replication**
+- Clients send commands to the leader. The leader appends them to its log and sends them to followers.
+- Each AppendEntries call carries the index and term of the entry just before the new ones. A follower rejects it if its own log has no matching entry there, and the leader backs up and retries. This enforces the **Log Matching Property**: if two logs have an entry with the same index and term, they are identical up to that point. AppendEntries with no entries doubles as the heartbeat.
+- Once an entry is stored on a **majority** of servers, it is **committed**. The leader applies it and replies to the client, and followers apply it when they learn it is committed. A subtle rule: a leader only counts replicas for entries from its **own current term**; older entries become committed indirectly when a newer one commits.
+- If a follower's log diverges (after a leader crash), the new leader overwrites the follower's uncommitted conflicting entries with its own.
+
+**What the paper guarantees**: Election Safety (at most one leader per term), Leader Append-Only (a leader never overwrites its own log), Log Matching, Leader Completeness (a committed entry appears in every later leader's log) and State Machine Safety (no two servers apply different commands at the same index). It needs the timing condition broadcastTime ≪ electionTimeout ≪ MTBF: heartbeats much faster than the timeout, and the timeout much shorter than the time between failures. Membership changes use **joint consensus** (decisions need majorities of both the old and new configurations during the switch), and logs are compacted with **snapshots** that record the last included index and term.
+
+%%seq A Raft write: the leader commits once a majority (itself plus one follower of three) has the entry.
+Client > Leader : SET x = 5
+Leader > Follower 1 : AppendEntries (term 3, index 7)
+Leader > Follower 2 : AppendEntries (term 3, index 7)
+Follower 1 -> Leader : ok (majority reached)
+Leader > Leader : commit index 7, apply
+Leader -> Client : ok
+%%
+
+## Why a majority
+Any two majorities of the same cluster overlap in at least one server. So:
+- Two leaders cannot both win an election in the same term: each needs a majority, and the overlapping server votes only once.
+- A committed entry is on a majority, and any future leader needs votes from a majority, which includes at least one server holding that entry. Committed data survives leader changes.
+
+A cluster of 2f + 1 servers tolerates f failures: 3 servers tolerate 1, 5 tolerate 2. Adding a fourth server does not help (4 servers still tolerate only 1), which is why clusters have odd sizes.
+
+%%flow A Raft server's states: time out to become a candidate; win a majority to lead; see a higher term to step down.
+Follower -(election timeout 150-300 ms)-> Candidate -(majority of votes)-> *Leader -(sees higher term)-> Follower
+%%
+
+## When too many fail
+The Raft site: a 5-server cluster keeps working with 2 failures; with more, it stops making progress but never returns an incorrect result. With 2 of 5 down, the remaining 3 are still a majority, so the cluster elects a leader and commits writes normally (with 2 fewer servers of margin). With 3 of 5 down, the 2 survivors cannot form a majority: no leader can be elected and no writes commit until a server returns. It chooses safety over availability.
+
+## Where it is used
+etcd (Kubernetes' brain), Consul, CockroachDB, TiKV and many others use Raft. ZooKeeper uses a similar protocol, ZAB. MIT's 6.824 course has students implement Raft in Go, which is the best way to learn its corner cases.
+
+! Example: 5-node etcd during a rack failure
+! Nodes A to E, A is leader. A rack loss takes out A and B. C, D and E stop receiving heartbeats; D times out first, starts term 8 and gets votes from C, E and itself (3 of 5, a majority). D becomes leader and continues committing writes that reach 3 nodes. If C also fails, D and E (2 of 5) cannot commit anything; reads that require linearizability also stop, until a third node is back.
+
+> Takeaway: Raft elects a leader per term by majority vote and commits a log entry once a majority stores it. Overlapping majorities guarantee safety; a cluster of 2f + 1 tolerates f failures and stops rather than giving wrong answers beyond that.
+
+?? Any two majorities overlap, so a committed entry is on at least one server in every future majority, and a new leader (which must win a majority of votes from servers with logs no newer than its own) always has it. Two leaders also cannot win the same term. With 2 of 5 down, the 3 survivors are still a majority, so the cluster keeps electing leaders and committing writes; with 3 down it halts.
+
+@06.07
+## Why have a leader
+AWS's Builders' Library article on leader election lists the benefits of having one process in charge: a single place to reason about concurrency, logs and metrics; efficiency, since the leader can tell others what happened rather than reaching agreement on every change; easier consistency, because one node sees and orders every change; and simpler code.
+
+The drawbacks: a single point of failure, a single point of scaling, a single point of trust (a buggy leader can do a lot of damage), and harder partial deployments. Sharding helps: each shard gets its own leader, as in DynamoDB, EBS and EFS. AWS also notes they consider alternatives first: workflows, idempotent APIs, optimistic locking.
+
+## How elections usually work: leases
+Amazon's most common approach is a **lease** in a strongly consistent store:
+- A record in a database says who the leader is, with a lease duration.
+- The leader **heartbeats** to renew the lease.
+- If heartbeats stop for long enough, another candidate takes over the record.
+
+They prefer proven tools: the DynamoDB lock client or ZooKeeper, rather than custom code. Leases should be measured with local elapsed time (a monotonic timer), not by comparing wall clocks across machines. And do not heartbeat from a separate background thread: if the work thread hangs, the heartbeat keeps a dead leader in office; if the heartbeat thread dies, the lease lapses while work continues.
+
+Consensus systems elect leaders internally (Raft's terms, 06.06), and ZooKeeper offers a recipe with ephemeral sequential nodes (06.12).
+
+%%seq Leader election by lease: whoever holds the lease is leader and must renew it before it expires.
+Node A > Lock service : acquire lease, 10 s
+Lock service -> Node A : granted, you lead
+Node A > Lock service : renew every 3 s
+Node A > Node A : stops renewing (crash)
+Node B > Lock service : acquire after expiry
+Lock service -> Node B : granted
+%%
+
+## Two leaders at once
+AWS is clear: a distributed system cannot guarantee exactly one leader. During failures there may be zero or two. How two happen:
+- The old leader is in a long GC pause or on a slow network. Its lease expires, a new leader is elected, and the old one resumes, still believing it is in charge.
+- A network partition cuts the old leader off from the lock store but not from the resources it writes to.
+- Checking "do I still hold the lease?" does not help on its own: the pause can happen between the check and the write.
+
+%%seq Two leaders at once: a paused old leader wakes up still believing it leads.
+Old leader > Old leader : GC pause 15 s, lease lost
+New leader > Storage : write as leader
+Old leader > Storage : write as leader (stale)
+Storage -> Old leader : accepted unless fenced
+%%
+
+## What stops them corrupting data
+The protection must be at the **resource being changed**, not only in the leader's head:
+- **Fencing tokens**: every time leadership is granted, the lock service hands out a number that only goes up (a term, an epoch, ZooKeeper's zxid). The leader sends it with every write. The storage remembers the highest token seen and rejects writes with older ones. When the old leader wakes up and writes with token 7, storage has already seen 8 from the new leader and refuses (06.08, 06.09).
+- **Conditional writes**: the database itself checks a version or epoch column, e.g. `UPDATE ... WHERE leader_epoch = 7`.
+- **Idempotent work**: AWS notes that if the leader's work is idempotent and made durable before it is announced, two leaders mostly waste effort rather than corrupt state.
+- **Check the lease often**, especially just before side effects, keep an audit trail of who led when, and model the algorithm (AWS uses TLA+).
+
+! Example: a scheduler leader
+! A cron-like scheduler runs as three instances; the leader holds a lease in DynamoDB (10 s, renewed every 3 s). Leader A stalls in a 15 s GC pause. Its lease expires; B takes over with epoch 42 and starts dispatching jobs. A wakes up and tries to mark job 991 as dispatched with epoch 41. The jobs table has a condition expression requiring epoch >= current epoch (42), so A's write fails, and A steps down when it sees the error.
+
+> Takeaway: leader election usually uses leases with heartbeats, but no scheme guarantees exactly one leader. Protect the data with fencing tokens or conditional writes that reject the stale leader.
+
+?? A fencing token or epoch: each new leadership grant comes with a strictly higher number, the leader includes it in every write, and the storage rejects any write carrying a lower number than the highest it has seen. So when the old leader resumes and writes with its stale token, the write fails. Conditional writes on an epoch or version column achieve the same thing.
+
+@06.08
+## What a distributed lock is for
+A distributed lock lets one process at a time, across many machines, do something: process a job, modify a file, run a migration. Martin Kleppmann's post "How to do distributed locking" starts by asking why you want the lock:
+- **Efficiency**: avoid doing the same work twice. If the lock fails, you send a duplicate email or recompute something. Annoying, not dangerous.
+- **Correctness**: prevent concurrent changes that would corrupt data. If the lock fails, you lose data or produce wrong results.
+
+The answer decides how much machinery you need.
+
+## Why locks need leases
+If a lock had no expiry, a holder that crashes, hangs or gets cut off would hold it forever and everyone else would wait forever. So distributed locks are **leases**: they expire after a set time unless renewed. Google's Chubby (2006), a lock service built on Paxos used by GFS and Bigtable for electing masters, describes itself as providing coarse-grained, advisory locks, with availability and reliability prioritised over performance. Chubby, ZooKeeper sessions, etcd leases and Redis keys with TTLs all expire locks of clients that stop responding.
+
+## The problem leases create
+Expiry is decided by the lock service's sense of time; the client finds out later, if at all. Kleppmann's scenario:
+1. Client 1 gets the lock with a 10 s lease, reads a file, and starts modifying it.
+2. Client 1 hits a long stop-the-world GC pause. The lease expires.
+3. Client 2 gets the lock, writes the file, and releases.
+4. Client 1 wakes up, still believes it holds the lock, and writes its stale version, overwriting client 2's work.
+
+Checking the lease just before writing does not fix it: the pause can come between the check and the write. Pauses come from GC, page faults, CPU starvation, VM migration, and network delays (Kleppmann cites a GitHub incident with packets delayed about 90 seconds).
+
+So the lease guarantees no deadlock, but it reintroduces two holders at the same time.
+
+%%seq The lease problem: client 1 pauses past its lease, client 2 gets the lock, then client 1 writes anyway.
+Client 1 > Lock : acquire (lease 10 s)
+Client 1 > Client 1 : GC pause 15 s
+Client 2 > Lock : acquire (lease expired)
+Client 2 > Storage : write
+Client 1 > Storage : write: corrupts data
+%%
+
+## Fencing tokens
+The fix is to make the **resource** check, because only it sees the actual writes:
+- Each time the lock service grants the lock, it returns a **fencing token**, a number that strictly increases (33, then 34, ...).
+- The client includes the token with every write.
+- The storage keeps the highest token it has processed and **rejects** any write with a lower one.
+
+In Kleppmann's example, client 1 got token 33 and paused; client 2 got 34 and wrote; when client 1 tries to write with 33, the storage refuses. Tokens can come from ZooKeeper's zxid or a znode version, an etcd revision, or a database sequence.
+
+Chubby has the same idea under the name **sequencers** (general knowledge from the paper; the abstract page does not cover it): lock holders get a sequencer string that servers can check before acting.
+
+%%seq Fencing tokens: storage rejects writes carrying a token older than one it has already seen.
+Client 1 > Lock : acquire, token 33
+Client 2 > Lock : acquire later, token 34
+Client 2 > Storage : write with 34: accepted
+Client 1 > Storage : write with 33
+Storage -> Client 1 : rejected, 33 < 34
+%%
+
+## Choosing a lock
+- **Efficiency only**: a single Redis instance (`SET key token NX PX ttl`, release with compare-and-delete) is fine. Document that it can occasionally fail.
+- **Correctness**: a consensus-backed service (ZooKeeper, etcd, Consul) or a database transaction with row locks, **plus** fencing tokens checked by the resource. Often the simplest correct answer is to skip the external lock and use the database's own guarantees: `SELECT ... FOR UPDATE`, unique constraints, or conditional updates on a version column.
+
+! Example: exclusive file processor
+! Workers process uploaded files and write results to object storage. Worker A takes an etcd lease on file 77 and receives revision 5012 as its token. It stalls for 40 s; the lease (30 s) expires and worker B gets the lock with revision 5020. Both eventually write results. The results table stores the highest token per file and only accepts a write if its token is greater, so B's result (5020) wins and A's late write (5012) is rejected.
+
+> Takeaway: leases stop a crashed holder blocking everyone forever, but a paused or slow holder can keep acting after its lease expires. Fencing tokens checked by the protected resource close that gap.
+
+?? Without a lease, a client that crashes, hangs or is partitioned while holding the lock would block everyone else forever. But a lease expires on the lock service's schedule, and a client paused by GC or delayed by the network may not notice, so it can keep acting after another client has acquired the lock, giving two holders at once. Fencing tokens checked by the resource are needed to make that safe.
+
+@06.09
+## Locks on a single Redis
+The Redis docs give the basic recipe:
+- Acquire: `SET resource my_random_value NX PX 30000` sets the key only if absent (NX), with a 30 s expiry (PX). The random value identifies the owner.
+- Release: a Lua script deletes the key only if it still holds my value. Without the check, a client whose lock already expired could delete someone else's lock.
+
+The weakness: with a primary and an asynchronous replica, a client can get the lock on the primary, the primary can crash before replicating, the replica is promoted without the key, and a second client gets the same lock.
+
+## Redlock
+Redlock uses N independent Redis masters (typically 5) instead of replication:
+1. Note the start time.
+2. Try to set the key on each node in turn, with a short per-node timeout (for example 5 to 50 ms).
+3. The lock is held if a majority (3 of 5) succeeded and the total time spent is less than the TTL.
+4. Validity time = TTL − time spent acquiring − clock drift allowance.
+5. On failure, release on all nodes, then retry after a random delay.
+
+Crashed nodes should stay down for at least the TTL before rejoining (delayed restart), or use fsync on every write, so a restarted node cannot forget a lock it granted.
+
+%%flow Redlock: acquire the same key on a majority of N independent Redis nodes within the validity time.
+Client -(SET NX PX on all 5)-> Redis 1..5 -(3+ succeed quickly)-> *Lock held for TTL minus elapsed
+%%
+
+## Kleppmann's critique
+In "How to do distributed locking", Martin Kleppmann argues Redlock is unsafe for correctness:
+- **No fencing tokens**: Redlock produces random values, not increasing numbers, so storage cannot reject a stale holder. Generating increasing tokens safely would itself need consensus.
+- **Timing assumptions**: safety depends on bounded network delay, bounded process pauses and clocks that behave. Redis expiry used wall-clock time, so a clock jump on one node could expire a lock early and let a second client win a majority.
+- **Process pauses**: a client can get the majority, pause in GC past the TTL, and resume acting while another client holds the lock.
+- Conclusion: too heavy for efficiency-only locks (one Redis node is enough) and not safe enough for correctness. Use consensus systems (ZooKeeper, etcd) with fencing for correctness.
+
+## Antirez's reply
+Salvatore Sanfilippo (Redis's creator) responded in "Is Redlock safe?":
+- If your storage can check fencing tokens, it is already linearizable and you barely need the lock; a random token with compare-and-set gives similar protection.
+- A client pausing after acquiring a lock is a problem for every auto-expiring lock system, not just Redlock.
+- He agreed Redis should use a monotonic clock for expiry and that operators should avoid manual clock changes and use slewing NTP.
+- Redlock measures elapsed time during acquisition, so delays during acquisition are detected.
+
+The docs present both views. The practical consensus: Redlock is fine for avoiding duplicate work; for anything where two holders would corrupt data, put a check at the resource.
+
+## How a fencing token protects storage
+1. The lock service issues token 33 to client A.
+2. A pauses; its lock expires. The service issues token 34 to client B.
+3. B writes to storage with token 34. Storage records 34 as the highest seen.
+4. A resumes and writes with token 33. Storage sees 33 < 34 and rejects it.
+
+The storage does the enforcement, so it does not matter that A wrongly believes it still holds the lock. The equivalent in a database: `UPDATE accounts SET ..., lock_token = 34 WHERE id = 1 AND lock_token < 34`.
+
+! Example: Redis lock for a report job
+! Generating a daily report twice is wasteful but harmless, so a single Redis lock (SET report:2026-11-09 host-7 NX PX 600000) is enough. Updating an account balance is not harmless: there the service uses the database row itself (a version column checked in the UPDATE), and no Redis lock is involved.
+
+> Takeaway: a single Redis lock is fine to avoid duplicate work. For correctness, a lock alone is not enough: the protected resource must reject stale holders via fencing tokens or conditional writes.
+
+?? Each lock grant comes with a strictly increasing number. The client sends it with every write, and the storage remembers the highest token it has accepted and rejects any write with a lower one. If a client's lock expired while it was paused and a newer client has already written with a higher token, the stale client's write is refused.
+
+@06.10
+## The problem
+When a service you call becomes slow or unresponsive, every call to it waits until a timeout. Martin Fowler's article on the circuit breaker (popularised by Michael Nygard's book *Release It!*) explains the danger: callers tie up threads and connections waiting, run out of them, and start failing on everything else too. One slow dependency becomes an outage of everything that depends on it: a **cascading failure**.
+
+## Timeouts first
+Every remote call needs a timeout (02.09). Without one, a hung dependency holds resources forever. Google's SRE chapter on cascading failures adds:
+- **Propagate deadlines**: pass the remaining time budget down the call chain, so a backend does not keep working on a request whose caller has given up.
+- **Cancel** work that is no longer needed.
+- Avoid deadlines far above normal latency. The SRE book's example: if 5% of requests hang until a 100 s deadline, they fill the thread pool and about 80% of all requests end up failing (**bimodal latency**).
+
+%%flow Without timeouts or breakers, one slow dependency ties up every caller's threads.
+Users -> Service A -(waits)-> Service B -(waits)-> *Slow database -> Thread pools exhausted upstream
+%%
+
+## Circuit breaker states
+A circuit breaker wraps calls to a dependency and watches for failures:
+- **Closed**: calls go through normally. Failures (errors, timeouts) are counted.
+- **Open**: after failures cross a threshold (Fowler's example: 5 in a row; others use an error rate such as 50%), the breaker trips. Calls now fail **immediately** without contacting the dependency.
+- **Half-open**: after a reset timeout, the breaker lets a trial call through. Success closes it; failure opens it again.
+
+Fowler's practical notes: log every state change and alert when a breaker opens; let operators trip or reset breakers by hand; not every error should count (a "not found" is a normal answer, not a sick service); run calls on a bounded thread pool so the breaker can also trip when the pool is exhausted.
+
+%%flow A circuit breaker's states.
+Closed: calls pass -(failures over threshold)-> *Open: fail fast -(after cooldown)-> Half-open: trial calls -(success)-> Closed
+%%
+
+## Why failing fast is good
+- **Protects the caller**: threads are not stuck waiting, so the caller keeps serving other requests that do not need the broken dependency.
+- **Protects the dependency**: it gets breathing room to recover instead of being hammered by requests and retries.
+- **Clear errors**: users and upstream services get an immediate answer they can handle (show cached data, queue the work, show a "try later") instead of a long hang.
+- **Automatic recovery**: half-open probes detect when the dependency is healthy again.
+
+Fallback options Fowler lists: fail the operation, use a workaround (queue a credit card authorisation for later), or show stale data.
+
+## The wider toolkit against cascades
+From the SRE chapter:
+- **Load test** to know your limits; this is the most important step.
+- **Shed load** and **serve degraded results** when overloaded (02.13).
+- **Limit retries**: randomised exponential backoff, per-request limits, a retry budget, and retry at one layer only (four attempts at three layers is 64 attempts at the database).
+- **Bulkheads**: separate thread pools or capacity per dependency or per client, so one cannot consume everything.
+- Beware **slow startup and cold caches**, and health checks that restart overloaded servers, which then crash again.
+
+! Example: recommendations widget
+! The product page calls a recommendations service with a 150 ms timeout through a circuit breaker (opens at 50% errors over 20 calls, retries after 30 s). The recommendations service slows down. Without the breaker, every page render waits 150 ms and threads pile up. With it, after a few failures the breaker opens; pages render immediately without the widget (or with cached bestsellers), and every 30 s a single probe checks whether recommendations are back.
+
+> Takeaway: timeouts bound how long you wait; a circuit breaker stops calling a failing dependency at all, failing fast so threads are freed, the dependency can recover, and callers can degrade gracefully.
+
+?? Once failures cross a threshold the breaker opens and returns an error immediately, instead of making every call wait for a timeout. That frees threads and connections so the caller keeps serving everything else, gives the failing dependency room to recover instead of being hammered, and lets callers fall back quickly to cached or degraded responses, preventing a cascading failure.
+
+@06.11
+## Why gossip
+Large clusters need every node to know which other nodes are alive and to spread updates (membership changes, configuration, metadata). Having every node heartbeat every other node costs O(n²) messages. A central server becomes a hot spot and a single point of failure. Gossip protocols spread information the way rumours or epidemics spread.
+
+## How gossip spreads information
+Kleppmann's notes describe it: when a node has a new piece of information, it periodically sends it to a few randomly chosen other nodes; each node that receives it does the same. Delivery to every node is not strictly guaranteed, but with suitable settings it is extremely likely, and the protocol is efficient and tolerant of lost messages and crashed nodes.
+
+**How fast**: in each round, every informed node tells a few more. The number of informed nodes roughly multiplies each round, so the information reaches all N nodes in about **O(log N)** rounds. With 1,000 nodes, that is on the order of 10 rounds; with 1,000,000, around 20. Each node only sends a constant number of messages per round, regardless of cluster size.
+
+%%flow Gossip spreads like an epidemic: informed nodes roughly multiply each round, reaching N nodes in about log N rounds.
+Round 0: 1 node -> Round 1: 3 -> Round 2: 9 -> Round 3: 27 -> *About 7 rounds: 1,000 nodes
+%%
+
+## SWIM: gossip-based membership
+The SWIM paper (Scalable Weakly-consistent Infection-style process group Membership, Cornell) is the basis for HashiCorp's Serf and Consul (Serf's internals doc, now in its GitHub repo, says it uses SWIM "with a few minor adaptations, mostly to increase propagation speed and convergence rate").
+
+SWIM separates two jobs:
+- **Failure detection**: each protocol period (length T), a node pings one random peer. If no ack arrives in time, it asks k other nodes to ping the target on its behalf (**ping-req**), which avoids blaming the target for a bad link between two specific nodes. If nobody gets an ack, the target is suspected.
+- **Dissemination**: membership updates (joined, left, failed) are **piggybacked** on the ping, ping-req and ack messages that are flowing anyway, so no extra messages are needed. Updates spread in a number of periods that grows logarithmically with group size.
+
+Refinements:
+- **Suspicion**: a non-responding node is first marked "suspect", and that is gossiped. If it is alive, it refutes the suspicion with a higher **incarnation number**. Only if no refutation arrives in time is it declared dead. This sharply cuts false positives from slow nodes.
+- **Round-robin probing**: each node probes peers in a shuffled order, so every node is checked within a bounded time.
+
+Results from the paper: each member sends and receives about 2 messages per period regardless of group size, and detection time does not grow with group size. With 10% packet loss, suspicion kept far more members correctly in the group than the basic version.
+
+%%seq SWIM failure detection: a direct ping, then indirect pings through k others before suspecting.
+Node A > Node C : ping
+Node A > Node A : no ack in time
+Node A > Node B : ping-req C
+Node B > Node C : ping
+Node C -> Node B : ack
+Node B -> Node A : C is alive
+%%
+
+## Where gossip is used
+- Cassandra and ScyllaDB: nodes gossip cluster state and token ownership every second.
+- Consul and Serf: membership and failure detection. Serf's changes to SWIM: a periodic **full state sync over TCP** (faster convergence, and recovery after partitions); a **dedicated gossip layer** besides piggybacking, so gossip can run often (for example every 200 ms) while failure probes run slower (every second); and keeping dead nodes' state for a while so full syncs include them. HashiCorp's **Lifeguard** extensions add "nack" messages so a node that is missing nacks realises *it* may be the degraded one and slows its own failure detector, and a suspicion timeout that starts long and shortens as other nodes confirm the suspicion.
+- Redis Cluster: nodes gossip slot ownership and failure reports.
+- Anti-entropy between replicas (06.03) is gossip-like too.
+
+## Trade-offs
+- **Eventually consistent**: different nodes have slightly different views for a few rounds.
+- **Not for decisions needing agreement**: who is the leader, which write committed. Use consensus for those.
+- Message size grows if too much state is gossiped; systems gossip digests and pull details on demand.
+
+! Example: 1,000-node cluster learns of a failure
+! Node 417 crashes. In the next period, node 52 pings it, gets nothing, asks 3 other nodes to try, and they get nothing either. Node 52 marks 417 suspect and piggybacks that on its next messages. Each period, every node that knows tells a few more, so after about log2(1000) ≈ 10 periods of 1 s, essentially the whole cluster knows. Node 417 does not refute within the suspicion timeout, so it is declared dead and its token ranges are taken over.
+
+> Takeaway: gossip spreads information by having each node tell a few random peers each round, reaching N nodes in about O(log N) rounds with constant per-node load. SWIM uses it for scalable, low-false-positive failure detection.
+
+?? About O(log N) rounds. Each round every node that has the information passes it to a few random peers, so the number of informed nodes roughly multiplies each round. For 1,000 nodes that is on the order of 10 rounds, for a million about 20, while each node sends only a constant number of messages per round.
+
+@06.12
+## The problem
+A distributed system needs some shared facts that everyone must agree on: which nodes are in the cluster, who is leader of each shard, which shard lives on which node, current configuration, where each service instance is reachable. If two nodes disagree about who owns shard 7, both may accept writes for it and the data diverges. These facts change rarely but must be correct.
+
+## Coordination services: ZooKeeper
+ZooKeeper's overview describes a small, replicated store designed for this:
+- Data is a tree of **znodes** with paths like `/services/payments/instance-3`, each holding a small amount of data and having a version number.
+- **Ephemeral znodes** exist only as long as the session of the client that created them. If the client crashes or loses its connection, the session expires and the node vanishes. This makes membership automatic.
+- **Watches** notify clients when a znode changes, so they do not have to poll.
+- **Sequential znodes** (from general knowledge; the overview does not describe them) get an increasing counter appended to their name, which is the building block for locks and elections.
+
+It runs as an **ensemble** of servers. Writes go through a leader and need a majority to agree (ZooKeeper's ZAB protocol, similar to Raft). Reads are served by whichever server the client is connected to, which is fast but may be slightly behind (call `sync` first for an up-to-date read). It stays available while a majority is up, keeps data in memory, and performs best for read-heavy workloads (around 10 reads per write). Its guarantees: a client's updates apply in order, updates are atomic, clients see the same view whichever server they use, and applied updates persist.
+
+**Classic recipes** (general knowledge; Hello Interview's ZooKeeper deep dive covers them but its body was paywalled):
+- **Leader election**: each candidate creates an ephemeral sequential node under `/election`. The lowest number is leader. Each other node watches only the node just before it (not the leader), so when the leader dies only one node is notified, avoiding a herd.
+- **Locks**: the same pattern; the zxid or node version doubles as a fencing token.
+- **Service discovery**: each instance registers an ephemeral node; clients watch the directory.
+- **Configuration**: a znode with config; services watch it.
+
+Alternatives: **etcd** (Raft-based, used by Kubernetes) and **Consul** (Raft for state, gossip for membership).
+
+%%flow ZooKeeper-style discovery: services register ephemeral nodes; clients watch the directory.
+Service instance -(create ephemeral /services/api/i-7)-> *ZooKeeper -(watch fires on change)-> Clients refresh list
+%%
+
+## Service registries
+Microservices.io's service registry pattern: instances change constantly (autoscaling, dynamic container IPs), so keep a database of services and their live instances.
+- **Self-registration**: an instance registers on startup and deregisters on shutdown, often with health checks or heartbeats.
+- **Third-party registration**: the platform registers instances (Kubernetes does this implicitly).
+- **Client-side discovery**: clients query the registry and pick an instance. **Server-side discovery**: a router or load balancer queries it.
+
+Examples: Netflix Eureka, ZooKeeper, Consul, etcd, Kubernetes. Drawbacks: another critical component that must be highly available; clients cache its data, which goes stale if it fails.
+
+%%flow A service registry with health checks: instances register, the registry drops unhealthy ones, clients query it.
+Instances -(register + heartbeat)-> *Registry (Consul, Eureka) -(healthy list)-> Client or load balancer
+%%
+
+## Why not a normal database?
+- **Strong consistency under failure**: a consensus-backed store never shows two nodes conflicting answers about the leader, even through failovers. A single database is a single point of failure; a replicated one with async replicas can lose or reorder updates on failover.
+- **Sessions and ephemeral data**: membership is tied to liveness automatically.
+- **Watches**: change notifications instead of polling.
+- **Ordering and fencing**: every change gets a monotonically increasing ID (zxid, etcd revision) usable as a fencing token.
+
+The trade-off: these stores are small (data must fit in memory) and slower for writes, so they hold metadata, never application data.
+
+! Example: shard map for a key-value store
+! A storage cluster keeps its shard-to-node map in etcd under /shards/{id}. Storage nodes hold leases and register under /nodes. A controller watches /nodes; when node N4's lease expires, it reassigns N4's shards in a single transaction that also bumps a revision. Routers watch /shards and update their routing tables within milliseconds, and storage nodes reject requests stamped with an older shard-map revision.
+
+> Takeaway: put small, critical cluster metadata (membership, leaders, shard maps, config) in a consensus-backed store like ZooKeeper or etcd: it stays consistent through failures, ties membership to liveness, and notifies watchers.
+
+?? Because every node must see the same answer to questions like "who is leader" or "who owns this shard", even during failovers. A consensus-backed service replicates each change to a majority before applying it, so it never loses or reorders updates when a server fails, and it adds sessions with ephemeral nodes for automatic membership, watches for change notification, and increasing version numbers usable as fencing tokens. A normal database with async replicas or a single primary cannot guarantee this through failures.
+
+@06.13
+## The problem DHTs solve
+A distributed hash table (DHT) stores key-value pairs across thousands or millions of nodes with no central directory, in environments where nodes join and leave constantly (peer-to-peer networks). Each node knows only a small number of others, yet any node can find the node responsible for any key in a few hops. Consistent hashing (04.07) decides who owns a key; a DHT adds routing so you can find the owner without knowing every node.
+
+## Chord
+The Chord paper (MIT, SIGCOMM 2001) says Chord supports one operation: given a key, map it onto a node.
+- Nodes and keys get m-bit IDs from SHA-1, placed on a circle. A key belongs to its **successor**: the first node at or after the key's ID.
+- Knowing only your successor would work, but a lookup could take N hops.
+- Each node keeps a **finger table** of up to m entries: the i-th finger points to the successor of (n + 2^(i−1)). So a node knows nodes 1, 2, 4, 8, 16... positions ahead. Each hop at least halves the remaining distance to the target, so a lookup takes **O(log N)** hops, and each node stores only O(log N) routing entries.
+- Simulations: average path length about ½ log2 N. For a million nodes that is about 10 hops.
+- **Churn**: when a node joins or leaves, only about 1/N of keys move, and fixing routing takes O(log² N) messages. A periodic **stabilisation** protocol repairs successor pointers, then fingers.
+- **Failures**: each node keeps a list of several successors, so lookups route around failed nodes; the paper shows lookups still succeed with high probability even if half the nodes fail.
+
+%%flow Chord: each node keeps fingers at distances 1, 2, 4, 8... around the ring, so a lookup halves the distance each hop.
+Lookup key 54 at node 8 -(finger +32)-> Node 42 -(finger +8)-> Node 51 -(successor)-> *Node 56 owns 54
+%%
+
+## Kademlia
+Kademlia (2002) is the most widely deployed DHT:
+- Distance between IDs is their **XOR**, read as a number. It is symmetric and easy to compute.
+- Each node keeps **k-buckets**: for each distance range (each bit position), up to k contacts (for example k = 20). A node knows many nodes near itself and a few far away.
+- **Lookup** is iterative: ask the α closest known nodes (typically 3) in parallel for nodes closer to the target, then ask those, and so on until no closer nodes appear. Each step roughly halves the distance, giving O(log N) steps.
+- It **prefers long-lived nodes**: when a bucket is full, the oldest contact is pinged and kept if alive, since nodes that have been up a long time tend to stay up. This also resists some attacks.
+- Four RPCs: PING, STORE, FIND_NODE, FIND_VALUE.
+- Used by BitTorrent's Mainline DHT (trackerless torrents), IPFS, and Ethereum's node discovery.
+
+%%flow Kademlia: distance is XOR of IDs; each hop asks the closest known nodes, getting closer each time.
+Lookup ID x -(ask k closest known)-> Closer nodes -(ask again)-> Closer still -> *Node closest to x
+%%
+
+## The general idea
+Both designs give each node a routing table that is dense near itself and sparse far away, with exponentially spaced entries. Every hop jumps to a node that is at least twice as close to the target, so log N hops suffice without anyone knowing the full membership.
+
+## DHTs in datacenter design
+Inside a datacenter, the cluster is small enough (hundreds or thousands of nodes) that every node or client can know the full ring, so systems use "one-hop" designs instead: Dynamo and Cassandra gossip the full ring to all nodes (06.11), and clients route directly. Multi-hop DHT routing matters when membership is huge, untrusted and constantly changing.
+
+! Example: Chord lookup
+! A 64-node Chord ring with 6-bit IDs. Node 8 wants key 54. Its fingers point to the successors of 9, 10, 12, 16, 24 and 40. The closest finger that does not pass 54 is the node at or after 40, say node 42. Node 42's fingers include the successor of 42 + 8 = 50, say node 51, which is still before 54. Node 51's successor is node 56, which owns key 54. Three hops instead of walking the ring node by node.
+
+> Takeaway: a DHT finds the owner of a key without a central directory by giving each node exponentially spaced routing pointers (Chord fingers, Kademlia k-buckets), so each hop halves the distance and lookups take O(log N) hops.
+
+?? Each node keeps a small routing table with entries spaced exponentially around the ID space (Chord's finger table, Kademlia's k-buckets). To find a key, it forwards the lookup to the known node closest to the key without passing it; that node does the same with its own table. Each hop at least halves the remaining distance, so the owner is found in about O(log N) hops while each node stores only O(log N) contacts.

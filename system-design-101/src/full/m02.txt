@@ -1,0 +1,692 @@
+@02.01
+## An API is a contract
+An API is the promise a service makes to its callers: these are the resources, these are the operations, this is what comes back, and this is how errors look. Once other teams or customers depend on it, changing it is expensive. That is why interviewers ask you to write the API early: it fixes the scope and shows you think about callers, not just servers.
+
+Most interview APIs are REST over HTTP. Hello Interview's advice is to model the API around resources (nouns), not actions (verbs). You write `POST /urls`, not `POST /createShortUrl`. Resources are usually plural and nest when one belongs to another, for example `/users/{id}/posts`.
+
+## Methods and what they promise
+Each HTTP method carries meaning, and the most important property is idempotency: calling it twice has the same effect as calling it once.
+| Method | Use | Idempotent |
+| GET | Read a resource or list | Yes, and has no side effects |
+| POST | Create a resource, or trigger an action | No |
+| PUT | Replace a resource at a known ID | Yes |
+| PATCH | Change some fields | Not guaranteed |
+| DELETE | Remove a resource | Yes |
+
+Idempotency matters because networks fail and clients retry. A retried PUT is harmless. A retried POST can create two orders, which is why lesson 02.09 adds idempotency keys.
+
+## Where inputs go
+- **Path** identifies the resource: `/urls/abc123`.
+- **Query string** filters, sorts and paginates: `?limit=20&cursor=...`.
+- **Body** carries the data you are creating or changing, usually JSON.
+- **Headers** carry metadata: auth tokens, content type, idempotency keys.
+
+Never take the user's identity from the request body. The server should derive "who is calling" from the auth token, otherwise any client can claim to be anyone.
+
+%%flow An API contract: the method, path and body say what is asked; the status code says what happened.
+Client -(POST /v1/orders + JSON body)-> API -(validate, create)-> *201 Created + Location header
+%%
+
+## Status codes
+Use them as intended so clients can react without parsing messages: 200 OK, 201 Created, 204 No Content, 400 bad input, 401 not authenticated, 403 authenticated but not allowed, 404 not found, 409 conflict, 429 rate limited, 500 server bug, 503 temporarily unavailable. Error bodies should have a stable machine-readable code plus a human message.
+
+## Pagination: offset vs cursor
+Any list endpoint must be paginated, because lists grow without bound.
+- **Offset** (`?offset=40&limit=20`) is simple and lets users jump to page 5. It gets slow on deep pages, because the database still walks past the skipped rows, and it shows duplicates or skips rows when items are inserted while someone is paging.
+- **Cursor** (`?cursor=<opaque>&limit=20`) returns a token that encodes where the last page ended, often the last item's sort key. The next query is "items after this key", which uses an index and stays fast at any depth and stable under inserts. You lose random page jumps.
+
+Google's API design guide (AIP-158) makes the cursor style a rule: list methods take `page_size` and `page_token` and return `next_page_token`. The token is opaque, so the server can change its encoding later. Google also recommends adding pagination from day one, because adding it later breaks clients who assumed they got everything.
+
+%%flow Offset versus cursor pagination: an offset makes the database skip rows; a cursor starts where the last page ended.
+[Offset] page 1000 -(OFFSET 20000 LIMIT 20)-> *DB reads and discards 20,000 rows
+[Cursor] next page -(WHERE id > last_id LIMIT 20)-> *DB seeks straight to the start
+%%
+
+## Google AIPs worth knowing
+Google's AIPs are a public, detailed style guide for resource APIs. The handful that come up most:
+- Standard methods (AIP-131 to 135): Get, List, Create, Update, Delete, with predictable request and response shapes.
+- Custom methods (AIP-136) for actions that do not fit, written with a colon: `POST /orders/123:cancel`.
+- Resource names (AIP-122): every resource has one canonical path like `publishers/123/books/456`.
+- Field names (AIP-140): consistent lower_snake_case, units in the name (`size_bytes`, `duration_seconds`).
+
+The value is consistency. A caller who learns one API can guess the rest.
+
+## Versioning, auth and rate limits
+- **Versioning**: put a major version in the path (`/v1/`) or a header. Additive changes (new optional fields, new endpoints) need no new version. Removing or renaming fields does.
+- **Auth**: API keys identify a calling application and suit server-to-server calls. User sessions usually use tokens such as JWTs, which carry signed claims so services can verify them without a lookup.
+- **Rate limiting**: protects the service from one noisy caller. Return 429 with a hint about when to retry.
+
+## Common mistakes
+- Verbs in URLs and inconsistent naming.
+- Returning unbounded lists.
+- Trusting user IDs sent in the body.
+- Breaking changes without a version bump.
+- Leaking internal database IDs or schemas straight into the API.
+
+! Example: URL shortener API
+! POST /v1/urls with body {long_url, custom_alias?, expires_at?} returns 201 {code, short_url}.
+! GET /{code} returns 302 with a Location header pointing to the long URL (or 404).
+! GET /v1/urls?page_size=20&page_token=... returns {urls: [...], next_page_token} for the caller's own links, ordered by creation time.
+! DELETE /v1/urls/{code} returns 204. Caller identity comes from the auth token.
+
+> Takeaway: model nouns, use methods for what they promise, derive identity from auth, and paginate every list with an opaque cursor.
+
+?? POST /v1/urls creates a link and returns 201 with the code. GET /{code} redirects with 302. GET /v1/urls lists the caller's links with page_size and page_token and returns next_page_token. Use cursor pagination keyed on (created_at, code) because it stays fast at any depth and does not skip or repeat rows when new links are created while paging.
+
+@02.02
+## Two ways for services to talk
+Once a system is split into services, each service needs data or work from others. Chris Richardson's microservices.io describes two families of interaction.
+
+**Remote procedure invocation (RPI)**: service A sends a request to B and waits for a reply. REST, gRPC and Thrift are all RPI. It is simple and familiar, and there is no extra infrastructure in the middle.
+
+**Messaging**: A sends a message to a broker (Kafka, RabbitMQ, SQS) and moves on. B, and possibly C and D, consume it when they can.
+
+## What synchronous calls cost you
+RPI's main weakness is availability coupling. If A calls B synchronously on every request, A is only up when B is up, and A's latency includes B's latency. Chain five services like this and the availability multiplies down while the latencies add up.
+
+Other costs microservices.io lists:
+- It only supports request/reply. Notifications and fan-out to many consumers need something else.
+- The caller must find the callee, so you need service discovery.
+- You must defend against slow dependencies with timeouts and a circuit breaker so one slow service does not tie up every thread in its callers. Richardson's own example uses an 800 ms timeout.
+
+%%flow Synchronous calls chain availability and latency; a broker decouples the two sides in time.
+[Synchronous] Checkout -(waits)-> Payments -(waits)-> *Fraud: if down, checkout fails
+[Messaging] Checkout -(publish, return)-> *Broker -(later)-> Fraud check
+%%
+
+## What messaging buys you, and costs you
+Messaging decouples services in time. The broker buffers messages, so the consumer can be down, slow or deploying and the producer still succeeds. One message can reach many consumers. Microservices.io lists several styles it supports: notifications (fire and forget), request/async response, publish/subscribe, and publish/async response.
+
+The costs:
+- The broker is another critical system that must be highly available.
+- Request/response becomes awkward: you need correlation IDs and reply queues.
+- The flow of a business process is harder to see, debug and trace.
+- You must handle duplicate and out-of-order messages, because most brokers deliver at least once.
+
+## How to choose
+Ask: does the caller need the answer to continue?
+- **Need the answer now** (check a password, read a price to show the user, validate stock before confirming): use a synchronous call, and keep the chain short.
+- **Telling others something happened** (order placed, send email, update search index, recompute recommendations): publish an event. The user should not wait for the email to send.
+- **Long or bursty work** (video transcoding, report generation): put a job on a queue and let workers pull at their own pace.
+
+A common shape is synchronous at the edge and for reads on the critical path, asynchronous for side effects. In interviews, saying out loud which arrows are synchronous and which are async is a strong signal.
+
+! Example: checkout
+! Sync: the order service calls payments and waits, because the user must see "paid" or "declined".
+! Async: once the order is saved, it publishes OrderPlaced. Email, analytics, loyalty points and the warehouse each consume it independently. If the email service is down for ten minutes, checkout still works and emails catch up.
+
+> Takeaway: call synchronously when you need the answer to proceed; publish an event when you are announcing a fact. Every sync hop couples availability and latency.
+
+?? Call B synchronously when A cannot continue without B's answer, such as authorizing a payment before confirming an order, and protect the call with a timeout and circuit breaker. Publish an event when A is announcing something that others react to, such as OrderPlaced triggering email and analytics, because then B's outages and slowness do not affect A and many consumers can subscribe.
+
+@02.03
+## HTTP in one page
+MDN describes HTTP as a client-server protocol for fetching resources. The client (usually a browser, but also apps and other services) always starts the exchange. The server answers each request with a response. A web page is assembled from many such requests.
+
+A request has a method, a path, a version, headers and an optional body. A response has a version, a status code, headers and an optional body. Headers are where much of HTTP's power lives: they control caching (`Cache-Control`, `ETag`), authentication, content type and cross-origin rules.
+
+HTTP is **stateless**: each request stands alone. Sessions are layered on top with cookies or tokens sent on every request. Statelessness is what makes web servers easy to scale horizontally, since any server can handle any request.
+
+## How the versions differ
+- **HTTP/1.0** opened a new TCP connection per request. Each TCP setup costs round trips, so this was slow.
+- **HTTP/1.1** kept connections open for reuse. It also tried pipelining (sending several requests before responses arrive), which never worked reliably in practice.
+- **HTTP/2** sends binary frames, compresses headers and multiplexes many requests over one connection, so one slow response does not block the others at the HTTP level.
+- **HTTP/3** runs over QUIC, which is built on UDP. It removes TCP-level head-of-line blocking (one lost packet stalling every stream) and builds encryption into the transport. MDN's overview only mentions QUIC; this point is general knowledge.
+
+Proxies sit between clients and servers everywhere: caches, CDNs, load balancers, auth gateways. HTTP's standard headers are what let them work without understanding your application.
+
+%%flow HTTP/1.1 versus HTTP/2: one request at a time per connection, or many interleaved streams on one connection.
+[HTTP/1.1] Request A -(wait)-> Response A -> Request B -(wait)-> Response B
+[HTTP/2] *Streams 1, 3, 5 interleaved -(one TCP connection)-> Responses in any order
+%%
+
+## REST
+REST is a style on top of HTTP: resources with URLs, standard methods, standard status codes, usually JSON bodies. Its strengths are that every language, browser, proxy and CDN already speaks it, responses can be cached by standard HTTP caching, and it is easy to debug with curl. Its weaknesses are verbose text payloads and no enforced schema.
+
+## gRPC
+gRPC is Google's RPC framework. You define services and messages in a `.proto` file (Protocol Buffers). Tooling generates client stubs and server skeletons in many languages, so calling a remote service looks like calling a local function. It runs on HTTP/2 and supports four call types: simple request/response, server streaming, client streaming and bidirectional streaming.
+
+Why it is efficient: Protocol Buffers are binary and the field names are not repeated in each message. Hello Interview's example has the same small object at about 40 bytes in JSON and about 15 bytes in protobuf. Across billions of internal calls that saves CPU and bandwidth. The schema also gives you type checking and a clear contract between teams.
+
+The downsides: browsers cannot call gRPC directly without a proxy layer (gRPC-Web), payloads are not human-readable, and HTTP caches and CDNs do not understand it.
+
+## GraphQL in brief
+GraphQL lets the client send one query naming exactly the fields it wants across related objects. It fixes over-fetching and the many-round-trips problem for complex UIs, at the cost of harder caching and a risk of expensive queries. It is common as a BFF layer for mobile and web clients.
+
+%%flow gRPC: a .proto contract generates client and server code; calls travel as Protobuf over HTTP/2.
+orders.proto -(protoc)-> *Generated stubs -(Protobuf over HTTP/2)-> Server implementation
+%%
+
+## Why REST outside, gRPC inside
+| | Edge (public clients) | Internal (service to service) |
+| Who calls | Browsers, mobile apps, third parties | Your own services |
+| Needs | Universal support, caching, easy debugging | Low latency, small payloads, strict contracts, streaming |
+| Good fit | REST (or GraphQL) | gRPC |
+
+Hello Interview's guidance for interviews: default to REST unless there is a reason not to, and mention gRPC for high-throughput internal calls.
+
+! Example: ride-hailing
+! The rider app calls REST endpoints on the API gateway: POST /rides. Inside, the ride service calls the pricing and matching services over gRPC, and the driver location service streams position updates to the matcher over a bidirectional gRPC stream.
+
+> Takeaway: REST wins at the edge because everything understands it; gRPC wins inside because binary, schema-checked, multiplexed calls are cheaper and safer at high volume.
+
+?? Public clients like browsers and third-party developers need something universal, cacheable and easy to debug, which is REST over HTTP. Between internal services the company controls both ends, so it can use gRPC's compact protobuf encoding, generated typed clients, HTTP/2 multiplexing and streaming to cut latency and CPU and to catch contract mistakes at compile time.
+
+@02.04
+## The transport layer's job
+IP moves packets between machines but promises nothing: packets can be lost, duplicated or arrive out of order. The transport layer sits on top and decides how much of that mess the application sees. The two classic choices are TCP and UDP.
+
+## TCP: reliable, ordered streams
+TCP gives the application a reliable byte stream.
+- **Handshake**: before data flows, client and server exchange SYN, SYN-ACK, ACK. That costs one round trip before the first byte (TLS adds more on top).
+- **Ordering**: bytes are numbered, so the receiver reassembles them in order.
+- **Retransmission**: lost segments are detected and sent again.
+- **Flow and congestion control**: the sender slows down if the receiver or the network cannot keep up.
+
+The price is latency. If one packet is lost, everything after it waits until the retransmission arrives (head-of-line blocking). For a file download that is exactly what you want. For live audio, a packet that arrives 300 ms late is useless.
+
+%%seq TCP's three-way handshake costs one round trip before any data flows.
+Client > Server : SYN
+Server -> Client : SYN-ACK
+Client > Server : ACK + first data
+Server -> Client : data, ACKed in order
+%%
+
+## UDP: just send it
+Cloudflare's glossary describes UDP as sending datagrams straight to the target with no connection setup, no ordering and no delivery checks. The application gets each datagram as it arrives, or never. This makes UDP fast and lightweight, but the application must tolerate loss, duplicates and reordering, or handle them itself.
+
+Where UDP is used:
+- **DNS**: a lookup is one small question and one small answer, so a handshake would double its cost.
+- **Voice and video calls**: a call with a moment of static is better than one that is clear but delayed. Apps conceal lost packets rather than wait.
+- **Online games**: the latest position matters, not an old one.
+- **Live streaming** and other time-sensitive media.
+
+Because UDP has no handshake, it is easy to abuse: a UDP flood sends huge volumes of datagrams to random ports, and the server burns resources replying that nothing is listening. Defenses include rate limiting ICMP replies and absorbing traffic across a large distributed network.
+
+%%flow Head-of-line blocking: with TCP one lost packet stalls every stream; QUIC stalls only the stream it belongs to.
+[HTTP/2 over TCP] Packet 2 lost -> *Streams A, B, C all wait for retransmit
+[HTTP/3 over QUIC] Packet 2 lost (stream B) -> *Only B waits; A and C continue
+%%
+
+## QUIC: the modern middle ground
+QUIC (the transport under HTTP/3) runs over UDP but rebuilds reliability, ordering and encryption in user space. Its streams are independent, so a lost packet only stalls its own stream, and it can set up a secure connection in fewer round trips than TCP plus TLS. It also survives a phone switching from Wi-Fi to mobile data.
+
+| | TCP | UDP | QUIC |
+| Setup | Handshake (1 RTT, plus TLS) | None | 1 RTT, sometimes 0 |
+| Delivery | Reliable, ordered | Best effort | Reliable, ordered per stream |
+| Head-of-line blocking | Yes | No | Only within a stream |
+| Typical use | Web, APIs, databases, file transfer | DNS, VoIP, games, live video | HTTP/3 |
+
+## In interviews
+Hello Interview's advice: default to TCP (via HTTP) and only bring up UDP when the problem is real-time media or games where low latency beats completeness. Saying "UDP because a late frame is worse than a dropped frame" shows the right reasoning.
+
+! Example: video call app
+! Signalling (join room, mute, chat) goes over WebSockets on TCP, because those messages must not be lost. The audio and video media go over UDP (via WebRTC), because the codec can hide a lost packet but cannot use one that arrives late.
+
+> Takeaway: TCP trades latency for reliability and order; UDP trades reliability for speed. Choose UDP only when stale data is worthless.
+
+?? In a call or game, data is only useful if it is fresh. TCP would hold back every later packet until a lost one is retransmitted, causing freezes, whereas UDP delivers what arrives and the app conceals small gaps. A file download needs every byte in the right order and does not care about a few milliseconds of delay, so TCP's reliability and ordering are exactly right.
+
+@02.05
+## Two boxes that both "route requests"
+Diagrams often show a load balancer and an API gateway in the same spot, so it is easy to treat them as the same thing. They solve different problems.
+
+A **load balancer** spreads traffic for one service across many identical instances. It answers "which copy of this service handles this request?" It cares about health, capacity and even distribution.
+
+An **API gateway** is the single entry point for clients into many different services. It answers "which service handles this request, and what must happen before and after?" It cares about the API surface.
+
+## What a load balancer does
+F5 (which now hosts NGINX's glossary) describes load balancing as spreading traffic across a group of servers so none is overloaded, and steering around servers that fail. It can be hardware, software or virtual. At **Layer 4** it routes by IP and port without reading the request, which is very fast. At **Layer 7** it reads HTTP and can route by path, header or cookie. Lesson 02.06 covers the algorithms.
+
+%%flow A load balancer spreads traffic across copies of one service; a gateway is the front door that routes to many services.
+[Load balancer] Traffic -> *LB -(round robin)-> Copy 1, 2, 3 of the same service
+[API gateway] Client -> *Gateway: auth, rate limit -(/orders)-> Orders service
+%%
+
+## What an API gateway does
+Microservices.io presents the gateway as the answer to a problem: clients would otherwise need to know dozens of service addresses, make many calls per screen, and speak each service's protocol. The gateway gives them one front door and handles:
+- **Routing**: `/users/*` to the user service, `/orders/*` to the order service. Hello Interview calls routing the gateway's core job.
+- **Authentication and authorization**: verify the token once at the edge so services do not each reimplement it.
+- **Rate limiting and quotas** per client or API key.
+- **Request validation** before traffic reaches your services.
+- **Protocol translation**: accept REST from the client, call gRPC internally.
+- **Composition**: one client call that fans out to several services and merges the result.
+- **Response transformation and caching**, plus logging and metrics.
+
+Hello Interview describes the flow as: validate the request, run middleware (auth, rate limit, logging), route it, translate the protocol if needed, then transform and possibly cache the response. Products include Kong, Tyk, AWS API Gateway and Apigee.
+
+## Backends for frontends
+A variation is one gateway per client type (web, iOS, partner API), called Backends for Frontends. Each can shape responses for its client without one giant gateway trying to please everyone.
+
+%%flow The usual layering: gateway at the edge, load balancers in front of each service's copies.
+Client -> CDN / edge -> *API gateway -(route by path)-> Service LB -> Service instances
+%%
+
+## How they fit together
+In practice you use both. The gateway is itself a horizontally scaled service, so there is a load balancer in front of the gateway fleet, and often another in front of each backend service. The gateway is an extra network hop and a component that must stay highly available, which microservices.io lists as its main cost.
+
+| | Load balancer | API gateway |
+| Distributes across | Identical copies of one service | Different services |
+| Understands | Connections (L4) or HTTP (L7) | Your API: routes, clients, keys |
+| Typical features | Health checks, algorithms, TLS termination | Auth, rate limits, validation, translation, composition |
+| Examples | AWS NLB/ALB, HAProxy, NGINX | Kong, AWS API Gateway, Apigee |
+
+Hello Interview's advice for interviews: draw the gateway, say it handles routing, auth and rate limiting, and move on. Do not spend minutes on it unless asked.
+
+! Example: food delivery app
+! The mobile app sends every call to api.example.com. A load balancer spreads these across gateway instances. The gateway checks the JWT, applies a 100 requests per minute limit per user, and routes /restaurants to the catalog service and /orders to the order service. Behind each service, another load balancer spreads requests across its instances.
+
+> Takeaway: a load balancer spreads load across copies of one thing; a gateway is the front door that knows your API. Real systems use both.
+
+?? An L4 load balancer only sees IPs and ports, so it cannot: (1) authenticate users by checking tokens, (2) route by URL path to different services, (3) apply per-user or per-key rate limits. Gateways also validate requests, translate REST to gRPC and combine responses from several services.
+
+@02.06
+## Why load balancers exist
+The System Design Primer lists the benefits: stop sending traffic to unhealthy servers, avoid overloading any one server, remove the single server as a point of failure, terminate TLS so backends skip encryption work, and optionally pin a client to one server. The catch is that a single load balancer is itself a single point of failure, so they run in pairs (active-passive, where a standby takes over the IP when heartbeats stop, or active-active, where both serve traffic).
+
+Load balancing only works well when servers are stateless. If session data lives on one server, keep it in a shared store such as Redis instead.
+
+## Layer 4 vs Layer 7
+- **Layer 4** looks at IP addresses and ports only and forwards packets (often via NAT). It is cheap and fast and works for any TCP or UDP protocol.
+- **Layer 7** terminates the connection, reads the HTTP request, picks a server, and opens its own connection to it. It can route by path, header or cookie (send /video to video servers, /billing to hardened servers) at the cost of more CPU and latency.
+
+%%flow Layer 4 balances connections by IP and port; layer 7 reads the HTTP request and can route on its content.
+[Layer 4] Packet -(IP:port only)-> *L4 LB -(whole connection)-> Server 2
+[Layer 7] HTTP request -(path, headers, cookie)-> *L7 LB -(/api/* )-> API pool
+%%
+
+## The algorithms
+Sam Rose's interactive essay on samwho.dev shows these with simulated requests of varying cost, which makes the differences easy to see.
+- **Round robin**: send to each server in turn. Fair if every request costs the same and every server is the same size. When some requests are expensive, servers that happen to get several slow ones in a row build queues while others sit idle.
+- **Weighted round robin**: give bigger servers a bigger share. NGINX's example: weights 5 and 1 mean the first server gets 5 of every 6 requests.
+- **Dynamic weighted round robin**: adjust weights from observed latency, so a slow server automatically gets less.
+- **Least connections**: send to the server with the fewest requests in flight. A server stuck on slow work naturally has more open connections, so it gets skipped. In Rose's simulations this handled overload best, with the fewest dropped requests.
+- **PEWMA (peak exponentially weighted moving average)**: score each server by recent latency multiplied by in-flight requests, reacting quickly to latency spikes. It gave the best latency in the simulations but is the most complex.
+- **Hashing** (by client IP, or by a key such as user ID or URL): the same key always goes to the same server, useful for caches and sessions. NGINX's `hash ... consistent` uses consistent hashing so adding a server only remaps a few keys (lesson 02.07).
+- **Power of two random choices**: pick two servers at random and send to the less loaded. NGINX recommends this when several load balancers share the same backends, because they cannot see each other's counts.
+
+An important detail from Rose: round robin often had the best median latency but poor p95 and p99. Averages hide the problem; look at the tail.
+
+%%flow Least-connections sends the next request to the backend with the fewest in flight.
+New request -> Load balancer -(A: 12, B: 3, C: 9 open)-> *Backend B
+%%
+
+%%seq Active health checks take a failing backend out of rotation and add it back once it passes again.
+LB > Backend C : GET /health
+Backend C -> LB : 500 (3rd failure)
+LB > LB : remove C from pool
+LB > Backend C : GET /health (later)
+Backend C -> LB : 200 x2
+LB > LB : add C back
+%%
+
+## Health checks and recovery
+- **Passive checks**: NGINX counts failures and marks a server down after `max_fails` within `fail_timeout`.
+- **Active checks**: the balancer probes an endpoint such as `/health` on a schedule.
+- **Slow start**: a server that comes back ramps up its weight gradually (for example over 30 s) so it is not overwhelmed and knocked over again.
+- **Backup servers** only receive traffic when all primaries are down.
+- **Sticky sessions**: a cookie pins a client to one server. Convenient, but it makes load uneven and hurts when that server dies.
+
+| Algorithm | Best when |
+| Round robin | Requests and servers are uniform |
+| Weighted round robin | Servers differ in size |
+| Least connections | Request cost varies a lot, or connections are long-lived (WebSockets) |
+| Least time / PEWMA | You care most about latency and can afford complexity |
+| Consistent hash | Server holds per-key state, such as a cache |
+
+! Example: chat servers with WebSockets
+! Each WebSocket stays open for hours. Round robin would count connections evenly at the moment they open, but some users disconnect quickly while others stay, so after a few hours some servers hold far more live sockets than others. Least connections sends each new socket to the server with the fewest open ones, keeping them balanced.
+
+> Takeaway: round robin is fine for uniform work; least connections wins when request cost varies or connections are long-lived. Judge algorithms on p99, not the average.
+
+?? Least connections beats round robin when requests vary widely in cost or duration, or connections are long-lived like WebSockets. Round robin keeps sending new work to a server that is stuck on slow requests; least connections sees its high in-flight count and routes around it, which keeps queues short and tail latency low.
+
+@02.07
+## The problem with modulo
+To send the same key to the same server, the obvious approach is `server = hash(key) % N`. It works until N changes. Hello Interview's example: going from 3 servers to 4 changes the result of the modulo for most keys, so nearly every key moves. For a cache, that means almost every lookup misses at once and the database behind it is flooded.
+
+%%flow Modulo hashing remaps almost every key when the server count changes.
+key 1234 -(hash % 3 = 1)-> Server 1 -(add a 4th server: hash % 4 = 2)-> *Server 2: moved
+%%
+
+## The hash ring
+Consistent hashing places both servers and keys on a circle of hash values. A key belongs to the first server found by walking clockwise from the key's position.
+- **Adding a server** only takes the keys between it and its counter-clockwise neighbour. In Hello Interview's ring of 0 to 100, adding a node at position 90 moves only the keys in that slice, about 15% of the data, instead of nearly all of it.
+- **Removing a server** hands only its keys to the next server clockwise.
+
+On average only about 1/N of keys move when one server joins or leaves.
+
+## Virtual nodes
+With few servers, random ring positions leave uneven gaps, so one server can own a much bigger slice. The fix is to place each physical server at many points on the ring (virtual nodes), for example 100 to 200 each. The slices average out, and when a server leaves, its load spreads over many servers instead of landing on one neighbour. Bigger machines can get more virtual nodes.
+
+Real systems vary the idea. Redis Cluster splits the key space into 16,384 fixed hash slots and assigns slots to nodes. Cassandra and DynamoDB use rings with virtual nodes.
+
+## Why route by key at all
+- **Cache locality**: if the same user's requests always hit the same cache server, that server holds their data and the hit rate is high. Spread randomly, every server must cache everything.
+- **Stateful connections or sessions**: a chat room or game session lives on one server.
+- **Partitioned data**: a database shard owns a key range.
+
+%%flow Routing by key keeps each key's state warm on one server, at the risk of a hot key overloading it.
+Requests for user 42 -(hash ring)-> *Server B, cache warm for 42
+%%
+
+## The hot-key problem
+Consistent hashing balances keys, not traffic. If one key is enormously popular (a celebrity's profile, a viral video), its server is overloaded while others are idle. Hello Interview lists fixes:
+- Replicate hot keys to several servers and spread reads across them.
+- Salt the key (`video123#1` to `video123#8`) so it maps to several positions.
+- Monitor and rebalance adaptively.
+
+%%flow Bounded loads: if the key's server is already above its cap, walk on to the next server on the ring.
+Key k -(ring)-> Server B at 125% cap -(skip, full)-> *Server C under cap
+%%
+
+## Consistent hashing with bounded loads
+Google Research's answer is to cap each server's load. With an average load per server, set a capacity of (1 + ε) times that average. A key goes to its usual server unless that server is full, in which case it moves clockwise to the next server with room. This gives a hard guarantee that no server exceeds the cap, while keeping most keys in place: when servers change, the expected number of moved keys depends on ε (roughly 1/ε² times the minimum needed). Google uses it in Cloud Pub/Sub, and Vimeo added it to HAProxy, cutting their cache servers' bandwidth by almost 8 times.
+
+! Example: image cache tier
+! 10 cache servers sit in front of object storage, chosen by consistent hash of the image ID with 150 virtual nodes each. When an 11th server is added, about 9% of images move and the rest keep hitting warm caches. A viral image would overload one server, so bounded loads with ε = 0.25 means once that server reaches 1.25 times the average load, extra requests spill to its clockwise neighbour.
+
+> Takeaway: consistent hashing keeps keys in place when servers change; virtual nodes even out ownership; bounded loads or replication handle keys that are hot.
+
+?? Routing the same key to the same server keeps that server's cache warm for it, holds per-key state in one place, and avoids every server caching everything. If one backend gets too hot, its queue grows and latency rises for every key it owns, even cold ones. Fixes are replicating or salting the hot key, or consistent hashing with bounded loads so overflow spills to the next server.
+
+@02.08
+## Events are a public API
+When a service publishes events, other teams build on them. The event's shape is now a contract just like a REST endpoint, except producer and consumer may deploy at different times and old events may sit in a log for days. Getting the contract right means agreeing on what an event means, what it carries and how it can change.
+
+## What kind of event is it?
+Martin Fowler points out that "event-driven" covers four different patterns, and confusing them causes muddled designs.
+- **Event notification**: "Order 123 was placed." The event is small, and a consumer that needs details calls back to the producer. Very decoupled, but the overall flow is hard to see because no one place describes it.
+- **Event-carried state transfer**: the event includes the data consumers need (customer name, address, items). Consumers keep their own copy and never call back. That cuts load and dependency on the producer, but data is duplicated and consumers are eventually consistent.
+- **Event sourcing**: every change is stored as an event, and the event log is the source of truth. Current state is rebuilt by replaying. You get a full audit trail and the ability to rebuild or reinterpret history, but schema changes and replays get hard.
+- **CQRS**: separate models for writing and reading. Useful for complex domains or very different read and write loads, but Fowler warns it adds a lot of complexity and is often misused.
+
+%%flow Events are a public API: one producer, many consumers you may not know about.
+Orders service -(OrderPlaced v1)-> Event bus -> Billing, Email, Analytics, *teams you haven't met
+%%
+
+## A standard envelope: CloudEvents
+Every producer inventing its own event format means every consumer writes custom parsing. CloudEvents, a CNCF project (graduated in January 2024), defines a common envelope. Its required attributes (from the spec; the homepage itself does not list them) are `id`, `source`, `specversion` and `type`, with optional ones such as `time`, `subject`, `datacontenttype` and `dataschema`. It has bindings for HTTP, Kafka, WebSockets and others, and is supported by services like Amazon EventBridge and Azure Event Grid. Even if you do not use CloudEvents, your events should carry the same basics: a unique ID (for deduplication), a type, a source, a timestamp and a schema version.
+
+%%layers A CloudEvents envelope: standard metadata around your payload.
+id, source, type | identify the event and where it came from
+specversion, time | envelope version and timestamp
+*data | your payload, e.g. the order
+%%
+
+## Evolving the schema safely
+The data inside the event will change. A schema registry (Confluent's is common with Kafka) stores each version and rejects changes that would break the agreed compatibility rule.
+- **Backward compatible** (Confluent's default): consumers on the new schema can read data written with the old one. Allowed: delete fields, add optional fields with defaults. Upgrade consumers first.
+- **Forward compatible**: consumers on the old schema can read data written with the new one. Allowed: add fields, delete optional fields. Upgrade producers first.
+- **Full**: both directions. Only add or remove optional fields with defaults. Upgrade in any order.
+- **Transitive** variants check against all earlier versions, not just the previous one. This matters when consumers may replay old data from a log.
+
+The practical rules: add fields as optional with defaults, never change a field's type or meaning, never reuse a removed field's name, and make consumers ignore fields they do not recognise. For a truly breaking change, publish a new event type or topic (`OrderPlaced.v2`) and run both until consumers migrate.
+
+! Example: adding a discount to OrderPlaced
+! Version 1 has {order_id, customer_id, total}. The team adds discount_code as an optional field defaulting to null. Old consumers ignore the unknown field and keep working. New consumers read it if present. The registry, set to FULL_TRANSITIVE, would reject a change that renamed total to amount, because old consumers could no longer find it.
+
+> Takeaway: know whether your event is a notification or carries state, give every event an ID, type, source, time and version, and evolve schemas only by adding optional fields.
+
+?? The new field must be optional with a default, and old consumers must ignore fields they do not recognise. Then events in the new format still parse for them, which is forward compatibility. No existing field may change type, meaning or name. A schema registry enforcing the compatibility mode catches mistakes before they ship.
+
+@02.09
+## Every remote call can fail in three places
+Brandur Leach's Stripe post breaks down what can go wrong when a client calls a server:
+- **On connection**: the request never reached the server. Safe to retry.
+- **During processing**: the server started the work and something broke. If the work was in one database transaction that rolled back, a retry is safe. Otherwise state is half done.
+- **On response**: the server finished the work, but the reply was lost. The client sees a timeout and has no idea whether the charge went through.
+
+The third case is why "just retry" is dangerous. A timeout does not mean the operation failed. Retrying a payment that actually succeeded charges the customer twice.
+
+## Timeouts
+AWS's Builders' Library article (Marc Brooker) says to set a timeout on every remote call, with both a connection timeout and a request timeout. Too long and threads pile up waiting on a dead dependency. Too short and you time out healthy requests, retry them, and add load.
+
+How to pick a value: decide what false timeout rate you can accept (say 0.1%) and set the timeout at the dependency's matching latency percentile (p99.9). Add margin for long network paths, and check what the timeout actually covers, since DNS and TLS setup may sit outside it. Brooker's example: a 20 ms timeout broke after deployments because new TLS connections took longer than 20 ms. The fix was to open connections at startup.
+
+%%seq The UNKNOWN case: a timeout doesn't tell you whether the server did the work.
+Client > Server : charge $50 (key k1)
+Server > Server : charge succeeds
+Server -> Client : reply lost
+Client > Client : timeout
+Client > Server : retry, same key k1
+Server -> Client : already done, same result
+%%
+
+## Retries are selfish
+A retry improves your chance of success by using more of the server's capacity. That is fine for rare, transient errors. When the server is failing because it is overloaded, retries make it worse and delay recovery.
+
+Retries also multiply across layers. If five layers each retry 3 times, the bottom layer sees 3^5 = 243 times the load. Retry at one layer only, usually the one closest to the failure or the top-level caller.
+
+Limit retries:
+- A small maximum number of attempts.
+- A retry token bucket: retry freely while tokens last, then only at a slow fixed rate. AWS SDKs have done this since 2016.
+- Do not retry errors that will not change, such as 400 Bad Request.
+
+## Exponential backoff with jitter
+Wait longer after each failure: for example 100 ms, 200 ms, 400 ms, 800 ms, up to a cap. Without randomness, thousands of clients that failed together retry together and knock the server over again, a thundering herd. Jitter adds randomness to each wait so retries spread out. The same idea applies to cron jobs and timers: if everyone runs at exactly midnight, add an offset.
+
+%%flow Exponential backoff with jitter spreads retries out instead of hammering the server in sync.
+Fail -(wait ~100 ms x random)-> Retry 1 -(~200 ms x random)-> Retry 2 -(~400 ms x random)-> *Retry 3, then give up
+%%
+
+## Idempotency keys
+The fix for the "lost response" case is making the operation safe to repeat. Stripe's design:
+- The client generates a unique key per operation (for example a UUID) and sends it in an `Idempotency-Key` header.
+- The server stores the key with the result of the first attempt.
+- If the same key arrives again, the server returns the stored result instead of doing the work again. If the first attempt broke halfway, the server resumes or completes it.
+
+AWS's article on EC2's `RunInstances` adds details:
+- Store the key and perform the change **atomically**, so you never record a key without the work or do the work without the key.
+- Store the original request parameters too. If the same key arrives with different parameters, return a validation error, because the caller has made a mistake.
+- Return a response that means the same thing as the first one, not an error like "already exists". The caller should not need special handling.
+- A late retry after the resource was deleted still gets the original resource back (now shown as terminated), not a new one.
+- Do not generate the key from a hash of the parameters: two identical requests may be intentional, like launching two identical servers.
+- Keys cannot be kept forever. Keep them for the resource's life plus a window after which late retries are assumed gone.
+
+! Example: payment API
+! The client sends POST /charges with Idempotency-Key: 7f3c... and {amount: 2000, currency: USD}. The server inserts (key, request hash, status=processing) and creates the charge in the same transaction, then saves the response. The response is lost. The client waits 200 ms plus jitter and retries with the same key. The server finds the key, sees the parameters match, and returns the saved 201 with the same charge ID. The customer is charged once.
+
+> Takeaway: a timeout is not a failure. Time out every call, retry sparingly with exponential backoff and jitter, and make writes idempotent with client-generated keys.
+
+?? A timeout cannot tell the client whether the server never got the request or completed the charge and lost the reply, so a blind retry may charge twice. With an idempotency key, the client sends the same unique key on every attempt. The server stores the key with the result atomically, and on a repeat it returns the stored result instead of charging again, so retries are safe.
+
+@02.10
+## Why batching helps
+Every operation has a fixed cost on top of the work itself: a network round trip, a system call, a disk seek, a transaction commit, a request header. Do 1,000 operations one at a time and you pay that overhead 1,000 times. Group them and you pay it once. Batching is one of the most effective throughput tools there is, and it shows up everywhere.
+
+%%flow Batching amortises the fixed cost of each request across many items.
+[One at a time] 1,000 messages -(1,000 round trips)-> *1,000 x overhead
+[Batched] 1,000 messages -(10 batches of 100)-> *10 x overhead
+%%
+
+## Kafka: batching all the way down
+Kafka's design documentation (the Efficiency section) names two inefficiencies: "too many small I/O operations, and excessive byte copying." Its fixes:
+- **Message sets**: the protocol is built around a "message set" abstraction that groups messages, so a network request amortises its round trip over many messages, the broker "appends chunks of messages to its log in one go", and consumers fetch "large linear chunks at a time". Network packets get bigger and disk writes become large sequential appends, which are fast even on spinning disks.
+- **Producer knobs** (from the producer configuration, not the design page): `batch.size` caps how many bytes go in a batch, and `linger.ms` is how long the producer waits for more messages before sending a batch that is not full. A larger linger means fuller batches and higher throughput, but each message waits longer.
+- **One binary format everywhere**: producer, broker and consumer share a standardised message format, so chunks pass between them without being rewritten.
+- **Zero-copy**: the naive way to send a file to a socket takes four copies and two system calls: disk to page cache, page cache to a user buffer, user buffer back to a kernel socket buffer, socket buffer to the network card. Kafka uses `sendfile`, which sends data from the page cache straight to the network card.
+- **The page cache as the cache**: rather than an in-process cache, Kafka relies on the OS page cache, which the docs say gives "up to 28-30GB on a 32GB machine without GC penalties".
+- **Batch compression**: the producer compresses a whole batch, which compresses far better than single messages because they share structure. The broker decompresses it only to validate it (for example, that the record count matches the header), writes it to disk still compressed, and sends it to consumers compressed; the consumer decompresses it.
+
+%%flow Zero-copy: sendfile skips the copy into the application and back.
+[Naive] Disk -> Page cache -> User buffer -> Socket buffer -> NIC
+[sendfile] Disk -> *Page cache -(sendfile)-> NIC
+%%
+
+## DataLoader: batching inside one request
+The same idea works at the application layer. GraphQL resolvers naturally ask for data one item at a time: load a user, then each of their 10 friends, then each friend's best friend. That is the N+1 problem, and the DataLoader README's example reaches 13 database calls for one query.
+
+DataLoader gathers every `load(key)` made during one tick of the JavaScript event loop and calls your batch function once with all the keys, so 13 queries become a few `WHERE id IN (...)` queries. Its rules:
+- The batch function must return results in the same order and same length as the keys, filling gaps with null or an error.
+- It also caches by key, so loading the same user twice returns the same result.
+- Create a new loader per request. A shared loader would leak one user's cached data into another user's response, and its cache would grow forever.
+- `maxBatchSize` caps the batch, and `batchScheduleFn` can wait longer (for example a few milliseconds) to collect more keys, which adds latency.
+
+%%flow DataLoader collects the IDs requested in one tick and makes one batched call.
+10 resolvers ask for users -(same tick)-> *DataLoader -(one query: id IN (...))-> Database
+%%
+
+## The cost: latency and blast radius
+Batching makes the first item wait for the last. Every batching system has a knob that trades latency for throughput: Kafka's `linger.ms`, DataLoader's schedule, a database driver's flush interval. Most also have a size cap so a batch is sent as soon as it is full. Other costs:
+- **Partial failure**: if one item in a batch fails, you must decide whether the whole batch fails or report per-item results.
+- **Memory**: items wait in memory before being sent, so a crash can lose an unsent batch.
+- **Uneven latency**: items that arrive just after a batch leaves wait the longest.
+
+| Knob | Turn up | Turn down |
+| Max wait (linger) | Fuller batches, higher throughput | Lower per-item latency |
+| Max size | Fewer round trips | Smaller failures, less memory |
+
+! Example: analytics events
+! A mobile SDK used to send one HTTP request per tap, about 50 requests per minute per user. Batching every 10 seconds or 100 events (whichever comes first) cuts that to about 6 requests per minute and compresses the payload well. The cost: events show up on dashboards up to 10 seconds later, and an app crash can lose the unsent batch, so the SDK writes the batch to disk first.
+
+> Takeaway: batching amortises fixed per-call costs into big throughput gains. You pay with latency, controlled by a max wait time plus a max batch size.
+
+?? Batching costs latency: early items wait for the batch to fill or for the timer to fire. It also adds memory use, a larger blast radius when a batch fails, and possible loss of an unsent batch. The knob is the maximum wait time (Kafka's linger.ms), usually paired with a maximum batch size so a full batch is sent immediately.
+
+@02.11
+## What backpressure is
+Jay Phelps defines backpressure as resistance to the flow of data through software: input arrives faster than the system can turn it into output. The name comes from fluid in pipes. It is not a bug in itself. It is a fact you must handle somewhere, and if you do not choose how, the system chooses for you, usually by running out of memory.
+
+His analogy is the classic sitcom scene of a worker on a chocolate conveyor belt that runs too fast. She first sets candies aside to deal with later (buffering), then starts eating and hiding them (dropping). The proper fix is to slow the belt (controlling the producer).
+
+%%flow Backpressure: when the consumer is slower, something must give.
+Fast producer -(1,000/s)-> *Bounded buffer, full -(200/s)-> Slow consumer
+%%
+
+## The three strategies
+1. **Control the producer**: tell the producer to slow down. Nothing is lost and memory stays flat. This is the best option when it is possible. TCP flow control does this between machines. Node.js streams pause reading when the writer's buffer is full. gRPC and RSocket support flow control between services. It is often impossible with users: you cannot tell people to click less.
+2. **Buffer**: absorb bursts in a queue. Great for short spikes. Phelps' warning: unbounded buffers are a leading cause of servers crashing from out-of-memory. His file example: reading at 150 MB/s and writing at 100 MB/s, copying a 6 GB file builds up about 2 GB in memory. Always bound buffers by size or age.
+3. **Drop**: discard or sample some of the input. Fine for mouse moves, metrics samples or live position updates where only the latest value matters. Unacceptable for payments or orders.
+
+Two more options: add more consumers (scale out), or accept it, if the backlog causes no real harm.
+
+**Pull** systems handle backpressure naturally, because the consumer asks for the next N items when ready (Reactive Streams' `request(n)`, async iterators, Kafka consumers polling). **Push** systems must add explicit signals.
+
+%%layers The three choices when a buffer fills.
+Control the producer | slow it down or make it wait
+Buffer | absorb a burst, but only up to a limit
+*Drop | discard or sample what you can't handle
+%%
+
+## When the buffer is a queue between services
+AWS's Builders' Library article on queue backlogs (David Yanacek) explains why queues need special care. A queue lets producers keep succeeding while consumers are down, but the work does not go away. After a one-hour outage, you need double the normal capacity for another hour just to catch up. In a multi-tenant queue, one customer's spike delays everyone. Queue systems are bimodal: fine when the backlog is empty, and slow for a long time once it is not.
+
+Measure the age of the oldest message, not just the count. AWS's techniques:
+- **Per-customer fairness**: rate limit each producer, or shard customers across several queues (shuffle sharding) so one customer's spike only fills some queues.
+- **Overflow and sideline queues**: move a heavy customer's excess, or old messages, aside so fresh work keeps flowing.
+- **Newest first**: for real-time data, process recent messages first and the backlog later.
+- **Drop stale messages** with a time to live when newer data supersedes them.
+- **Backpressure to producers**: reject or throttle new work when that workload's backlog is too deep.
+- **Limit concurrency per workload** using Little's Law: in-flight work = arrival rate × latency. At 100 messages per second, latency growing from 100 ms to 10 s means 10 busy threads become 1,000.
+- **Heartbeat long jobs** so the queue does not redeliver them to a second worker while the first is still working.
+- **Dead-letter queues** for messages that fail repeatedly, with an alarm.
+
+! Example: notification fan-out
+! A celebrity post creates 10 million push notifications in a minute, but the push workers can send 50,000 per second. The fan-out writes to a bounded queue. Workers pull at their own pace (pull-based control). Each notification has a TTL of 30 minutes, so if the backlog grows beyond that, stale ones are dropped rather than sent hours late. Celebrity fan-outs go to a separate queue so ordinary users' notifications are not stuck behind them.
+
+> Takeaway: when producers outrun consumers you can slow the producer, buffer with a limit, or drop. Unbounded buffers just postpone a crash, and in queues watch the age of the oldest message.
+
+?? (1) Control the producer: signal it to slow down or let the consumer pull at its own pace, which loses nothing. (2) Buffer in a bounded queue to absorb bursts, alarming on queue age. (3) Drop or sample excess items when only recent data matters. You can also scale out the consumer to match the producer's rate.
+
+@02.12
+## Averages lie at scale
+Jeff Dean and Luiz André Barroso's paper "The Tail at Scale" starts from an observation: a service that responds within about 100 ms feels fluid, and large services answer each user request by asking hundreds or thousands of servers at once. The user waits for the slowest one. So the rare slow response on an individual server, which is harmless in a small system, becomes the normal experience at scale.
+
+%%flow Fan-out amplifies the tail: the request is as slow as its slowest leaf.
+User request -> Root -(fan out to 100 leaves)-> *1 leaf hits its p99 -> Whole request slow
+%%
+
+## Why individual servers are sometimes slow
+Even identical, well-tuned machines have latency spikes:
+- Contention for CPU, caches, memory bandwidth and network with other processes on the same machine.
+- Background daemons, log compaction and garbage collection pauses.
+- Queueing at several layers in servers and switches.
+- CPUs throttling under power limits, SSD internal garbage collection (which can make some reads 100 times slower), and devices waking from power saving.
+
+You cannot remove all of these, so the paper argues for building a predictably fast whole out of unpredictable parts.
+
+## The fan-out math
+If each server is slow 1% of the time, a request that needs all 100 servers is slow whenever any one of them is slow: 1 − 0.99^100 ≈ 63%. Even at 1 slow response in 10,000, a request touching 2,000 servers is slow about 18% of the time.
+
+Google's own measurements: for one service, a single leaf request had a p99 of 10 ms, but waiting for all leaves gave a p99 of 140 ms. Waiting for only 95% of leaves cut that to 70 ms. The slowest 5% of leaves cause half of the tail.
+
+| Leaves per request | Chance the request sees at least one p99 leaf |
+| 1 | 1% |
+| 10 | about 10% |
+| 100 | about 63% |
+
+## Fixing it within a request
+- **Hedged requests**: send the request to one replica. If it has not answered by the 95th percentile latency, send a copy to another replica and use whichever answers first. This adds only about 5% more load. In a Google benchmark (reading 1,000 keys across 100 BigTable servers), hedging after 10 ms cut p99.9 latency from 1,800 ms to 74 ms with only 2% more requests.
+- **Tied requests**: send to two servers at once, each knowing about the other. When one starts the work, it tells the other to cancel. Delaying the second by about 1 ms avoids both starting. This cut median latency by 16% and p99.9 by about 40% with under 1% extra disk work.
+
+%%seq Hedged request: if the first replica hasn't answered by its p95, send a second and use whichever replies first.
+Client > Replica A : request
+Client > Client : wait p95 (10 ms)
+Client > Replica B : same request (hedge)
+Replica B -> Client : reply, used
+Client > Replica A : cancel
+%%
+
+## Fixing it across requests
+- **Micro-partitions**: split data into many more pieces than machines (about 20 per machine), so load can be moved in small steps and recovery is spread out.
+- **Selective replication**: add extra replicas for hot partitions.
+- **Latency-induced probation**: temporarily stop sending real traffic to a consistently slow machine, while sending it shadow requests to see when it recovers.
+- **Good-enough results**: in search, return once most leaves have answered. A given leaf holds the best result for fewer than 1 in 1,000 queries, so users rarely notice.
+- **Canary requests**: send a new query to one or two leaves first, and only fan out if they respond normally. This stops a query that crashes servers from crashing thousands.
+
+Also: give interactive requests priority over batch work, keep low-level queues short so priorities take effect, and split long requests into slices so short ones do not wait behind them.
+
+## What to measure
+Report p50, p99 and p99.9, not averages. Set SLOs on percentiles. When a design fans out, say so and mention how you will control the tail.
+
+! Example: news feed assembly
+! Building a feed calls 40 services (posts, ads, profiles, ranking features) in parallel. Each has a p99 of 50 ms. At 1% slow each, about 1 − 0.99^40 ≈ 33% of feeds wait on at least one slow call. The team hedges calls to the profile service after its p95, skips the ads call if it is not back in 80 ms, and shows the feed without the slow pieces.
+
+> Takeaway: with fan-out, rare slowness on each server becomes common slowness for users. Measure percentiles, and use hedging, probation and good-enough answers to cut the tail.
+
+?? The request is slow if any one of the 100 servers is slow. The chance all 100 are fast is 0.99^100 ≈ 0.366, so about 63% of requests are slow. This is why tail latency on individual servers matters so much for fan-out systems.
+
+@02.13
+## Overload makes everyone fail
+When a server gets more requests than it can handle, it does not just slow down a little. Contention for threads, CPU, memory and locks grows, and past some point latency shoots up. AWS's Builders' Library article on load shedding (David Yanacek) shows why this turns into an outage: the client has a timeout. Once the server's latency passes that timeout, clients give up, but the server keeps working on requests nobody is waiting for. It is fully busy and produces nothing useful.
+
+AWS separates **throughput** (requests handled) from **goodput** (requests handled correctly and in time for the client to use them). If median latency equals the client timeout, half the requests fail, even though the server is "working" on all of them. Then clients retry, adding more load. In a deep call chain where each layer retries, overload at the bottom can amplify itself into a steady state.
+
+## Shed load instead
+Load shedding means that when a server is near its limit, it rejects extra requests immediately, with a quick error such as 503 or 429, so it can finish the ones it accepted within their deadlines. Some users get a fast "try again", and everyone else gets a working service. Goodput stays flat as load rises, instead of collapsing.
+
+Fast rejection only works if rejecting is cheap. AWS checks for hidden costs such as a log line on each rejection. Also keep rejected requests out of latency metrics, or median latency will look great while the service is shedding 60% of traffic.
+
+%%flow Without shedding, overload slows every request; with it, the server stays fast for the requests it accepts.
+[No shedding] 2x traffic -> *Queue grows -> All requests time out
+[Shedding] 2x traffic -(reject 50% early, 503)-> *Accepted requests stay fast
+%%
+
+## Decide what to shed
+Not all requests matter equally. Google's SRE book gives each request a criticality: CRITICAL_PLUS, CRITICAL (the default for user traffic), SHEDDABLE_PLUS (batch jobs that can retry) and SHEDDABLE. An overloaded server rejects the lowest criticality first, and criticality is passed along to downstream calls. AWS adds:
+- Never shed health checks from the load balancer, or it will pull the server and capacity shrinks further.
+- Prefer real users over crawlers, and in-quota callers over those bursting above their quota.
+- Let started work finish: prioritise a request that completes a workflow over one that starts a new one.
+
+%%flow Shed by priority: drop the least important work first.
+Overload -> Drop prefetch and batch jobs -> Then background sync -> *Keep checkout and login
+%%
+
+## Measure capacity correctly
+The SRE book says requests per second is a poor capacity measure, because requests vary wildly in cost and the mix changes. Measure in resources, such as CPU seconds. Google gives each customer a quota in those units, so in a global overload only the customers over their quota see errors.
+
+## Help clients back off
+- **Client-side adaptive throttling**: each client tracks requests sent and accepted over the last two minutes. When requests exceed K times accepts (Google uses K = 2), the client starts rejecting some requests locally, so the backend does not spend effort rejecting them.
+- **Retry budgets**: at most 3 attempts per request, and retries limited to 10% of a client's traffic. This caps worst-case retry load at about 1.1 times instead of 3 times. Retry only at the layer directly above the overloaded one.
+- **Deadlines**: pass the remaining time budget down the call chain, so a server can drop a request whose caller has already given up.
+
+## Queues and testing
+Bound queues by size and by time spent waiting, and drop requests that have waited too long. AWS notes that newest-first (LIFO) under overload serves requests that are still likely to succeed. Load test past the breaking point: the goal is goodput that rises to a plateau and stays flat, not one that falls off a cliff. Watch for autoscaling that never triggers because shedding keeps CPU looking normal.
+
+! Example: ticket sale
+! A concert goes on sale and traffic jumps 20 times. Without shedding, the ticket service's latency climbs past the 2 s client timeout, users retry, and almost nobody gets a ticket. With shedding, each server accepts up to its tested limit of 800 concurrent requests and returns 503 with Retry-After for the rest. Browsing (sheddable) is rejected before checkout (critical). Accepted checkouts complete in 300 ms, and clients retry with jitter.
+
+> Takeaway: under overload, a fast "no" protects the requests you accept. Shed by priority, measure capacity in resources, and cap retries so clients do not finish the job of knocking you over.
+
+?? If everything queues, every request waits longer until latency passes the client's timeout. The server then spends all its capacity on requests whose clients have already given up and are retrying, so goodput drops toward zero. Rejecting excess requests fast is cheap, keeps the accepted ones within their deadlines, and tells clients to back off.

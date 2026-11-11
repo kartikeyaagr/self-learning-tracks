@@ -1,0 +1,681 @@
+@04.01
+## Start from SQL, move only for a reason
+Hello Interview's advice is blunt: default to a relational database (Postgres) unless the requirements clearly point elsewhere. Relational databases give you joins, constraints and ACID transactions, and the claim that they "do not scale" is overstated: read replicas, caching, connection pooling and sharding take them a very long way. Picking an exotic database in an interview without a reason tends to hurt, not help.
+
+NoSQL is not one thing. It is a family of databases that each give up some relational features to gain something specific. The System Design Primer summarises the common trade: most NoSQL stores denormalise, do joins in application code, lack full ACID transactions and favour eventual consistency, a style called **BASE** (basically available, soft state, eventually consistent).
+
+## When SQL is the better fit
+The Primer's list:
+- Structured data with a clear schema.
+- Relational data that needs joins.
+- Transactions across several rows or tables (payments, inventory, bookings).
+- Mature tooling and well-known scaling patterns.
+- Fast lookups through indexes on many different columns.
+
+## When NoSQL is the better fit
+- Semi-structured data whose shape varies or changes often.
+- Data accessed by a known key, without joins.
+- Terabytes to petabytes, or write rates beyond one machine, where you want the database to partition for you.
+- Very high throughput on simple operations.
+
+The Primer's examples of data that suits NoSQL: clickstream and log ingestion, leaderboards, temporary data like shopping carts, hot lookup tables, and metadata.
+
+%%flow Start from SQL and move only when a specific need forces it.
+New service -> Postgres -(a need SQL can't meet: scale, shape, latency)-> *Pick the NoSQL store that fits that need
+%%
+
+## Choosing by access pattern
+Hello Interview says the most important input is the access pattern: what queries each API endpoint runs. Then data volume and consistency needs.
+| Workload | Good fit | Why |
+| Orders, payments, inventory | Relational | Multi-row transactions and constraints |
+| Session data, feature flags, caching | Key-value (Redis, DynamoDB) | Lookup by one key, very fast |
+| Product catalog with varied attributes | Document (MongoDB) or relational with JSONB | Each item has a different shape |
+| Event logs, metrics, chat messages at huge scale | Wide-column (Cassandra) | Append-heavy, read by partition and time |
+| Analytics over billions of rows | Columnar (ClickHouse) | Scans few columns over many rows |
+| Recommendations over a social graph | Graph (rarely needed) | Multi-hop traversal |
+
+Note: Postgres covers more of this table than people expect: JSONB for flexible fields, partial indexes, full-text search. "SQL for the core, a key-value cache in front" is the most common real architecture.
+
+## The real costs of NoSQL
+- You design tables around queries up front. A new query pattern may need a new table and a backfill.
+- No joins means denormalised copies that must be kept in sync.
+- Weaker transactions push correctness work into your application.
+- Eventual consistency means users can see stale data.
+
+! Example: choosing for a ride-hailing app
+! Trips, payments and driver payouts go in Postgres: they need transactions and constraints, and volume is a few thousand writes per second. Live driver locations (millions of updates per minute, only the latest value matters, looked up by driver ID or area) go in Redis. Raw GPS traces for analytics go to a columnar store. Three stores, each chosen for an access pattern.
+
+> Takeaway: use relational by default. Pick a NoSQL store when a specific access pattern, scale or flexibility need is something it handles clearly better, and accept the loss of joins and transactions knowingly.
+
+?? NoSQL wins for very high-volume simple writes and key lookups, such as time-series metrics or event logs in Cassandra, and for ephemeral key-value data such as sessions or carts in Redis. It is a poor fit for payments or inventory, which need multi-row transactions and constraints, and for reporting that needs ad hoc joins across many entities.
+
+@04.02
+## Key-value stores
+A key-value store is a giant dictionary: `get(key)`, `set(key, value)`, `delete(key)`. The value is opaque to the database. The Primer notes this makes them fast and simple, with logic pushed into the application. Some keep keys sorted, which allows range scans.
+
+Redis is the best-known example, and it is really a "data structure server" whose values can have types, each with its own atomic operations:
+| Type | Typical use |
+| String | Cache entries, counters (INCR) |
+| Hash | An object's fields: user:42 → {name, plan} |
+| List | Simple queues |
+| Set | Unique members, tags, "who is online" |
+| Sorted set | Leaderboards, ranking, priority queues, time-ordered feeds |
+| Stream | Append-only event log with consumer groups |
+| Geospatial | "Drivers within 2 km" |
+| HyperLogLog, Bloom filter | Approximate distinct counts and membership with tiny memory |
+
+DynamoDB is a managed key-value and document store: each item is found by a partition key, optionally with a sort key for ranges within the partition.
+
+%%flow A key-value store only knows keys; the value is opaque bytes.
+GET user:42 -(hash lookup)-> *Opaque value -(app parses it)-> Session object
+%%
+
+## Document stores
+A document store keeps self-contained JSON-like documents. Unlike a key-value store, the database understands the structure: you can query and index fields inside documents. Documents in one collection can have different fields, so the schema can change without migrations.
+
+MongoDB's modelling rule is: **data that is accessed together should be stored together**. You choose between:
+- **Embedding** related data inside the document: an order with its line items, an employee with their department. One read returns everything, and updates to one document are atomic.
+- **Referencing** another document by ID when the related data is large, shared or unbounded. MongoDB's example: a product page shows the five newest reviews, so the product embeds those five and all reviews live in their own collection.
+
+Limits to know (from general MongoDB knowledge): a document is capped at 16 MB, so unbounded arrays must not be embedded; atomicity is per document unless you use multi-document transactions; duplicated data must be updated everywhere it lives.
+
+%%flow A document store understands the document, so it can index and query fields inside it.
+find({city: 'Pune'}) -(index on city)-> *Matching JSON documents -(return fields)-> App
+%%
+
+## How to choose
+Pick a **key-value store** when:
+- You always fetch by one key, and the value is used whole.
+- You need extreme speed (in-memory) and simple operations: caching, sessions, rate-limit counters, leaderboards.
+
+Pick a **document store** when:
+- You need to query or index by fields inside the value, not just the key.
+- Records are naturally nested objects that are read together (a product with variants, a user profile with settings).
+- Different records have different shapes (a catalog where shoes and laptops have different attributes).
+
+Hello Interview's caveat: interview requirements rarely involve rapidly changing schemas, which removes the main reason to choose a document store over Postgres. A relational table with a JSONB column often gives you both.
+
+! Example: shopping cart
+! Key-value: cart:{user_id} → serialized cart, read and written whole, with a 30-day expiry. Simple and fast.
+! Document: if you need "find all carts containing product 123" to notify users of a price drop, a document store with an index on items.product_id can answer it; a pure key-value store cannot without scanning everything.
+
+> Takeaway: key-value stores fetch an opaque value by key, very fast. Document stores understand the value, so you can query and index inside it. Embed what is read together; reference what is large or shared.
+
+?? Pick a document store when you need to query or index by fields inside the record rather than only by its key, or when records are nested objects with varying shapes that are read together, like a product catalog. If you only ever fetch the whole value by one key, such as a session or cache entry, a key-value store is simpler and faster.
+
+@04.03
+## Two very different "column" databases
+"Column" appears in two unrelated families, and mixing them up is a common interview mistake.
+
+- **Wide-column stores** (Cassandra, HBase, Bigtable) are row-oriented key-value stores built for huge write volumes and lookups by key. "Wide" means a row can have many, varying columns.
+- **Columnar stores** (ClickHouse, BigQuery, Redshift, Snowflake, Parquet files) store each column's values together on disk, built for analytical scans over billions of rows.
+
+## Wide-column: Cassandra
+Cassandra's data modelling docs say to design **from the queries**, not from the entities. There are no joins, so everything a query needs must be in one table, and the usual pattern is one table per query. The same data is duplicated across tables, which Cassandra makes cheap through very fast writes.
+
+The primary key has two parts:
+- **Partition key**: decides which nodes hold the data, via consistent hashing. All rows with the same partition key live together.
+- **Clustering columns**: sort the rows inside a partition, so reading a range of neighbouring rows is fast.
+
+Example from the docs: to list magazines by publisher, make `publisher` the partition key and `id` a clustering column. In a chat app: `PRIMARY KEY ((conversation_id), message_ts)` stores a conversation's messages together, sorted by time, so "latest 50 messages" is one partition read.
+
+Two goals for the partition key:
+- **Spread data evenly** across the cluster.
+- **Read as few partitions as possible** per query, ideally one.
+
+Keep partitions bounded: the docs suggest under roughly 100,000 values and 100 MB. A chat conversation that runs for years should be split into buckets, for example `((conversation_id, month), message_ts)`.
+
+Hello Interview's summary: wide-column stores suit massive write volumes, time-series, telemetry and event logs, where time is part of the key.
+
+%%flow Wide-column (Cassandra): the partition key picks the node, the clustering key orders rows inside the partition.
+Query (sensor_id, day) -(hash partition key)-> *Node 3 -(rows sorted by timestamp)-> Range slice
+%%
+
+%%flow Row store versus column store for SUM(amount): read whole rows, or only the one column needed.
+[Row-oriented] SUM(amount) -(read all 20 columns)-> *Much more I/O
+[Columnar] SUM(amount) -(read 1 compressed column)-> *A fraction of the I/O
+%%
+
+## Columnar: ClickHouse
+ClickHouse describes itself as a column-oriented database for OLAP (online analytical processing): queries that aggregate over very large datasets, often needing answers in under a second.
+
+- **Row storage** keeps each row's fields together. Great for "fetch order 123 with all its fields" or updating one row.
+- **Column storage** keeps all values of one column together. A query that touches 3 of a table's 100 columns reads only those 3 columns from disk.
+
+ClickHouse's example: a query over 100 million rows of web analytics, filtering by region, date and phone model and grouping by model, ran in 92 ms, about a billion rows per second. Beyond reading less, columnar data compresses very well because similar values sit next to each other (general knowledge; the intro page does not cover compression).
+
+Columnar stores are poor at frequent single-row updates and point lookups of whole rows, which is why they sit next to an OLTP database rather than replacing it.
+
+| | Wide-column (Cassandra) | Columnar (ClickHouse) |
+| Workload | OLTP-style: many small writes and key lookups | OLAP: big scans and aggregations |
+| Layout on disk | Rows grouped by partition key | Each column stored separately |
+| Typical query | Messages for conversation X after time T | Average order value by country last quarter |
+| Strengths | Write throughput, linear scaling, availability | Scan speed, compression |
+
+! Example: one product, two stores
+! A messaging app stores messages in Cassandra keyed by (conversation_id, bucket) and clustered by time, serving "load this chat" in a single partition read. Every message event is also streamed into ClickHouse, where analysts run "messages per country per day for the last year" across billions of rows in seconds.
+
+> Takeaway: wide-column stores (Cassandra) are distributed, query-first stores for heavy writes and key-based reads. Columnar stores (ClickHouse) store each column separately to make analytics scans fast. Different jobs.
+
+?? Cassandra is a wide-column store: data is grouped into partitions by key and sorted by clustering columns, built for huge write volumes and reading a known partition, an OLTP-style workload. ClickHouse is a columnar store: each column is stored separately on disk so analytical queries read only the columns they need across billions of rows, an OLAP workload. Cassandra serves the app; ClickHouse serves analytics.
+
+@04.04
+## The property graph model
+Neo4j describes a graph database as storing data as nodes, relationships and properties instead of tables:
+- **Nodes** are entities (a person, a product, a city). They can have labels such as `Person` and any number of key-value properties.
+- **Relationships** connect two nodes. Each has a type (`FOLLOWS`, `BOUGHT`), a direction, and optional properties (`since: 2021`).
+
+The key design choice is that relationships are stored directly, as first-class data, so following them does not require computing a join. Neo4j's claim is that this lets a graph database traverse millions of connections per second, and that a node can have many relationships without a performance penalty.
+
+%%flow The property graph: nodes and relationships, both with properties, and queries that follow edges.
+Alice -(FOLLOWS)-> Bob -(FOLLOWS)-> *Carol -(LIKES)-> Post 9
+%%
+
+## Where SQL struggles
+In SQL, a relationship is a foreign key, and following it is a join. One or two hops are fine with good indexes. The trouble is queries with many or unknown numbers of hops:
+- "Friends of friends of friends who like jazz."
+- "Shortest path between two people" (degrees of separation).
+- "Is account A connected to account B through any chain of shared devices or cards?" (fraud rings).
+- "All parts that eventually depend on this component" (deep bill-of-materials or org-chart hierarchies).
+
+In SQL each extra hop is another self-join on a large table, and the intermediate results grow quickly. Variable-length paths need recursive CTEs, which are awkward and hard for the planner. In a graph query language like Cypher, the same question is a short pattern, for example `MATCH (a:Person {id: 1})-[:FRIEND*1..3]-(b) RETURN b`.
+
+## Why interviews rarely need one
+Hello Interview calls reaching for a graph database a common interview mistake. Even companies built on social graphs keep their core relationships in relational or key-value storage: Facebook models its social graph in MySQL (behind a graph-shaped caching layer, TAO). Most product features need one hop ("who do I follow?", "who follows me?"), which an indexed edges table handles easily:
+- `follows(follower_id, followee_id)` with indexes on both columns.
+- Counts are stored denormalised on the user row.
+
+## The decision boundary
+Use a graph database when:
+- The core value of the feature is multi-hop traversal or path finding, and hops are variable.
+- Relationships themselves carry rich data and are queried in flexible ways.
+- Examples: fraud detection over shared identifiers, network topology analysis, knowledge graphs, recommendation exploration.
+
+Do not use one when:
+- Queries are mostly one or two hops with known shapes.
+- You need huge write throughput or simple horizontal sharding. Partitioning a highly connected graph across machines is hard, because any cut leaves many edges crossing machines.
+
+! Example: fraud ring detection
+! A payments company links accounts, cards, devices and IP addresses as nodes. The question "which accounts are within 4 hops of this known fraudster through shared cards or devices?" is one graph traversal. In SQL it is four self-joins across several link tables with growing intermediate results. The main transaction ledger stays in Postgres; the graph is a separate analytical store fed by events.
+
+> Takeaway: graph databases make variable, multi-hop relationship queries natural. Most product features only need one or two hops, which an indexed edges table in SQL handles fine.
+
+?? Multi-hop or variable-length traversals, such as "friends of friends of friends", shortest path between two users, or finding accounts linked through any chain of shared devices. In SQL each hop is another self-join with growing intermediate results, while a graph database follows stored relationships directly.
+
+@04.05
+## Partitioning vs sharding
+Hello Interview separates the terms: **partitioning** splits a big table into pieces within one database (for example one partition per year of orders), so queries can skip irrelevant pieces. **Sharding** splits data across separate machines, each holding a subset. People use the words loosely, but sharding is the one that adds capacity.
+
+## When to shard
+Shard when one machine cannot keep up with storage, write throughput, or read throughput even after replicas and caching. Hello Interview's numbers: 500 million users × 5 KB is about 2.5 TB, which one Postgres server handles; ten times that growth, or 50,000 writes per second at peak, may not. Do not shard early: name the bottleneck first.
+
+%%flow Sharding: a router maps each key to the one database that owns it.
+Request (user_id 9123) -> Router -(shard = f(user_id))-> *Shard 3 of 16
+%%
+
+## Choosing a shard key
+The shard key decides which shard each row lives on. A good key has:
+- **High cardinality**: many distinct values. A boolean gives you at most two shards.
+- **Even distribution**: sharding by country fails if 90% of users are in one country. Sharding by creation time sends all new writes to the newest shard.
+- **Alignment with queries**: common queries should hit one shard. Shard by `user_id` and "get user profile" and "get user's orders" each touch one shard.
+
+## Strategies
+- **Range-based**: user IDs 1 to 1M on shard 1, and so on. Range scans are efficient, but recent data clusters on one shard. Good for multi-tenant systems where each tenant is a range.
+- **Hash-based** (the usual default): `hash(key)` decides the shard. Even spread, but range queries hit every shard. Use consistent hashing (04.07) or many fixed logical shards so adding machines moves little data.
+- **Directory-based**: a lookup service maps each key to a shard. Most flexible (you can move one heavy customer to its own shard), but every request needs the lookup, and the directory becomes critical infrastructure.
+
+%%flow Range sharding versus hash sharding of the same keys.
+[Range] user_id 1-1M -> Shard A; 1M-2M -> *Shard B gets all new users
+[Hash] hash(user_id) % 16 -> *Even spread, no range scans
+%%
+
+## What sharding costs
+- **Cross-shard queries**: anything not keyed by the shard key fans out to every shard. A global "top 10 posts" across 64 shards is 64 queries plus a merge. Handle with caching, precomputation, denormalised copies keyed differently, or by accepting that rare admin queries are slow.
+- **Cross-shard transactions**: a single transaction cannot span shards. Two-phase commit is slow and fragile. Prefer keeping each transaction within one shard; otherwise use sagas with compensating steps (Module 7).
+- **Hot shards**: one celebrity user can generate around 1,000 times normal traffic (04.06).
+- **Resharding**: moving data while serving traffic is hard. The Primer adds: more complex application logic and harder joins.
+
+Where the databases stand: Cassandra hashes partition keys onto a ring with virtual nodes; DynamoDB hashes partition keys and splits partitions automatically; MongoDB shards by key ranges (optionally hashed) with a balancer; Vitess and Citus shard MySQL and Postgres.
+
+## Interview recipe
+Hello Interview's steps: propose a shard key from the main access pattern, choose hash-based distribution with consistent hashing, name the queries the key makes hard and how you will serve them, and explain how you will grow (start with, say, 64 logical shards).
+
+! Example: chat messages
+! Shard key: conversation_id. Loading a conversation's history, the most common query, hits one shard, and messages are ordered by time within it. What it makes hard: "all messages sent by user X across all conversations" (for search or account export) must fan out to every shard. Serve it from a separate index keyed by user_id, built asynchronously from message events.
+
+> Takeaway: pick a shard key with many values, even load, and alignment with your most common query. Every key makes some queries cross-shard; name them and plan how to serve them.
+
+?? Shard by conversation_id: one conversation's messages live together, so loading or paginating a chat is a single-shard query. It makes queries across conversations hard, such as "all messages sent by user X" or global search, which must fan out to every shard. Solve that with a secondary index or search store keyed by user, filled asynchronously.
+
+@04.06
+## What a hot partition is
+Partitioned databases split data by key and give each partition a share of capacity. If traffic concentrates on one key, that partition hits its limit while others sit idle. You get throttling or high latency even though the system as a whole has plenty of room.
+
+AWS's DynamoDB guide puts it this way: what matters is how **uniformly** traffic spreads across partition key values, not how many values exist. Its examples:
+| Partition key | Uniform? |
+| User ID, many users | Good |
+| Status code, few values | Bad |
+| Creation date rounded to the day | Bad: all of today's writes hit one key |
+| Device ID, similar traffic per device | Good |
+| Device ID, one device far busier than the rest | Bad |
+
+As general DynamoDB knowledge (not on the guide page): each physical partition handles roughly 3,000 reads and 1,000 writes per second, so one hot key can be throttled even when table capacity is ample. Adaptive capacity and burst capacity soften short spikes but do not fix a bad key.
+
+%%flow A hot partition: one key draws most of the traffic, so one node melts while the rest idle.
+Celebrity post likes -(all same key)-> *Partition 7: 50x load -> Throttled
+%%
+
+## Write sharding
+The standard fix is to spread one logical key across many physical keys.
+- **Random suffix**: write to `2014-07-09.1` through `2014-07-09.200`, picking the suffix at random. Writes spread evenly. The cost: reading all of that day's items means querying all 200 keys and merging, and you cannot look up one item directly because you do not know its suffix.
+- **Calculated suffix**: derive the suffix from another attribute, such as `hash(order_id) % 200`. Writes still spread evenly, and you can recompute the key to fetch one item. Reading the whole day still fans out to all 200.
+
+Choose the number of suffixes from the write rate you need: enough to keep each suffix under one partition's limit, no more than your readers can afford to query.
+
+%%flow Write sharding: add a random suffix to spread one hot key over N partitions, then sum on read.
+likes:post9 -(+ random 0..9)-> *likes:post9#0 ... #9 -(read: sum all 10)-> Total
+%%
+
+## Other tools for hot keys
+- **Counters**: shard the counter. Store `likes:post123:0` to `likes:post123:63`, increment a random one, and sum them on read (or periodically roll them into a total).
+- **Buffer and batch**: collect increments in memory or a stream for a second, then write one aggregated update (`+18,000`) instead of 18,000 updates.
+- **Cache reads**: a hot item that is read heavily can be served from a cache or CDN, often replicated across several cache nodes.
+- **Isolate**: move known-hot keys (celebrities) to dedicated capacity.
+- **Approximate**: for display counts, a slightly stale number is fine. Nobody can tell 1,000,421 from 1,000,388.
+
+## Detecting it
+Watch per-partition or per-key metrics, not just totals: throttled requests, latency per shard, top keys by request rate. A table at 30% of capacity can still be throttling one key.
+
+! Example: viral like counter
+! A post gets 1 million likes per minute, about 16,700 writes per second, far above one partition's ~1,000 writes per second. Write each like event to a stream partitioned by (post_id, random 0-31). Aggregators sum likes per post per second and update 32 counter shards. The like count shown is the sum of the shards, cached for 2 seconds. Whether a given user has liked the post is stored separately, keyed by (user_id, post_id), which is evenly distributed.
+
+> Takeaway: partitions fail on uneven load, not total load. Spread hot keys with suffixes or sharded counters, batch writes, cache reads, and accept approximate counts where users cannot tell.
+
+?? Split the hot counter into N shards (for example post123:0 to post123:63), send each like to a random shard, and sum the shards on read or roll them up periodically. Buffer and batch increments so one write carries thousands of likes. Record who liked what separately under an evenly distributed key like (user_id, post_id), and cache the displayed total.
+
+@04.07
+## The rehashing problem
+To spread keys over N servers, the simple formula is `server = hash(key) % N`. ByteByteGo's chapter shows the flaw: with 4 servers and 8 keys, removing one server (N becomes 3) changes the server for 6 of the 8 keys. For a cache, most lookups suddenly go to the wrong server and miss, flooding the database behind it.
+
+In general, going from N to N+1 servers with modulo moves about N/(N+1) of all keys. From 10 to 11 servers, about 91% of keys move. The ideal is that only the new server's fair share moves: 1/11, about 9%.
+
+%%flow The rehashing problem: with hash % N, adding one server moves most keys.
+4 servers -(add 1: hash % 5)-> *About 80% of keys move
+%%
+
+## The hash ring
+Consistent hashing fixes this:
+- Take the hash function's output range (ByteByteGo uses SHA-1: 0 to 2^160 − 1) and join the ends into a ring.
+- Hash each server (by name or IP) onto the ring.
+- Hash each key onto the same ring. The key belongs to the **first server clockwise** from its position.
+
+When a server is **added**, only the keys between it and the previous server (counter-clockwise) move to it. When a server is **removed**, only its keys move, to the next server clockwise. Everything else stays put. To find the affected keys, walk counter-clockwise from the changed server to the previous one.
+
+%%flow On a ring, each key belongs to the first server clockwise; adding a server takes keys only from its neighbour.
+Key -(walk clockwise)-> *Next server on ring -(new server inserted before it)-> Only that arc moves
+%%
+
+## Two problems, one fix
+The basic ring has two weaknesses:
+- **Uneven partitions**: random positions leave some servers with much bigger arcs. Removing a server can double its neighbour's share.
+- **Uneven key distribution**: keys can cluster on one arc.
+
+The fix is **virtual nodes**: each physical server appears at many points on the ring. Its total share becomes the sum of many small arcs, which averages out. ByteByteGo cites an experiment: with 100 virtual nodes per server the standard deviation of load is about 10% of the mean, and with 200 it is about 5%. More virtual nodes mean better balance but more metadata. A removed server's load also spreads over many servers rather than one neighbour, and stronger machines can get more virtual nodes.
+
+## Where it is used
+ByteByteGo lists Amazon Dynamo and Cassandra (data partitioning), Discord, Akamai's CDN, and Google's Maglev load balancer. Lesson 02.07 covers the bounded-loads variant used to cap load on any single server, and Hello Interview's coverage of hot spots (replicate or salt hot keys).
+
+## Alternatives worth knowing
+- **Fixed logical shards**: create many more shards than machines (Redis Cluster's 16,384 slots, Notion's 480 schemas) and move whole shards between machines. Simple to reason about, and moves are explicit.
+- **Rendezvous (highest random weight) hashing**: for each key, score every server with `hash(key, server)` and pick the highest. Also moves only about 1/N of keys, without a ring, at the cost of scoring all servers per lookup (general knowledge).
+
+! Example: 10 → 11 cache servers
+! 100 million keys. With modulo, about 91 million keys change server, and the cache hit rate briefly drops near zero. With a ring and 150 virtual nodes per server, the new server takes about 9 million keys spread evenly from all 10 existing servers. The other 91 million stay where they are, and the hit rate barely dips.
+
+> Takeaway: modulo hashing remaps almost every key when the server count changes; a hash ring remaps only about 1/N. Virtual nodes make the split even.
+
+?? With modulo, going from 10 to 11 servers changes the result for about 10/11 of keys, roughly 91%. With consistent hashing only the keys taken over by the new server move, about 1/11, roughly 9%, and with virtual nodes they come evenly from all existing servers.
+
+@04.08
+## The problem
+On a single database, an auto-increment primary key is perfect: unique, compact and in creation order. Once data is sharded, each shard's counter starts at 1 and they collide. Twitter's 2010 Snowflake announcement describes exactly this: moving from one MySQL setup to Cassandra and sharded MySQL meant losing automatic IDs.
+
+## What we want from IDs
+The requirements (ByteByteGo's chapter is behind a login, so these come from Twitter's announcement post and its Snowflake README, which lists "minimum 10k ids per second per process"):
+- **Unique** across all machines, forever.
+- **Fits in 64 bits**, so it works as a compact integer key. Twitter stressed this: changing ID size across over 100,000 code locations had proven very hard.
+- **Roughly time-ordered**, so sorting by ID approximates sorting by creation time. Twitter wanted tweets posted around the same moment to have nearby IDs.
+- **High throughput** (tens of thousands per second) and **high availability**, so ID generation never blocks writes.
+
+## The options
+- **Multi-master auto-increment with a step**: N databases each increment by N with different offsets (1, 3, 5... and 2, 4, 6...). Simple, but IDs from different servers are not time-ordered, and changing N is painful. Flickr's ticket servers (03.09) are this idea with two dedicated servers. Twitter rejected it because it lacked ordering guarantees.
+- **UUIDs**: generated anywhere with no coordination. But 128 bits, not time-ordered in the common v4 form, and random values hurt index performance (04.09). Twitter rejected them as too big.
+- **A coordination service** (ZooKeeper sequential nodes): ordered, but every ID is a network round trip to a consensus system. Twitter rejected it for performance and availability.
+- **Snowflake-style**: each generator builds IDs from the current time, its own machine number and a local sequence. No coordination per ID, 64 bits, roughly time-ordered. This is what Twitter built (04.10).
+
+%%layers The four ID options, from most coordination to least.
+Central auto-increment | one DB, ordered, single bottleneck
+Coordination service | ZooKeeper sequence, a network hop per ID
+Multi-master with step | no hop, but not time-ordered
+*Snowflake-style | local: time + machine + sequence
+%%
+
+## Instagram's variation
+Instagram's engineering post on sharded IDs (its blog blocks automated readers, so this paragraph is from my own knowledge of the post, not re-read) generated Snowflake-like 64-bit IDs inside Postgres itself: 41 bits of milliseconds, 13 bits for the logical shard ID, and 10 bits from a per-shard sequence, computed by a stored function. Embedding the shard ID means any ID tells you which shard holds the row, with no extra lookup service.
+
+## Why "roughly" ordered is enough
+Twitter called its IDs **k-sorted**: IDs generated within about a second of each other may be out of order relative to each other, but anything further apart sorts correctly. That is good enough for timelines and for index locality, and requiring strict global order would need a single coordinator, which defeats the purpose.
+
+! Example: putting the shard in the ID
+! A photo app has 2,048 logical shards. Each photo ID is (41 bits ms timestamp | 11 bits shard | 12 bits sequence). Given photo ID 1932847261833216, the service extracts bits for the shard (say 731) and queries that shard directly. IDs still sort roughly by upload time, so "newest photos by this user" is an index range scan.
+
+> Takeaway: sharding breaks auto-increment because each shard counts independently. The common answer is 64-bit, roughly time-ordered IDs built from time, a machine or shard number, and a local sequence.
+
+?? Each shard has its own counter, so different shards hand out the same numbers and IDs collide when data is merged or moved. Fixing that with a central counter makes every insert depend on one database. You also lose a global creation order and cannot tell from an ID where the row lives.
+
+@04.09
+## UUIDs and their versions
+A UUID is a 128-bit identifier designed to be unique without coordination. RFC 9562 (2024) defines the versions:
+- **v1**: timestamp plus a node ID (often the MAC address). Leaks hardware identity; timestamp bits are in an awkward order.
+- **v3 / v5**: hash of a namespace and a name (MD5 / SHA-1). The same input always gives the same UUID.
+- **v4**: 122 random bits. The most common.
+- **v6**: v1 reordered so it sorts by time. For legacy systems.
+- **v7**: 48-bit Unix timestamp in milliseconds first, then 74 bits of randomness (or a counter). The RFC's recommended choice for new systems.
+- **v8**: custom layouts.
+
+## Why random IDs hurt B-trees
+A B-tree index (03.04) keeps keys sorted. Where a new key lands depends on its value.
+- With **sequential or time-ordered keys**, every insert goes to the rightmost leaf page. That page stays in memory, fills up, and a new one is started. Writes are concentrated and pages end up nearly full.
+- With **random keys (UUIDv4)**, each insert lands on a random leaf anywhere in the index. With a large table, most of those pages are not in memory, so inserts cause random disk reads. Pages split in the middle and end up about half full, so the index is bigger, and more of it must be cached. The write-ahead log grows too.
+
+RFC 9562 names this directly: non-time-ordered UUIDs like v4 scatter inserts across database indexes and can significantly hurt performance. Time-ordered v7 values cluster together and sort correctly as raw bytes.
+
+There is also a size cost: 16 bytes per key versus 8 for a 64-bit integer, repeated in every index and every foreign key that references the row. Flickr gave index size as a reason to avoid GUIDs (03.09).
+
+%%flow Random UUIDv4 keys insert all over a B-tree; time-ordered keys always land on the rightmost page.
+[UUIDv4] Inserts -(random keys)-> *Any leaf page: splits, cache misses
+[UUIDv7 / Snowflake] Inserts -(increasing keys)-> *Rightmost leaf only: hot in cache
+%%
+
+## UUIDv7 in detail
+- First 48 bits: milliseconds since 1970, so IDs sort by creation time.
+- Then version and variant bits.
+- Then 74 bits of randomness, or a counter for strict ordering within the same millisecond (the RFC describes counter-based methods and says a generator must never return a duplicate, for example by waiting for the clock to advance if the counter overflows).
+
+You get coordination-free generation like v4 and the index locality of sequential keys. The trade-off: the creation time is visible in the ID, which can leak information (for example how many signups happened between two IDs, or when an account was created).
+
+%%layers UUIDv7's 128 bits: time first, so values sort by creation time.
+*48 bits | Unix time in milliseconds
+4 bits | version (7)
+12 + 62 bits | random (or counter) bits
+2 bits | variant
+%%
+
+## MongoDB's ObjectId
+ObjectId is a 12-byte ID MongoDB generates by default:
+- 4 bytes: seconds since the Unix epoch.
+- 5 bytes: a random value fixed per process.
+- 3 bytes: a counter per process, starting at a random value.
+
+Because the timestamp comes first, ObjectIds sort roughly by creation time, but only to the second, and across processes within the same second the order is arbitrary. Do not rely on them for strict ordering.
+
+| ID | Size | Time-ordered | Coordination |
+| Auto-increment | 8 bytes | Strictly, on one DB | One database |
+| UUIDv4 | 16 bytes | No | None |
+| UUIDv7 | 16 bytes | Yes (ms) | None |
+| ObjectId | 12 bytes | Roughly (seconds) | None |
+| Snowflake | 8 bytes | Roughly (ms) | Unique machine IDs |
+
+! Example: switching keys on a large table
+! An events table gets 5,000 inserts per second with a UUIDv4 primary key. As it passes 2 billion rows, the index no longer fits in memory and insert latency climbs because most inserts read a random index page from disk. Switching new rows to UUIDv7 keeps inserts landing on the newest pages, which stay cached, and the index stops bloating from half-empty pages.
+
+> Takeaway: random UUIDs scatter inserts across a B-tree, causing cache misses, page splits and bloat. Time-ordered IDs (UUIDv7, ObjectId, Snowflake) keep inserts at the end of the index.
+
+?? A B-tree keeps keys sorted, so random v4 values land on random leaf pages throughout the index. On a big table most of those pages are not cached, causing disk reads, frequent mid-page splits and half-empty pages. UUIDv7 starts with a millisecond timestamp, so new keys always go to the newest leaf pages, which stay in memory and fill sequentially.
+
+@04.10
+## Twitter's design
+Snowflake is Twitter's ID generator, announced in 2010. The announcement describes each ID as three parts: a **timestamp**, a **worker number** and a **sequence number**. Worker numbers are assigned at startup through ZooKeeper (or a config file). After that, generating an ID needs no coordination at all, which gives the throughput (tens of thousands per second) and availability Twitter needed.
+
+## The 64 bits
+Twitter's archived Snowflake README lists the requirements: at least 10,000 IDs per second per process with a 2 ms response, no coordination between generating machines, IDs "k-sorted" within a reasonable bound ("we're promising 1s, but shooting for 10's of ms"), sortable without loading the objects, and under 64 bits. Its layout is 41 bits of time ("millisecond precision w/ a custom epoch gives us 69 years"), a 10-bit configured machine ID (up to 1,024 machines) and a 12-bit sequence that "rolls over every 4096 per machine". That is 63 bits; the top bit of a signed 64-bit integer stays 0 so IDs are positive. Many later write-ups split the machine bits into 5 for datacenter and 5 for worker, but the README treats them as one field.
+
+On clocks, the README says to run NTP, and that Snowflake "will refuse to generate ids until a time that is after the last time we generated an id" if the clock moves backwards (more in 04.11).
+
+| Bits | Field | Meaning |
+| 1 | Sign | Always 0, so the ID is a positive signed integer |
+| 41 | Timestamp | Milliseconds since a custom epoch |
+| 10 | Machine | Configured machine ID (often split 5 datacenter + 5 worker in later write-ups) |
+| 12 | Sequence | Counter within the same millisecond on this machine |
+
+What those sizes give you:
+- **41 bits of milliseconds**: 2^41 ms ≈ 69.7 years. A custom epoch (Twitter used a date in 2010) starts the clock near the system's launch rather than 1970, to use those years well.
+- **10 machine bits**: 1,024 generators.
+- **12 sequence bits**: 4,096 IDs per millisecond per machine, about 4 million per second per machine.
+
+If one machine needs a 4,097th ID within the same millisecond, it waits until the next millisecond and resets the sequence.
+
+%%layers Snowflake's 64 bits, high to low.
+Sign: 1 bit | always 0, so the ID is positive
+*Timestamp: 41 bits | ms since a custom epoch, about 69 years
+Machine: 10 bits | up to 1,024 generators
+Sequence: 12 bits | 4,096 IDs per ms per machine
+%%
+
+## Generating an ID
+1. Read the current time in ms.
+2. If it equals the last timestamp, increment the sequence. If the sequence overflows, spin until the next millisecond.
+3. If it is later, reset the sequence to 0.
+4. If it is earlier, the clock went backwards (04.11).
+5. Combine: `(timestamp − epoch) << 22 | machine_id << 12 | sequence`.
+
+%%flow Generating an ID is local arithmetic, no network call.
+Now (ms) -(minus epoch, shift left 22)-> *OR machine << 12 -(OR sequence)-> 64-bit ID
+%%
+
+## Properties
+- **Roughly sorted ("k-sorted")**: IDs from different machines in the same millisecond interleave arbitrarily, and small clock differences between machines mean ordering is only approximate. Twitter aimed for k under one second.
+- **Time is recoverable**: shift right by 22 bits and add the epoch to see when an ID was created. Useful for debugging and for time-range queries by ID.
+- **No central bottleneck**, but machine IDs must be unique. Two generators with the same machine ID would produce duplicates.
+
+## Tuning the layout
+The split is a design choice, not a law. Fewer machine bits and more sequence bits suit a few very busy generators; more timestamp bits extend the lifetime; Instagram replaced the machine field with a 13-bit logical shard ID so IDs reveal their shard (04.08). Discord, Sony's Sonyflake and others use variants with different time units and widths.
+
+! Example: decoding an ID
+! ID = 562,036,736,000,151,557. Shift right 22 bits: 134,000,000,000 ms since the custom epoch, about 4.25 years after it. Bits 12 to 21 give the machine: 37. The low 12 bits give the sequence: 5. So this ID came from machine 37, as its sixth ID in that millisecond.
+
+> Takeaway: Snowflake packs 41 bits of milliseconds, 10 bits of machine ID and 12 bits of sequence into a 64-bit integer: 4,096 IDs per ms per machine, about 69 years of range, no coordination per ID.
+
+?? 1 unused sign bit, 41 bits of milliseconds since a custom epoch (about 69 years), 10 bits of machine ID (often 5 datacenter + 5 worker, so 1,024 generators), and 12 bits of sequence. That allows 2^12 = 4,096 IDs per millisecond per machine.
+
+@04.11
+## Computer clocks are not reliable
+Martin Kleppmann's Cambridge distributed systems notes explain why. Computer clocks use quartz crystals, which drift. Drift is measured in parts per million: 1 ppm is about 86 ms per day, and typical clocks are within about 50 ppm, so an unsynchronised clock can wander by seconds a day. Temperature changes the drift.
+
+**NTP** (Network Time Protocol) corrects drift by asking a time server and estimating the offset from round-trip timestamps. It assumes network delay is equal in both directions, so asymmetric delays add error. In good conditions NTP keeps skew to a few milliseconds; it can be much worse. How it corrects:
+- Offset under 125 ms: **slew** the clock, running it slightly fast or slow until it catches up.
+- Offset between 125 ms and 1,000 s: **step** the clock, jumping straight to the right time. This can move the clock backwards.
+- Larger: give up and leave it to an operator.
+
+**Leap seconds** add another trap: some days have 86,401 seconds. The 30 June 2012 leap second triggered a Linux kernel bug that caused widespread outages. Many companies now "smear" the extra second over hours instead.
+
+%%flow Clocks drift, NTP corrects them, and a correction can step the wall clock backwards.
+Wall clock 12:00:00.500 -(NTP step back 30 ms)-> *12:00:00.470 -> Same ms seen twice
+%%
+
+## Two kinds of clock
+- **Time-of-day clocks** (Java `currentTimeMillis()`, Unix time) give the date and time. They can jump forwards or **backwards** when NTP steps them. Never use them to measure durations.
+- **Monotonic clocks** (Java `nanoTime()`, `CLOCK_MONOTONIC`) only move forward. Good for timeouts and elapsed time, but their values mean nothing on another machine.
+
+A Snowflake generator needs the time-of-day clock, because the timestamp must be comparable across machines. So it must handle backward jumps.
+
+## What a Snowflake generator should do when the clock goes back
+If the current time is earlier than the last timestamp used, generating normally could reissue a timestamp and sequence already used, creating **duplicate IDs**. Options:
+- **Refuse and wait**: Twitter's original implementation refused to generate IDs until the clock caught up with the last timestamp, returning an error meanwhile. For a 5 ms jump, simply waiting 5 ms is fine.
+- **Keep using the last timestamp**: treat time as not having moved and keep incrementing the sequence from the last used millisecond. When the sequence runs out, wait. Safe, and IDs stay increasing.
+- **Large jumps**: if the clock went back by seconds or more, stop and alert. Something is wrong with time sync on that machine.
+- **Persist the last timestamp** across restarts, or the generator could restart after a backward step and reuse old timestamps.
+
+Configure NTP to slew rather than step where possible, to make backward jumps rare.
+
+%%seq A Snowflake generator facing a backwards clock refuses rather than risk duplicates.
+Caller > Generator : next id
+Generator > Clock : now = 1000 ms
+Generator -> Caller : id at 1000
+Generator > Clock : now = 995 ms (stepped back)
+Generator -> Caller : wait / error until > 1000
+%%
+
+## Why IDs only give rough order
+Even with perfect generators, two machines' clocks differ by a few milliseconds. An event on machine A can get a smaller timestamp than an event on machine B that happened after it, even one caused by it. Kleppmann's notes show that physical timestamps cannot reliably order events across machines, and introduce the **happens-before** relation and **Lamport clocks**: counters that increase with each event and jump ahead when a message arrives with a bigger value, guaranteeing that if A caused B, A's counter is smaller (Module 6). Snowflake IDs are fine for "roughly by time". If you need causal order, you need logical clocks or a single sequencer.
+
+! Example: handling a 5 ms backward jump
+! Last ID used timestamp 1,000,250 ms with sequence 17. NTP steps the clock back and it now reads 1,000,245. The generator keeps issuing IDs with timestamp 1,000,250 and sequences 18, 19, 20... When the sequence would exceed 4,095, it waits until the real clock passes 1,000,250. A metric records the backward jump, and an alert fires if one exceeds 100 ms.
+
+> Takeaway: wall clocks drift and can jump backwards. A Snowflake generator must never reuse a timestamp: wait for the clock to catch up (or keep using the last timestamp), and alert on large jumps.
+
+?? It must not issue IDs with the earlier timestamp, because it could repeat timestamp and sequence pairs it already used. It should either wait about 5 ms until the clock passes the last timestamp it used (Twitter's original approach), or keep using the last timestamp and increment the sequence until the clock catches up. It should log the event and refuse with an alert if the jump is large.
+
+@04.12
+## How OFFSET pagination works
+`SELECT ... ORDER BY created_at DESC LIMIT 20 OFFSET 200000` asks for page 10,001. Markus Winand's Use The Index, Luke explains what the database actually does: it fetches the first 200,020 rows in order, throws away 200,000 and returns 20. The offset is just a number; it carries no information the database could use to skip ahead. So each page is slower than the last, and deep pages scan huge amounts of data.
+
+There is a correctness problem too. If a new row is inserted while someone is paging, every later row shifts down one place. The next `OFFSET` request returns a row the user already saw. Deletions cause rows to be skipped.
+
+%%flow OFFSET reads and throws away every earlier row, so deep pages get slower and slower.
+Page 1 -(read 20)-> Page 100 -(read 2,000, discard 1,980)-> *Page 10,000: read 200,000
+%%
+
+## Keyset (seek) pagination
+Instead of saying "skip N rows", say "give me rows after the last one I saw". The client sends back the sort values of the last row on the current page.
+
+With one unique sort column:
+`WHERE id < :last_id ORDER BY id DESC LIMIT 20`
+
+With a non-unique column like a date, add a unique tie-breaker, because paging needs a fully determined order. Winand's example:
+`WHERE (sale_date, sale_id) < (:last_date, :last_id) ORDER BY sale_date DESC, sale_id DESC FETCH FIRST 10 ROWS ONLY`
+with an index on `(sale_date, sale_id)`.
+
+The `(a, b) < (x, y)` syntax is a **row value** comparison: compare `a` first, and only if equal compare `b`. Postgres and Db2 use it with indexes. MySQL evaluates it correctly but cannot use the index for it, and SQL Server does not support it; there you write the equivalent `sale_date <= :d AND NOT (sale_date = :d AND sale_id >= :id)`.
+
+%%flow Keyset pagination: remember the last row's key and seek past it using the index.
+Page n: last (created_at, id) -(WHERE (created_at, id) < last)-> *Index seek -(LIMIT 20)-> Page n+1
+%%
+
+## Why it stays fast
+The database uses the index to jump straight to the position after the last-seen key (a tree traversal, 03.04) and reads the next 20 entries. The cost is the same on page 1 and page 10,000. Winand's benchmark chart shows offset response time climbing with page number, clearly from about page 20, while keyset stays flat. Inserted rows do not shift anything, because the position is defined by values, not by counting.
+
+## Trade-offs
+- No jumping to an arbitrary page number. That suits infinite scroll and "next" links, which is what most feeds use.
+- Going backwards needs reversed comparisons and sort order.
+- The client must carry the keyset values. In an API, wrap them in an opaque cursor token (02.01) so you can change the encoding later.
+- Filters and sorts must match an index whose column order matches the ORDER BY.
+
+! Example: a feed API
+! First request: GET /feed?limit=20 runs WHERE user_id = 7 ORDER BY created_at DESC, id DESC LIMIT 20. The response includes next_cursor = base64("2025-03-01T10:22:05Z|98213"). The next request decodes it and runs WHERE user_id = 7 AND (created_at, id) < ('2025-03-01T10:22:05Z', 98213) ORDER BY created_at DESC, id DESC LIMIT 20, served by an index on (user_id, created_at, id).
+
+> Takeaway: OFFSET makes the database read and discard every skipped row, so deep pages get slower and inserts cause duplicates. Keyset pagination seeks to the last-seen key through the index: constant cost and stable results.
+
+?? With OFFSET the database must read and discard every earlier row: page 10,000 of 20 rows reads about 200,000 rows to return 20, so cost grows with depth. Keyset pagination uses WHERE (sort_key, id) < (last values) with a matching index, so the database seeks straight to the right position in the B-tree and reads only 20 entries, whatever the page.
+
+@04.13
+## The structure
+A Bloom filter answers "is X in this set?" using very little memory, at the cost of sometimes being wrong in one direction. Bill Mill's tutorial describes it:
+- An array of **m bits**, all starting at 0.
+- **k hash functions**, each mapping an item to one bit position.
+
+**Adding** an item: hash it with all k functions and set those k bits to 1.
+
+**Checking** an item: hash it the same way and look at those k bits.
+- If any bit is 0, the item was **definitely never added**: adding it would have set that bit.
+- If all bits are 1, the item is **probably** in the set.
+
+%%flow A Bloom filter: k hash functions set k bits per key; a lookup checks the same k bits.
+add("cat") -(h1, h2, h3)-> *Set bits 2, 7, 11 -> Lookup "dog": bits 3, 7, 9 -(bit 3 is 0)-> Definitely absent
+%%
+
+## Why it cannot say "definitely present"
+Bits are shared. Many different items set bits in the same array, and bits are never cleared. An item you never added may hash to k positions that other items happened to set. The filter cannot tell whether those 1s came from this item or from others, so all it can say is "maybe". That is a **false positive**. False negatives are impossible, because an added item's bits were set and are never unset.
+
+The same fact means a standard Bloom filter cannot **delete**: clearing a bit could erase evidence of other items and create false negatives. Counting Bloom filters or cuckoo filters (Redis offers both) support deletion at the cost of more memory.
+
+%%flow Why "maybe": other keys may have set every bit you check, giving a false positive.
+"cat" set 2, 7, 11 -> "owl" set 3, 9, 14 -> *Lookup "fox": 2, 9, 14 all 1 -> Maybe (wrong)
+%%
+
+## Sizing it
+With n items, m bits and k hash functions:
+- False positive rate ≈ (1 − e^(−kn/m))^k
+- Best number of hash functions: k = (m/n) × ln 2
+
+A useful rule of thumb (general knowledge, consistent with these formulas): about 10 bits per item with 7 hash functions gives roughly a 1% false positive rate. A billion items then needs about 1.2 GB, compared with tens of gigabytes to store the items themselves. Halving the error rate costs only about 1.44 extra bits per item.
+
+The tutorial's sizing process: estimate n, pick m, compute k, check the error rate, and grow m if it is too high. Use fast non-cryptographic hashes (MurmurHash, xxHash, FNV), not SHA-1 or MD5; one project got about 8× faster by switching from MD5 to Murmur. Insert and lookup are both O(k), independent of how many items are stored.
+
+## Where they are used
+The pattern is always: a cheap, in-memory check in front of an expensive operation, where a "no" saves the expensive work and an occasional false "maybe" only costs one wasted lookup.
+- **LSM-tree databases** (RocksDB, Cassandra, ScyllaDB) keep a Bloom filter per data file, so a read skips files that definitely lack the key (Module 5).
+- **Web crawlers**: "have I already crawled this URL?"
+- **Caches and CDNs**: avoid caching one-hit-wonder objects, or skip lookups for keys known to be absent.
+- **Username availability or malicious-URL checks** in the browser (Chromium has used them), confirmed by the server on a "maybe".
+
+Jason Davies' interactive demo lets you add items and watch which bits flip, which makes the false positive mechanism easy to see.
+
+! Example: avoiding database lookups for missing keys
+! A URL shortener receives many requests for codes that do not exist (typos, scanners). A Bloom filter of all 500 million valid codes at 10 bits each takes about 600 MB of RAM with a 1% false positive rate. A request for a missing code is rejected from memory 99% of the time; the other 1% fall through to a database lookup that returns 404. Every valid code always passes the filter.
+
+> Takeaway: a Bloom filter sets k bits per item in a shared bit array. A 0 bit proves absence; all 1s only suggests presence, because other items may have set those bits. Use it to skip expensive lookups.
+
+?? Because bits are shared between items and never cleared, the k bits for an item you never added may all have been set by other items. The filter cannot tell whether its own bits or other items' bits made them 1, so a full match only means "maybe". A 0 bit, however, proves the item was never added, since adding it would have set that bit.
+
+@04.14
+## Data cools over time
+Most data is read heavily when new and rarely afterwards. Logs, order history, photos, backups: the last few days get most of the reads. Keeping everything on the fastest, most expensive storage wastes money. The standard pattern is **tiering**: move data to cheaper storage as it ages, and accept slower or costlier access to the old data.
+
+## S3 storage classes
+AWS S3 offers a ladder of classes, all designed for 11 nines (99.999999999%) of durability. The trade-off is between storage price on one side and retrieval speed, retrieval fees and minimum storage duration on the other.
+| Class | For | Retrieval | Minimum duration |
+| Standard | Frequently accessed data | Milliseconds, no retrieval fee | None |
+| Intelligent-Tiering | Unknown or changing access | Milliseconds (optional archive tiers slower) | None; small monitoring fee |
+| Standard-IA | Infrequent but needs fast access | Milliseconds, per-GB fee | 30 days |
+| One Zone-IA | Infrequent, re-creatable data | Milliseconds, per-GB fee; one AZ only | 30 days |
+| Glacier Instant Retrieval | Accessed a few times a year | Milliseconds, per-GB fee | 90 days |
+| Glacier Flexible Retrieval | Backups, rarely accessed archives | Minutes to hours | 90 days |
+| Glacier Deep Archive | Compliance archives | 12 to 48 hours | 180 days |
+
+Things that catch people out:
+- **Minimum duration**: deleting an object from Standard-IA after 10 days still bills 30 days.
+- **Retrieval fees**: cheap storage with heavy reads can cost more than Standard.
+- **Small objects**: IA and Glacier classes have minimum billable sizes and per-object overhead (Glacier Flexible and Deep Archive add about 40 KB of metadata per object), and transitions are charged per request. Millions of tiny log files should be batched into larger files before archiving.
+- **Single-zone classes** can lose data if that availability zone is lost.
+
+%%flow Data cools over time; lifecycle rules move it down the storage classes automatically.
+S3 Standard -(30 days)-> Standard-IA -(90 days)-> Glacier Flexible -(365 days)-> *Deep Archive or delete
+%%
+
+## Lifecycle rules
+You do not move objects by hand. S3 lifecycle rules apply to a bucket (optionally filtered by prefix or tags) and run automatically on existing and future objects:
+- **Transition actions** move objects to another class after N days.
+- **Expiration actions** delete objects after N days.
+
+AWS's example pattern: frequent access for 30 days, infrequent up to 90 days, then archive or delete.
+
+## Beyond S3
+The same idea appears everywhere:
+- Databases: keep recent partitions on fast disks or in the main database, detach and archive old partitions to object storage (Parquet files queryable by Athena or ClickHouse).
+- Kafka tiered storage: recent log segments on broker disks, older ones in object storage.
+- Caches: memory (hot) → SSD → object storage (cold).
+
+## Designing a plan
+1. Measure access by age. Decide what latency old data actually needs.
+2. Decide retention from legal and business needs, not habit.
+3. Set lifecycle transitions and expiry.
+4. Batch small objects before archiving.
+5. Make retrieval of archived data an explicit, rare, possibly asynchronous operation in the product ("your export will be ready in a few hours").
+
+! Example: application logs
+! Logs land in S3 Standard and are indexed in a search system for 30 days. A lifecycle rule moves objects older than 30 days to Glacier Instant Retrieval (cheap, still millisecond reads for the rare incident investigation), to Glacier Deep Archive at 180 days for compliance, and expires them at 7 years. Hourly log files are compacted into large compressed files before archiving to avoid per-object overhead. Trade-off: investigating a 2-year-old incident means waiting up to 48 hours and paying retrieval fees.
+
+> Takeaway: move data to cheaper tiers as it ages with lifecycle rules. You save on storage and pay in retrieval time, retrieval fees and minimum storage durations.
+
+?? Keep the last 30 days in hot storage (S3 Standard plus a search index) for fast querying. After 30 days, a lifecycle rule moves logs to an infrequent-access or archive class (Standard-IA or Glacier Instant Retrieval, then Deep Archive for long retention) and expires them when retention ends. The trade-off is much lower storage cost in exchange for retrieval fees, minimum storage durations and, for deep archive tiers, hours of waiting to read old logs.

@@ -1,0 +1,638 @@
+@01.01
+## Why this step comes first
+A system design question is deliberately vague. "Design Twitter" could mean a weekend prototype or a platform for 500 million people, and those are completely different systems. The most common way to fail is to start drawing boxes straight away and end up designing the wrong thing. ByteByteGo's framework puts it bluntly: the final design matters less than the process you use to get there, and the interviewer is watching how you handle ambiguity.
+
+So the first few minutes are spent turning a vague prompt into a short, agreed list of what you are building. In a 45-minute interview this takes roughly 3 to 10 minutes.
+
+## Functional requirements: what the system does
+Functional requirements are the core features, written as things a user can do. Hello Interview suggests phrasing them as "Users should be able to..." and narrowing to the top three. For a Twitter-like product:
+- Users can post tweets.
+- Users can follow other users.
+- Users can see a feed of tweets from people they follow.
+
+Everything else (DMs, search, trends, ads) is explicitly declared out of scope. Saying "I'll leave search out for now" is a sign of control, not a gap.
+
+%%flow Requirements come first because every later box and number depends on them.
+Vague prompt -(ask)-> Functional requirements -(ask)-> Non-functional targets -(estimate)-> *Design choices
+%%
+
+## Non-functional requirements: how well it does it
+Non-functional requirements describe qualities, written as "The system should...". The key is to make them specific to this system and, where possible, measurable. "Low latency" is weak. "The feed renders in under 200 ms" is useful because it will later justify a cache or precomputed feeds.
+
+A checklist to pick 3 to 5 from:
+- **Scale**: users, requests per second, data size, read/write ratio, traffic bursts.
+- **Latency**: which operations must be fast, and how fast.
+- **Availability vs consistency**: is it worse to show stale data or to show an error?
+- **Durability**: can any acknowledged data ever be lost?
+- **Security and compliance**: auth, privacy rules, data location.
+- **Environment**: mobile clients on bad networks, limited budget, existing tech stack.
+
+%%layers Functional requirements say what the system does; non-functional ones say how well. A URL shortener as the example.
+Functional | shorten a URL, redirect, optional custom alias, expiry
+*Non-functional | redirect p99 < 100 ms, 99.99% available, links never lost
+Out of scope (say it) | analytics dashboards, user accounts
+%%
+
+## Questions worth asking
+ByteByteGo's news feed example shows the style. Each question removes a branch of the design tree:
+- Mobile, web, or both?
+- Which features matter most?
+- Chronological feed or ranked?
+- How many friends can a user have? (5,000)
+- How much traffic? (10 million daily active users)
+- Text only, or images and video too?
+
+If the interviewer won't answer, state an assumption out loud and write it down. You will lean on those assumptions later.
+
+## Should you estimate capacity now?
+ByteByteGo runs quick back-of-the-envelope numbers early. Hello Interview argues the opposite: only calculate when a number will change a design decision. A good middle path is to note the headline numbers (DAU, rough QPS, data growth) and save detailed maths for the moment it decides something, such as whether data fits on one machine.
+
+! Example: URL shortener in two minutes
+! Functional: create a short link from a long URL; visiting the short link redirects; optional custom alias and expiry.
+! Non-functional: redirects are very fast (p99 under 100 ms) and highly available; reads outnumber writes about 100:1; links must never point to the wrong URL; 100 million new links per month.
+! Out of scope: analytics dashboards, user accounts.
+
+> Takeaway: agree on a small, written list of features and measurable qualities before designing. Every later decision should point back to one of them.
+
+?? Functional: shorten a URL, redirect a short URL to the original, optionally set a custom alias or expiry. Questions: How many new links per day and how many redirects? Do links expire? Can two users shortening the same URL get the same short link? Do we need click analytics? How short must the code be?
+
+@01.02
+## From requirements to boxes
+Once requirements are agreed, the next job is a high-level design: the main components and how data flows between them. The System Design Primer calls this "sketch the main components and connections, and justify your ideas". ByteByteGo describes it as drawing the blueprint and getting the interviewer's buy-in before going deeper.
+
+Hello Interview adds two small steps before drawing that make the drawing easier:
+- **Core entities**: the nouns the system stores and passes around. For Twitter: User, Tweet, Follow.
+- **API**: one endpoint per functional requirement. `POST /v1/tweets`, `POST /v1/follows`, `GET /v1/feed`. The current user comes from the auth token, never from the request body.
+
+With entities and endpoints written down, the design becomes: for each endpoint, what components does a request touch, and what state changes?
+
+%%flow From requirements to boxes: each core use case becomes a path through named components.
+Use case: redirect -> Client -(GET /abc)-> API service -(lookup)-> *Link store -(301 + URL)-> Client
+%%
+
+## Logical before physical
+A logical design names roles, not products: client, load balancer, API service, feed service, relational database, key-value cache, message queue, object store. Naming a product too early ("we'll use Kafka") invites questions you can't yet justify. Pick products at the end, when a requirement makes the choice obvious.
+
+Good habits while drawing:
+- Build up one endpoint at a time instead of drawing everything at once.
+- Label arrows with what flows over them and whether it is synchronous (request/response) or asynchronous (event, queue).
+- Write key fields next to each data store, not full schemas.
+- When you think "we'll need a cache here", say it and move on. Add it once the simple path works.
+
+%%layers Logical before physical: decide what the parts do before choosing products for them.
+Logical | "link store: key lookup, high read rate"
+*Physical | "DynamoDB table, Redis cache in front"
+%%
+
+## The C4 model: zoom levels for diagrams
+The C4 model gives a vocabulary for drawing at the right level of detail. It defines four zoom levels:
+- **System context**: your system as one box, with the people and external systems around it.
+- **Container**: zoom into your system. A container is an application or a data store: a web app, an SPA, a mobile app, a database schema, an S3 bucket. The diagram shows how responsibilities are split across them, the main technology choices, and how they communicate. C4 recommends every team has one.
+- **Component**: zoom into one container to show its major internal parts.
+- **Code**: classes and functions; rarely worth drawing by hand.
+
+C4 deliberately keeps deployment details (clustering, load balancers, replication, failover) out of the container diagram, because those differ between production and staging. They go on separate deployment diagrams. In an interview, your "high-level design" is roughly a container diagram.
+
+%%layers The C4 model's four zoom levels, from the outside in.
+System context | your system, its users, outside systems
+*Containers | apps and data stores that run separately
+Components | major parts inside one container
+Code | classes and functions, rarely drawn
+%%
+
+## Then go deep where it matters
+After the high-level design, the Primer and ByteByteGo both move to a deep dive on a few core components, then to scaling (load balancers, caching, sharding, replication). The logical design is what makes that possible: you can only discuss bottlenecks once everyone can trace a request end to end.
+
+! Example: URL shortener, logical view
+! Client → load balancer → URL service. On create: URL service gets a unique ID from an ID generator, encodes it, stores (code → long URL) in the database, returns the short link. On redirect: URL service looks up the code in a cache, falls back to the database, returns an HTTP redirect.
+
+> Takeaway: define entities and the API first, then draw the simplest path for each endpoint using generic roles. Add complexity only when a requirement demands it.
+
+?? Client sends requests to an API service behind a load balancer. The API service writes new mappings to a database and reads them on redirect, with a cache in front of the database for hot codes. An ID generator provides unique IDs for new links. Arrows: client to API (HTTP), API to cache and DB (sync reads/writes).
+
+@01.03
+## Quality attributes drive architecture
+Two systems with identical features can look nothing alike. A to-do app for 100 users and one for 100 million share the same features but need completely different designs. The difference lives in the non-functional requirements (NFRs): the qualities the system must have.
+
+The common categories:
+- **Performance / latency**: how quickly operations complete.
+- **Scalability**: how the system copes as load and data grow.
+- **Availability**: what fraction of time it serves requests correctly.
+- **Durability**: whether acknowledged data survives failures.
+- **Consistency**: whether readers always see the latest write.
+- **Security and privacy**: who can do and see what.
+- **Operability and cost**: how hard and expensive it is to run.
+
+The AWS Well-Architected Framework organises the same ideas into six pillars: operational excellence, security, reliability, performance efficiency, cost optimisation and sustainability. It's a useful checklist when reviewing a real design.
+
+## Make each one measurable
+Hello Interview's rule: NFRs should be specific to the system and quantified. Compare:
+- "It should be fast" → "p99 feed load under 200 ms".
+- "Highly available" → "99.95% of redirect requests succeed each month".
+- "Scalable" → "support 100M DAU and 5x traffic spikes during live events".
+- "Durable" → "no acknowledged message is ever lost".
+
+Measurable statements do two things. They let you check a design ("can a single database meet 50k writes/s?"), and they stop over-engineering ("we don't need multi-region active-active for 99.9%").
+
+%%flow A vague quality goal becomes a number you can test against.
+"Fast" -(make measurable)-> *p99 < 200 ms at 5k req/s -(monitor)-> SLO alert
+%%
+
+## Use percentiles, not averages
+Google's SRE book makes a strong case for this. Latency distributions have long tails. A service can answer most requests in 50 ms while 5% take a full second, and the average hides it. Users notice the tail. Describe latency as p50 (typical), p99 or p99.9 (bad-but-plausible), and design for the high percentile you care about.
+
+%%flow An average hides the slow tail that real users feel; percentiles expose it.
+p50: 40 ms -> p90: 90 ms -> p99: 450 ms -> *p99.9: 2 s
+%%
+
+## Pick and rank
+Hello Interview suggests choosing the top 3 to 5 NFRs rather than listing everything. Then rank them, because they conflict. Strong consistency costs latency and availability; very high availability costs money. If you've agreed that "a stale like count is fine but a double charge is not", many later choices make themselves.
+
+! Example: chat app NFRs
+! Messages delivered in under 500 ms p99 to online recipients. No acknowledged message is ever lost. Messages in a conversation appear in the same order for everyone. System stays available for sending even if read receipts are delayed. 50M DAU, average 40 messages per user per day.
+
+> Takeaway: NFRs, not features, decide the architecture. Write them as numbers with percentiles, keep the list short, and agree which one wins when they conflict.
+
+?? Example: "p99 latency for loading the home feed is under 200 ms, measured at the server, at 50k requests per second." It names the operation, the percentile, the threshold and the load.
+
+@01.04
+## There is no free choice
+Every architectural decision buys something and pays for it somewhere else. Interviewers and reviewers care less about which option you pick than whether you can name what it costs. A useful sentence pattern: "We chose X because requirement Y matters more here than Z."
+
+## Performance vs scalability
+The System Design Primer draws a clean line:
+- A **performance** problem: the system is slow even for one user.
+- A **scalability** problem: the system is fast for one user but slows down under load.
+
+A system is scalable if adding resources increases performance proportionally. The fixes differ: performance problems are usually code, queries or algorithms; scalability problems are usually contention, shared state or a single bottleneck.
+
+%%flow Performance versus scalability: a performance problem is slow for one user; a scalability problem is fast for one, slow under load.
+[Performance problem] 1 user -(slow)-> *2 s response
+[Scalability problem] 1 user -(fast)-> 50 ms -(10k users)-> *2 s response
+%%
+
+## Latency vs throughput
+Latency is how long one operation takes. Throughput is how many operations complete per unit of time. The Primer's guidance: aim for maximal throughput with acceptable latency. They often trade against each other. Batching writes raises throughput but makes each individual write wait. Queueing smooths load but adds delay.
+
+## Availability vs consistency
+When data is copied across machines, you must decide what happens when the copies disagree. The Primer describes three consistency patterns:
+- **Weak**: after a write, reads may or may not see it (Memcached, VoIP, live games).
+- **Eventual**: reads will see the write after a short delay, often milliseconds (DNS, email). Good for highly available systems.
+- **Strong**: reads immediately see the write (relational databases, file systems). Needed when correctness depends on it.
+
+Werner Vogels' "Eventually Consistent, Revisited" explains why Amazon often chose availability: in a large system, network partitions happen, and during one you either reject some requests or serve possibly stale data. Amazon's shopping cart is always writable; if two partitions accept changes, the cart merges them afterwards. He also introduces the N/W/R knobs (replicas, write acknowledgements, read replicas consulted): if W + R > N, reads always overlap the latest write.
+
+%%flow Availability versus consistency during a partition: answer with possibly stale data, or refuse until in sync.
+[Choose availability] Client -> Replica B (cut off) -(answer)-> *Possibly stale data
+[Choose consistency] Client -> Replica B (cut off) -(refuse)-> *Error until healed
+%%
+
+## Other classic trade-offs
+- **Read speed vs write speed**: indexes, denormalisation and caches speed reads but slow or complicate writes.
+- **Simplicity vs flexibility**: a monolith is simpler; microservices are more flexible for large teams.
+- **Cost vs everything**: more replicas, regions and headroom all cost money.
+
+## When is stale data fine?
+Vogels notes that many web applications only need "user-perceived consistency": the inconsistency window just has to be shorter than the time before the user's next page load. Like counts, view counts, recommendations and follower lists tolerate seconds of staleness. Account balances, inventory at checkout, permission changes and anything involving money usually don't.
+
+> Takeaway: always state the trade-off you're making. Distinguish performance from scalability, latency from throughput, and decide per feature whether staleness is acceptable.
+
+?? Accept stale data: a post's like count or a "people you may know" list; being a few seconds behind harms nobody. Don't accept it: checking a bank balance before a withdrawal or seat availability at the moment of booking, where stale reads cause overdrafts or double bookings.
+
+@01.05
+## Four properties that pull against each other
+This lesson covers the qualities you'll trade most often: availability, durability, consistency and cost.
+
+## Availability and the "nines"
+Availability is the fraction of time (or of requests) a service works correctly. It's described in nines:
+
+| Target | Downtime per month | Downtime per year |
+| 99% | 7.3 hours | 3.65 days |
+| 99.9% | 43.8 minutes | 8.8 hours |
+| 99.99% | 4.4 minutes | 52.6 minutes |
+| 99.999% | 26 seconds | 5.3 minutes |
+
+Google's SRE book points out that for global services it is better to measure **aggregate availability**: the share of requests that succeed. A service handling 2.5 million requests a day at 99.99% can fail 250 of them.
+
+Availability composes. The Primer shows that components **in sequence** multiply: two 99.9% services in a chain give about 99.8%. Components **in parallel** (redundant copies) improve it: two 99.9% replicas give about 99.9999%, assuming independent failures. This is why redundancy is the main tool for availability, and why long chains of synchronous calls hurt it.
+
+## Why not 100%?
+Google's "Embracing Risk" chapter argues 100% is almost never the right target:
+- Each extra nine can cost far more than the last, both in hardware and in engineering time not spent on features.
+- Users can't tell the difference beyond a point. Their ISP and phone already fail 0.01% to 1% of the time.
+- The decision is economic. If moving from 99.9% to 99.99% on a $1M service recovers about $900 of revenue, it's only worth doing if it costs less than that.
+
+%%flow Components in series multiply their availability, so every extra hop lowers the total.
+LB 99.99% -> App 99.95% -> DB 99.95% -> *Total about 99.89%
+%%
+
+## SLIs, SLOs, SLAs and error budgets
+- **SLI**: what you measure, e.g. the share of requests that succeed in under 300 ms.
+- **SLO**: the target for that SLI, e.g. 99.9% over 30 days.
+- **SLA**: a contract with consequences (refunds) if you miss. Set it looser than the internal SLO.
+
+The **error budget** is 100% minus the SLO. With a 99.9% SLO, 0.1% of requests may fail. While budget remains, teams ship freely. When it's spent, releases slow down and effort goes into reliability. This turns the eternal argument between "ship faster" and "be more stable" into a shared number. The SRE book also warns against overachieving: Google deliberately took its lock service Chubby down when it was "too reliable", because other teams had started assuming it never failed.
+
+%%layers From measurement to promise: each layer builds on the one below.
+SLA | contract with customers, with penalties
+*SLO | internal target, e.g. 99.9% of requests OK over 30 days
+SLI | the measurement, e.g. share of requests under 300 ms
+Error budget | 0.1% of requests may fail; spend it on releases
+%%
+
+## Durability
+Durability is the probability that data you acknowledged is still there later. It comes from replication across independent failures, backups, and checksums. Availability and durability are different: a system can be down (unavailable) without losing data, or up while silently losing writes.
+
+## Consistency, carefully
+CAP says that during a network partition a system must choose between consistency and availability. Martin Kleppmann's essay warns that CAP uses very narrow definitions: "consistency" means linearizability (every read sees the latest completed write), and "availability" means every non-failed node must answer. Under those definitions most real databases are neither "CP" nor "AP". Single-leader replicated databases aren't CAP-available, and their async followers aren't linearizable either. His advice: drop the labels and describe actual guarantees (read-your-writes, linearizable reads, what happens during failover).
+
+## Cost
+Each of the above costs money: replicas, cross-region links, standby capacity, on-call time. The right answer is the cheapest design that meets the agreed SLOs, not the most reliable one you can imagine.
+
+> Takeaway: set an availability target from user and business needs, measure it as an SLO with an error budget, use redundancy to reach it, and describe consistency by concrete guarantees instead of CAP labels.
+
+?? 99.9% allows about 43.8 minutes of downtime per 30-day month. 99.99% allows about 4.4 minutes.
+
+@01.06
+## Why estimate at all
+Back-of-the-envelope estimates tell you which designs are even possible. ByteByteGo credits Jeff Dean with the idea: thought experiments using a handful of standard numbers. Sirupsen's napkin-math repo puts the goal precisely: get the order of magnitude right. Whether a number is 10^3 or 10^5 changes the design; whether it's 3 or 4 × 10^4 doesn't.
+
+## Numbers to keep in your head
+Powers of two and data sizes: 2^10 ≈ a thousand (KB), 2^20 ≈ a million (MB), 2^30 ≈ a billion (GB), 2^40 ≈ a trillion (TB), 2^50 ≈ PB.
+
+Time: one day is 86,400 seconds, call it 10^5. So 1 million events per day is about 12 per second.
+
+Latency ladder (rounded, from Dean's list and napkin-math):
+
+| Operation | Rough time |
+| Main memory reference | 100 ns |
+| System call | 100 ns |
+| Context switch | 1 µs |
+| SSD random read (8 KB) | 100 µs |
+| Same-zone network round trip | 100-500 µs |
+| Simple database query (Redis, MySQL) | 500 µs |
+| HDD seek | 10 ms |
+| Blob storage read | 50-100 ms |
+| Cross-Atlantic round trip | 80-150 ms |
+
+Throughput: memory reads tens of GB/s per thread; SSD sequential reads a few GB/s; HDD around 200 MB/s sequential but only about 2 MB/s for random 8 KB reads; network around 1-3 GB/s per machine.
+
+ByteByteGo's conclusions from these: memory is fast and disks are slow, avoid disk seeks, simple compression is cheap so compress before sending over the network, and cross-region traffic is slow.
+
+## The method
+Napkin-math's advice:
+- **Fermi decomposition**: break the question into quantities you can guess (users, actions per user, bytes per action), then multiply.
+- **Keep units** on every number. If the units don't cancel to what you want, something is wrong.
+- **Use exponents**: 1.5 × 10^8 is easier to multiply than 150,000,000.
+- **Keep it under about six assumptions** and write each one down.
+- **Round aggressively**: 99,987 / 9.1 becomes 100,000 / 10.
+
+## A worked example (ByteByteGo's Twitter exercise)
+Assumptions: 300M monthly users, 50% daily active, 2 tweets per user per day, 10% contain 1 MB of media, keep data 5 years.
+- DAU = 150M.
+- Tweet QPS = 150M × 2 / 86,400 ≈ 3,500. Peak ≈ 2 × average = 7,000.
+- Media per day = 150M × 2 × 10% × 1 MB = 30 TB.
+- Five years ≈ 30 TB × 365 × 5 ≈ 55 PB.
+
+%%flow The estimation chain: users to requests per second to storage, rounding aggressively at every step.
+Daily active users -(x actions / day)-> Requests per day -(/ 100,000 s)-> *Average QPS -(x 2 to 3)-> Peak QPS
+%%
+
+## Turn numbers into decisions
+The estimate is only useful if you say what it implies. 7,000 writes/s is too many for one relational primary to take comfortably with headroom, so you need batching, sharding or a write-optimised store. 55 PB means object storage, not a database. If the whole working set is 20 GB, it fits in memory on one machine and a cache cluster is unnecessary.
+
+Cost is part of napkin maths too. Napkin-math's rough cloud prices: about $25 per vCPU-month, $2.50 per GB-month of RAM, $0.02 per GB-month of object storage, $0.10 per GB of internet egress.
+
+> Takeaway: aim for the right power of ten, write assumptions down with units, and always finish with "so this means we need...".
+
+?? Writes per day = 100M × 10 = 10^9. Average write QPS = 10^9 / ~10^5 s ≈ 10,000-12,000 per second, so plan for 20-30k at peak. Storage = 10^9 × 1 KB = 1 TB per day, about 365 TB per year before replication (about 1 PB with 3 copies).
+
+@01.07
+## The problem
+A web server spends most of its time waiting: for the client to send bytes, for the database to answer, for a disk read. The question is how to serve thousands of mostly idle connections without wasting resources.
+
+## Concurrency is not parallelism
+Rob Pike's talk separates two ideas that people blur:
+- **Concurrency** is about structure: composing a program out of independently executing pieces. "Dealing with lots of things at once."
+- **Parallelism** is about execution: running computations at the same instant on multiple cores. "Doing lots of things at once."
+
+His example is gophers moving a pile of old manuals to an incinerator. Adding gophers doesn't help on its own; they need carts and they collide at the pile. Splitting the job into independent steps (load, move cart, unload, return empty cart) gives a concurrent design. Once the structure is right, running more gophers in parallel "falls out" naturally. A concurrent design can run on one core and still be correct; it just becomes easy to parallelise.
+
+%%flow Concurrency is about structure, parallelism is about simultaneous execution.
+[Concurrency: 1 core interleaves] Task A part 1 -> Task B part 1 -> Task A part 2 -> Task B part 2
+[Parallelism: core 1] *Task A part 1 -> *Task A part 2
+[Parallelism: core 2, same moments] *Task B part 1 -> *Task B part 2
+%%
+
+## Model 1: a thread (or process) per connection
+The classic approach gives each connection its own thread that blocks while waiting. It's simple to write and to reason about. NGINX's blog post explains the cost: a connection only needs a file descriptor and a little memory, but a thread is a heavyweight operating system object. With thousands of connections you pay for memory per thread and for constant context switches (about 1 µs each). This limit was famously called the C10K problem: serving 10,000 concurrent clients.
+
+## Model 2: an event loop
+NGINX, Node.js and Redis use non-blocking I/O. One thread asks the OS (epoll, kqueue, IOCP) to report which sockets are ready, handles each ready event quickly, and moves on. It never sits waiting for a slow client.
+
+NGINX's design:
+- A master process reads config and binds ports, then starts **one worker process per CPU core**.
+- Each worker runs an event loop with a small state machine per connection, handling hundreds of thousands of connections.
+- Because workers match cores, context switches are rare.
+- Config reloads start new workers and let old ones finish their connections, so there's no downtime. Even binary upgrades work this way.
+
+%%flow Thread per connection versus an event loop.
+[Thread per connection] 10k connections -> *10k threads, mostly waiting -(memory + context switches)-> Limit
+[Event loop] 10k connections -(epoll / kqueue)-> *1 loop thread -(callbacks on ready sockets)-> Responses
+%%
+
+## The catch: never block the loop
+Node.js's guide "Don't block the event loop" explains the downside. Since one thread serves everyone, any slow piece of work stalls every client:
+- CPU-heavy loops whose cost grows with user input.
+- Regular expressions with catastrophic backtracking (ReDoS), e.g. `/(\/.+)+$/` on a crafted string.
+- Synchronous APIs like `fs.readFileSync` or `crypto.pbkdf2Sync` in a server.
+- Huge JSON: parsing a 50 MB string took about 1.3 s in their test.
+
+Fixes: bound input sizes, **partition** long work into small steps that yield back to the loop, or **offload** it to a worker pool or separate process. Node already offloads file system, DNS and crypto work to a libuv thread pool, but long tasks can clog that pool too.
+
+%%seq One blocking call stalls every connection the loop serves.
+Conn A > Event loop : request
+Event loop > Event loop : sync DB call, 200 ms
+Conn B > Event loop : request (waits)
+Conn C > Event loop : request (waits)
+Event loop -> Conn A : response
+Event loop -> Conn B : finally served
+%%
+
+## Modern hybrids
+Go's goroutines (and Java's virtual threads) look like cheap threads to the programmer, but the runtime multiplexes thousands of them onto a few OS threads using an event-driven scheduler. You write simple blocking-style code and get event-loop efficiency.
+
+> Takeaway: thread-per-request is simple but expensive per connection; event loops are efficient for I/O-heavy work but any blocking call hurts everyone. Match workers to cores and push CPU-heavy work off the loop.
+
+?? Each NGINX worker uses non-blocking I/O and an event loop, so an idle connection costs only a file descriptor and a little memory, and the worker only spends CPU on sockets that are ready. A thread-per-request server spends memory and context switches on a full thread for every idle connection, which runs out at thousands of connections.
+
+@01.08
+## Two ways to add capacity
+- **Vertical scaling (scale up)**: give the machine more CPU, RAM or faster disks. Cockroach Labs' example: move a database from 8 vCPU / 32 GB to 32 vCPU / 64 GB.
+- **Horizontal scaling (scale out)**: add more machines and spread the work across them.
+
+## Vertical: simple, but with a ceiling
+Pros:
+- No code or architecture changes. One machine is easy to operate.
+- Often cheaper at first.
+
+Cons:
+- There's a hard ceiling: the biggest machine you can buy, and prices rise steeply near the top.
+- It stays a single point of failure. If that machine dies, so does the service.
+
+%%flow Vertical versus horizontal: a bigger machine, or more machines behind a load balancer.
+[Vertical] Traffic -> *1 server, 8 to 96 cores -(ceiling, single point of failure)-> Limit
+[Horizontal] Traffic -> Load balancer -(spread)-> *N stateless servers
+%%
+
+## Horizontal: resilient, but more complex
+Pros:
+- Practically unlimited capacity: keep adding nodes.
+- Redundancy: losing one node doesn't take the service down.
+- Can place capacity near users in several regions.
+
+Cons:
+- More moving parts, more operational work, and higher upfront cost.
+- Requires the software to be designed for it, which is the hard part.
+
+## How a web tier scales out
+ByteByteGo's "Scale from zero to millions of users" chapter walks through the standard path:
+1. Single server runs web app, database and cache.
+2. Split the database onto its own server so tiers scale independently.
+3. Put a **load balancer** in front of several web servers. Clients only see the balancer's public IP; servers sit on private IPs. If one server fails, traffic goes to the others.
+4. Make the web tier **stateless**: move session data out of the web servers into a shared store (Redis, a database, or signed tokens). Now any server can handle any request, and you can autoscale.
+5. Add **database replication**: one primary for writes, replicas for reads.
+6. Add a **cache** and a **CDN** for static content.
+7. Add **message queues** so slow work happens asynchronously in separately scaled workers.
+8. Eventually **shard** the database.
+
+%%flow Scaling the web tier out: keep servers stateless and move session state to a shared store.
+Users -> Load balancer -> App server 1..N -(sessions)-> *Shared cache -> Database
+%%
+
+## Why databases are the hard part
+Stateless servers are interchangeable, so adding one is trivial. A database holds state, and every copy must agree. Scaling reads with replicas introduces replication lag (stale reads). Scaling writes requires sharding, which brings cross-shard queries, resharding pain and hot shards. That is why a common rule is: scale the database vertically as long as it's comfortable, and design the data model so you can shard later.
+
+## Choosing
+Cockroach Labs' guidance: vertical fits less critical workloads with predictable growth, where keeping costs low matters most. Horizontal fits critical systems that need high availability, growth headroom, or multiple regions. In practice most systems do both: horizontally scaled stateless services in front of a vertically scaled (then replicated, then sharded) database.
+
+> Takeaway: scale stateless tiers horizontally behind a load balancer; scale the stateful database tier vertically first, then with replicas, then by sharding.
+
+?? Stateless web servers hold no data of their own, so any server can serve any request and you just add more behind a load balancer. A database holds state that must stay consistent across copies, so adding machines means replication (lag, failover) or sharding (splitting data, cross-shard queries, rebalancing).
+
+@01.09
+## Two ways to structure an application
+A **monolith** is one deployable application that handles requests, runs the business logic and talks to the database. **Microservices**, as defined by James Lewis and Martin Fowler, build the application as a suite of small services, each running in its own process, communicating over lightweight mechanisms like HTTP, and deployed independently.
+
+## What makes something "microservices"
+Lewis and Fowler list common characteristics:
+- **Components as services**: parts can be deployed and replaced independently, with explicit remote interfaces.
+- **Organised around business capabilities**: one team owns, say, payments end to end, not "the database layer".
+- **Products, not projects**: "you build it, you run it".
+- **Smart endpoints, dumb pipes**: logic lives in services; the network just carries messages (unlike an Enterprise Service Bus).
+- **Decentralised governance and data**: teams choose their own tools, and each service owns its own database.
+- **Infrastructure automation**: CI/CD is mandatory with many services.
+- **Design for failure**: any call can fail, so use timeouts, circuit breakers and monitoring.
+- **Evolutionary design**: services that always change together probably belong together.
+
+%%flow A monolith calls functions in-process; microservices turn the same calls into network hops that can fail.
+[Monolith] Request -> Orders module -(function call)-> *Payments module -(one DB)-> Database
+[Microservices] Request -> Orders service -(network call, can fail)-> *Payments service -(own DB)-> Payments DB
+%%
+
+## What microservices cost
+The same article is frank about the price:
+- Remote calls are much slower than function calls and can fail.
+- No shared database means no simple transactions across services. You need eventual consistency and compensating actions.
+- Refactoring across service boundaries is hard.
+- Long synchronous call chains multiply downtime: overall availability approaches the product of each service's availability.
+- Operations, deployment and monitoring of many services need serious tooling.
+- Poor boundaries just move complexity into the connections between services.
+
+## Monolith first
+Fowler's "Monolith First" observes that most microservice success stories started as a monolith that was later split, while many systems built as microservices from scratch got into trouble. Two reasons:
+- Early on, you don't know if anyone wants the product. Speed and fast feedback matter more than the "microservice premium".
+- Good service boundaries are hard to draw before you understand the domain, and moving functionality between services is much harder than inside one codebase.
+
+His suggested paths: build a well-modularised monolith, then peel off services at the edges when there's a clear reason; or build a deliberately throwaway first version.
+
+## A case in reverse: Prime Video
+Prime Video's stream-quality monitoring tool was built with serverless microservices: a conversion service wrote video frames to S3, a defect detector read them back, and AWS Step Functions orchestrated each step. At scale, two costs exploded: Step Functions charged per state transition (one per second of every stream), and the detector made huge numbers of S3 requests. The team merged conversion and detection into a single process that passes frames in memory, ran it on ECS, and cut infrastructure cost by over 90%. Only this tool became a monolith; the rest of Prime Video stayed service-based. The lesson is to choose the structure the workload needs and to estimate costs before committing.
+
+## When to split
+Good reasons: separate teams need to deploy independently, one part needs very different scaling or hardware, or you need fault isolation. Bad reasons: it's fashionable, or the codebase is messy (a messy monolith becomes messy microservices).
+
+> Takeaway: start with a modular monolith. Split out a service when a team, scaling or isolation need clearly justifies the network calls, distributed data and operational overhead.
+
+?? Any two of: network latency and partial failures on every cross-service call; no ACID transactions across services, so you need sagas or eventual consistency; operational overhead of deploying, monitoring and tracing many services; harder refactoring across service boundaries and versioned APIs.
+
+@01.10
+## The problem it solves
+In many apps, business logic is tangled with database code: SQL strings or ORM queries scattered through services and controllers. That makes the logic hard to test (every test needs a database) and ties the domain model to the storage technology.
+
+## The pattern
+Fowler's catalogue (from *Patterns of Enterprise Application Architecture*) describes a repository as something that sits between the domain and data-mapping layers and behaves "like an in-memory domain object collection". Code adds, removes and looks up objects as if they were in a list; the repository translates that into database operations behind the scenes. Benefits listed: query logic lives in one place, the domain stays free of persistence code, and dependencies point one way.
+
+%%flow The repository sits between domain code and storage, so the domain never imports the database.
+Service layer -(add / get)-> *Repository interface -(implemented by)-> SQL repository -> Database
+%%
+
+## Cosmic Python's version
+*Architecture Patterns with Python* (Cosmic Python), chapter 2, builds it step by step.
+
+**1. Invert the dependency.** In a typical ORM setup, model classes inherit from ORM base classes, so the domain depends on the database. Cosmic Python instead keeps the domain model as plain classes and defines the table mappings separately, so the ORM depends on the model. This is the idea behind onion, hexagonal, and "ports and adapters" architectures: dependencies point inward toward the domain.
+
+**2. Define a tiny interface (the port).**
+- `add(batch)`: store an object.
+- `get(reference)`: fetch one by its ID.
+
+**3. Implement adapters.**
+- `SqlAlchemyRepository` wraps a database session: `add` calls `session.add`, `get` queries by reference. Committing is left to the caller (later handled by a Unit of Work).
+- `FakeRepository` wraps a Python `set`. Each method is one line.
+
+**4. Use the fake in tests.** Service-layer tests build a `FakeRepository` with a few objects and run business logic with no database. They're fast and focused. The author adds a neat heuristic: if a fake is hard to write, your abstraction is too complicated.
+
+%%flow Swap the adapter, keep the domain: tests use an in-memory fake behind the same interface.
+[Production] Service -> Repository -> *SqlAlchemyRepository -> Postgres
+[Tests] Service -> Repository -> *FakeRepository -> Python set
+%%
+
+## Trade-offs
+Cosmic Python's own pros and cons:
+- **Pros**: simple boundary between storage and domain; easy fakes; you can model the business problem before thinking about tables; full control over the schema; swapping storage later is easier.
+- **Cons**: an ORM already gives some decoupling; hand-maintained mappings are extra code; every extra layer adds maintenance cost and a "why is this here?" moment for new developers.
+
+The book's verdict: a simple CRUD app doesn't need a domain model or a repository. The pattern pays off as the business logic grows complex.
+
+> Takeaway: put storage behind a small, collection-like interface so business logic depends on the interface, not the database. Use it when domain logic is substantial; skip it for thin CRUD apps.
+
+?? You can swap the real database-backed repository for an in-memory fake, so business logic tests run fast without a database, network or fixtures.
+
+@01.11
+## Requirements change; schemas resist
+Products keep adding fields: a new profile attribute, a per-customer setting, a new event type. On a big, busy table, a schema change can be painful. FriendFeed described tables of 10-20 million rows where adding an index or column locked MySQL for hours. This lesson is about modelling data so it can evolve.
+
+## Option 1: just add columns
+For core fields that you filter, join or constrain on, real columns are still the best home. Most modern databases can add a nullable column instantly. The pain is mostly with large rewrites and new indexes, which have their own online techniques (covered in Module 3).
+
+%%flow Option 1: add a column. Simple, but on a big table the migration can be slow or lock writes.
+Users table -(ALTER TABLE ADD COLUMN)-> *Migration on 500M rows -> Deploy code
+%%
+
+## Option 2: schemaless storage inside SQL (FriendFeed)
+FriendFeed stored every entity in one MySQL table:
+- `added_id`: auto-increment primary key, so new rows are written sequentially.
+- `id`: a UUID.
+- `updated`: timestamp.
+- `body`: a compressed, serialised dictionary of all the entity's properties. The database treats it as opaque.
+
+To query by a property, they created **separate index tables**, e.g. `(user_id, entity_id)`, each sharded by its own key. Adding a new queryable field meant creating a new table and letting a background process called "the Cleaner" populate it, with no locks on the main table.
+
+Index tables could briefly disagree with the entities (they lived on different shards, written in separate steps). FriendFeed accepted that: entities were the source of truth, reads used indexes only to find candidate IDs and re-checked the real entity, and the Cleaner fixed inconsistencies within seconds.
+
+%%flow FriendFeed's design: entities as opaque blobs, plus separate index tables built for each query.
+Write entity -(store blob)-> *entities table -(also insert)-> index_user_id table
+Query by user -> index_user_id -(entity ids)-> entities table
+%%
+
+## Option 3: JSON columns (Postgres JSONB)
+Postgres offers `json` (stores the text exactly) and `jsonb` (binary, decomposed, much faster to query, and indexable). The docs recommend `jsonb` for most uses.
+- Containment `@>` tests whether a document contains a given structure: `doc @> '{"tags": ["sale"]}'`.
+- Existence `?` tests for a top-level key.
+- GIN indexes speed these up. The default `jsonb_ops` indexes every key and value (flexible, larger); `jsonb_path_ops` only supports containment but is smaller and faster.
+- You can index one expression, like `(doc -> 'tags')`, if queries target one key.
+
+The docs also advise keeping a somewhat predictable structure, and keeping documents small and atomic, because any update locks and rewrites the whole row.
+
+Good fit: sparse, optional or per-tenant attributes. Poor fit: fields you join on, need constraints for, or update independently and frequently.
+
+## Option 4: schemas that evolve (for data between services)
+Martin Kleppmann compares Avro, Protocol Buffers and Thrift, all of which let producers and consumers run different schema versions:
+- **Protobuf/Thrift** tag every field with a number. New fields get new numbers; old readers skip unknown tags. You may rename fields (names aren't encoded), but never change or reuse a tag number.
+- **Avro** has no tags. The reader needs the writer's schema and matches fields by name. New fields must have default values; you can only remove fields that had defaults.
+
+The general rules: add optional fields, never repurpose old ones, and roll out readers before writers when a change requires it.
+
+> Takeaway: keep core, frequently queried fields as real columns; put sparse or fast-changing attributes in JSONB or separate index tables; and use evolvable schemas with strict compatibility rules for data passed between systems.
+
+?? Use JSONB for optional, sparse or per-tenant attributes that vary between rows and are read with the record, like product specifications that differ by category. Add a real column for fields you filter or join on heavily, need constraints or foreign keys on, or update independently.
+
+@01.12
+## Cost is a design requirement
+Werner Vogels' *The Frugal Architect* starts with its first law: **make cost a non-functional requirement**. Treat it like security or availability, from design through operations, because a business whose infrastructure costs grow faster than revenue is in trouble.
+
+## The seven laws, briefly
+1. **Make cost a non-functional requirement.**
+2. **Systems that last align cost to business.** Find the unit that drives revenue (orders, active users) and design so cost grows with it, not faster.
+3. **Architecting is a series of trade-offs.** Cost, resilience and performance conflict; aim for the best value, not the lowest bill.
+4. **Unobserved systems lead to unknown costs.** If you can't see cost per feature or per team, waste hides.
+5. **Cost-aware architectures implement cost controls.** Split systems into tiers by criticality so less important parts can be scaled down or run cheaply.
+6. **Cost optimisation is incremental.** Keep revisiting; small gains add up at scale.
+7. **Unchallenged success leads to assumptions.** Don't assume today's stack is still the cheapest choice.
+
+%%flow Cost follows the architecture: each decision adds a line to the bill.
+Design choice -(e.g. cross-AZ replication)-> Data transfer -(per GB)-> *Monthly bill -(review)-> Next design
+%%
+
+## Where the money actually goes
+Using napkin-math's rough cloud prices, the big levers become obvious:
+- **Compute**: about $25 per vCPU-month (around $10 for spot). Idle or oversized instances are the most common waste.
+- **Memory**: about $2.50 per GB-month. Caching everything in RAM gets expensive.
+- **Storage tier**: SSD about $0.15/GB-month, object storage about $0.02, archive tiers far less. Moving cold data can cut storage costs by 10x or more.
+- **Data transfer**: free within a zone, about $0.01/GB across zones, $0.10/GB to the internet. Chatty cross-zone traffic and egress add up fast.
+- **Requests**: object storage also charges per operation, which is what hurt Prime Video's design (Module 1.09).
+- **Logs and traces**: about $0.50/GB. Verbose logging at scale is surprisingly costly.
+
+## AWS's view
+The Well-Architected Cost Optimisation pillar adds practical habits: build cost awareness across teams, pay only for what you use and scale with demand, measure efficiency as business output per dollar, let managed services handle undifferentiated work, and attribute spend to teams and features.
+
+## Cloud is not always cheaper
+DHH's "Why we're leaving the cloud" argues the opposite side. 37signals paid over $500k a year just for managed database and search on AWS. He says the cloud shines for two cases: simple low-traffic apps, and highly irregular load (HEY's launch got 300,000 signups in three weeks against a forecast of 30,000 in six months). For a mid-sized company with steady, predictable growth and an experienced ops team, owning hardware can be much cheaper. Whether you agree or not, the point is to do the maths for your workload instead of assuming.
+
+> Takeaway: design so cost tracks business value, make cost visible per feature, and know the big levers: idle compute, storage tier, data transfer, request counts and logging volume.
+
+?? Examples: storing cold data in an archive tier instead of SSD-backed databases (10x or more cheaper); avoiding cross-region or internet egress by keeping traffic in-zone or serving through a CDN; running steady workloads on reserved or owned hardware instead of on-demand; or replacing per-request orchestration (like Step Functions per second of video) with in-process work.
+
+@01.13
+## Every component has a running cost
+Adding a cache, queue, search cluster or new database solves a problem, but it also adds things to monitor, upgrade, secure, back up and understand at 3 a.m. This lesson is about when not to add them.
+
+%%flow Each new component adds running cost for ever: on-call, upgrades, monitoring, failure modes.
+New queue / cache / DB -> Deploy -> Monitor -> Patch and upgrade -> *Paged at 3 a.m.
+%%
+
+## Choose boring technology
+Dan McKinley's essay argues that a company gets roughly three **innovation tokens**. Each unusual technology choice (a new database, a new language, a year-old service discovery tool) spends one. Most companies aren't database companies, so their limited attention is better spent on their actual product.
+
+"Boring" doesn't mean bad. Postgres, MySQL, Python, Memcached and cron are boring because their behaviour and failure modes are well understood. They still have problems, but mostly **known unknowns**. New technology has far more **unknown unknowns**.
+
+His key point is that the cost of technology is mostly in operating it over years, not building with it. Picking the "right tool for each job" looks optimal locally but leaves the company running dozens of tools, each with its own monitoring, testing and expertise.
+
+At Etsy, the activity feed was built on the existing PHP, MySQL, Memcached and Gearman stack instead of adopting Redis. It was harder at first, but because it ran on shared, well-understood infrastructure, it grew about 20x without dedicated attention. They did adopt Solr for faceted search, because that was impractical otherwise.
+
+Before adding a technology, McKinley suggests:
+- How would we solve this without anything new? If the real reason is "someone wants to use it", stop.
+- Write down exactly what makes the current stack too costly for this problem.
+- If it replaces something, commit to migrating fully off the old thing.
+
+%%flow Try the existing stack first; add infrastructure only when measurement says you must.
+Problem -(measure)-> Can Postgres + one app do it? -(yes)-> *Keep it simple
+%%
+
+## Single machines are very powerful
+Two famous examples show how far one machine goes:
+
+**235x faster than Hadoop.** Adam Drake reproduced a job that counted chess game results from about 2 million games. A 7-node Hadoop cluster took about 26 minutes. A shell pipeline on a laptop (`find | xargs -P4 mawk ...`) took about 12 seconds on twice as much data. It won by streaming data line by line with almost no memory, using all cores through parallel processes, and skipping the cluster's shuffle and startup overhead.
+
+**Scalability! But at what COST?** Frank McSherry compared big graph systems (Spark, Giraph, GraphLab, GraphX) running on 128 cores against a single-threaded program on his laptop. For PageRank and connected components on billion-edge graphs, the single thread was often faster than all of them. With a better algorithm (union-find) and memory-friendly data layout, connectivity dropped to 15-30 seconds versus hundreds or thousands for the clusters. His point: a system can "scale well" and still be inefficient. Always ask how many cores it needs to beat one good thread.
+
+## Know your numbers first
+Before adding infrastructure, measure:
+- Current load (requests/s, data size) and growth rate.
+- Where time is actually spent: the bottleneck, with evidence.
+
+If Postgres serves your peak at 20% CPU with good p99s, a cache adds risk without benefit. If the whole dataset fits in RAM on one box, a distributed system may only add overhead.
+
+> Takeaway: default to the tools you already run well. Add new infrastructure only when measured load or a specific requirement makes the current stack inadequate, and check that the new system beats a single well-written machine.
+
+?? First know the current load and its growth (e.g. peak requests per second or data volume), and where the latency or capacity bottleneck actually is (e.g. database CPU, p99 query time). Without both you can't show the new component solves a real problem.

@@ -1,0 +1,598 @@
+@13.01
+## The problem with proxying uploads
+The obvious upload path is client → your API server → object storage. For a profile photo that's fine. For videos and large files it is wasteful:
+- **Bandwidth twice**: every byte crosses your servers' network once in and once out, and you pay for both.
+- **Tied-up servers**: a 2 GB upload over a slow phone connection holds a connection, a thread or event-loop slot, and buffers for many minutes.
+- **Timeouts and limits**: load balancers and API gateways cap request sizes and durations; a long upload hits them.
+- **Scaling the wrong thing**: you add API servers to move bytes, when they exist to run business logic.
+
+Hello Interview's *Handling large blobs* pattern covers this problem, but everything after its introduction is paywalled; this lesson relies on the AWS S3 documentation.
+
+## Presigned URLs
+The S3 docs describe a **presigned URL** as a URL that grants **time-limited** access to one object without the holder having AWS credentials. Your backend creates it by signing, with its own credentials, a specific bucket, object key, HTTP method (`PUT` to upload, `GET` to download) and expiry. The holder can then use that URL directly against S3.
+
+%%seq Direct upload: the API only signs a URL; the bytes go straight from the client to object storage.
+Client > API : POST /uploads (name, size, type)
+API > API : auth check, create record (pending)
+API -> Client : presigned PUT URL, expires 15 min
+Client > S3 : PUT bytes to presigned URL
+S3 -> Client : 200 + ETag
+S3 > API : event: object created
+API > API : record status = uploaded
+%%
+
+Key facts from the docs:
+- The URL carries the **permissions of whoever created it**; the creator must itself be allowed to do the operation (e.g. `s3:PutObject`).
+- **Expiry**: up to **7 days** when signed with an IAM user's long-term keys (Signature Version 4); 1 minute to 12 hours from the console; and never longer than the credentials used, so a URL signed by an IAM role session or EC2 instance role dies when those temporary credentials expire.
+- Expiry is checked when the request **starts**: a download in progress finishes; a restarted one fails.
+- **Bearer token warning**: anyone who has the URL can use it until it expires. Keep expiries short.
+- **Restrictions**: bucket policies can reject presigned requests whose signature is older than N minutes (`s3:signatureAge`), or restrict source IPs or VPC endpoints.
+- **Integrity**: with SigV4 you can require a checksum header (CRC64NVME, SHA-256, etc.), so S3 rejects corrupted uploads.
+- A `PUT` to an existing key **replaces** the object, so generate unique keys (e.g. a UUID) rather than user-chosen names.
+
+## Keeping the database in step
+Once bytes bypass your servers, your database and the bucket can disagree. A typical approach (general practice, since Hello Interview's version is paywalled):
+1. Create the metadata record **first** with status `pending` and the object key you chose.
+2. The client uploads with the presigned URL.
+3. S3 sends an **event notification** (to a queue or function) when the object is created; a handler marks the record `uploaded`, perhaps after validating size and type and starting processing (thumbnails, virus scan, transcoding).
+4. A periodic job deletes `pending` records older than the URL expiry, and a lifecycle rule removes orphaned objects.
+
+%%flow Bytes and metadata take separate paths and meet through an event.
+[Bytes] Client -(presigned PUT)-> *Object storage -(object-created event)-> Queue
+[Metadata] Client -(request upload)-> API -(status pending)-> DB -(event handler sets uploaded)-> Ready
+%%
+
+Downloads use the same idea in reverse: a presigned `GET`, or better, a CDN signed URL (13.07) so the file is served from the edge.
+
+! Example: a 1 GB video upload
+! The app calls `POST /videos` with size 1 GB. The API checks the user's quota, inserts `{id: v77, key: raw/9f1c.mp4, status: pending}` and returns a presigned PUT URL valid for 30 minutes (for files this large, a multipart upload with one presigned URL per part, lesson 13.04). The phone uploads straight to S3; the API servers never touch the gigabyte. S3's event triggers the transcoding pipeline and flips the status.
+
+> Takeaway: let clients upload and download large files directly to object storage using short-lived presigned URLs that your backend signs after checking permissions. The API handles only metadata; an object-created event reconciles the database. Treat presigned URLs as bearer tokens: short expiry, unique keys, checksums.
+
+?? Proxying makes every byte cross your servers twice, ties up connections and threads for the length of slow uploads, runs into request size and timeout limits, and forces you to scale API servers just to move data. With a presigned URL, the backend only authorises the upload and signs a short-lived URL for one object key; the client sends the bytes straight to object storage, which is built for that bandwidth, and an object-created event updates the database.
+
+@13.02
+## What a CDN does
+Cloudflare's explainer defines a CDN as a **geographically distributed group of servers that caches content close to end users**, speeding delivery of HTML, JavaScript, stylesheets, images and video. It lists four benefits:
+- **Lower latency**: content is served from a nearby **point of presence** (PoP), often located at internet exchange points where networks interconnect, so requests travel a short distance.
+- **Lower bandwidth costs**: cached responses don't reach your origin.
+- **Availability**: the CDN absorbs traffic spikes and hardware failures.
+- **Security**: TLS at the edge and DDoS mitigation.
+
+It also notes a CDN **doesn't host** content: you still need an origin (object storage, a web server).
+
+%%flow An image request: the nearest edge serves it from cache; only a miss goes back to the origin.
+Browser in Paris -> *Edge PoP in Paris -(cache hit)-> Image in 20 ms
+Edge PoP in Paris -(cache miss)-> Origin in Virginia -(store at edge)-> Next requests are hits
+%%
+
+## Images need many variants
+A single uploaded photo is displayed as a 64-pixel avatar, a 320-pixel feed thumbnail, a 1080-pixel phone view, a 2× retina version, and in WebP or AVIF for browsers that support them. The question is when to make those variants.
+
+## Option 1: resize on upload
+A pipeline generates a fixed set of sizes and formats when the image is uploaded and stores them all.
+- Reads are simple: every variant is a static file the CDN caches.
+- No processing at request time, so no cold-start latency.
+- But you must **know the sizes in advance**. A redesign that needs a 480-pixel version means reprocessing every image ever uploaded.
+- Storage multiplies with the number of variants, including variants nobody requests (most photos are rarely viewed).
+
+## Option 2: resize on request
+An image server generates the variant when it is first requested, and the CDN caches the result. **imgproxy** is an example: a standalone HTTP server that, given a source image URL and processing options **in the URL** (resize, crop, rotate, watermark, format), fetches the image, processes it with the libvips library, and returns it. Its docs note:
+- It is meant to sit **behind a CDN** or caching proxy in production, so each variant is generated once and then served from cache.
+- URLs should be **signed**, so others can't use your server to process arbitrary images or flood it with random sizes (a denial-of-service risk). Header-based authorisation can stop clients from bypassing the CDN.
+- Security checks: it checks the real image type and dimensions **before** fully downloading and decoding, defending against "image bombs" (tiny files that decode to enormous images), and can restrict sources, sizes and options.
+
+%%flow Resize on request: the first request for a variant is processed and cached; later ones are pure CDN hits.
+Browser -(GET /sig/rs:fit:320/plain/photo123.jpg)-> CDN edge -(miss)-> *imgproxy: fetch original, resize -(cache)-> Next viewer: edge hit
+%%
+
+## Trade-offs
+| | Resize on upload | Resize on request |
+|---|---|---|
+| New sizes or formats | Reprocess everything | Just use a new URL |
+| Storage | All variants for all images | Originals plus cached hot variants |
+| First-view latency | None | One-time processing delay per variant per edge |
+| Compute | Paid for every image, viewed or not | Paid only for variants actually requested |
+| Risk | Pipeline backlog after big uploads | Abuse via arbitrary sizes (mitigated by signed URLs, allowed presets) |
+
+Common practice combines them: generate the one or two sizes you know are always needed (thumbnail, standard view) on upload, and serve everything else on demand with a limited set of allowed sizes, behind a CDN with long cache lifetimes.
+
+! Example: a product photo
+! A seller uploads a 6000 × 4000 JPEG (8 MB) to object storage. The product page asks for `/img/sig/rs:fit:800/f:avif/products/p91.jpg`. The CDN misses, imgproxy fetches the original, resizes it to 800 pixels wide, encodes AVIF (about 90 KB) and returns it with `Cache-Control: max-age=31536000`. The next million views come from CDN edges. When the design changes to 960 pixels, the new URL simply generates new variants as they're requested.
+
+> Takeaway: a CDN caches content at edges near users, cutting latency and origin load, but needs an origin behind it. Resizing on upload gives predictable, pre-made variants but is rigid and stores everything; resizing on request (e.g. imgproxy behind a CDN, with signed URLs) is flexible and pays only for variants actually used, at the cost of a one-time delay and abuse controls.
+
+?? Resizing on upload makes every variant a ready static file with no request-time work, but you must know the sizes up front, adding a size means reprocessing every image, and you store and compute variants that may never be viewed. Resizing on request generates any size or format the first time it is asked for and lets the CDN cache it, so storage and compute follow actual demand and new layouts need no backfill; the costs are a one-time delay on first view and the need to sign URLs or restrict sizes to prevent abuse. Many systems pre-generate the common sizes and serve the rest on demand.
+
+@13.03
+## How Gravatar works
+Gravatar ("globally recognised avatar") lets any site show a user's avatar knowing only their email address. Its image docs describe the mechanism:
+1. Take the user's email address and compute its **SHA-256 hash** (Gravatar's hashing guide covers normalising the address first: trim spaces and lower-case it; the image page itself doesn't spell this out).
+2. Request `https://gravatar.com/avatar/HASH`.
+
+The hash identifies the account without putting the email address in page HTML. Parameters:
+- `s` (size): one number, since avatars are square; **1 to 2048** pixels, default **80**.
+- `d` (default): what to return if no avatar exists: `404` (an HTTP 404), `mp` (a generic silhouette), generated images unique to the hash (`identicon`, `monsterid`, `wavatar`, `retro`, `robohash`), `blank`, `initials`, or a custom image URL.
+- `f=y`: force the default image.
+- `r` (rating): `g` (default), `pg`, `r`, `x`; if the avatar is rated above what you request, the default image is returned.
+
+%%flow Gravatar: hash the email, request by hash and size, and fall back to a generated image if the user has none.
+alice@example.com -(trim, lowercase, SHA-256)-> *Hash 3f2a... -(GET /avatar/3f2a?s=96&d=identicon)-> Avatar or generated default
+%%
+
+Two design ideas stand out: the key is **derived** from data the caller already has (no lookup call to find an avatar ID), and the **default** is resolved on the server, so the client always gets an image.
+
+## Caching it
+Gravatar's docs don't describe its caching, so this part is general practice for any avatar service.
+- **Immutable URL vs fixed URL.** With a fixed URL like `/avatar/HASH?s=96`, a user who changes their picture expects the change to show up, so caches must expire (say, `max-age` of minutes to an hour) or be purged. The alternative used by many apps: give each uploaded image its own **versioned URL** (`/avatars/u42/v7.jpg`) and store the current version in the user's profile; then the image can be cached **forever** (`max-age=31536000, immutable`), and changing it simply changes the URL.
+- **CDN in front**: avatars are tiny, extremely numerous and read constantly, the ideal CDN workload. Normalise the URL (only allowed sizes, parameters in a fixed order) so equivalent requests share one cache entry.
+- **Limit sizes**: support a few sizes (32, 64, 128, 256) and round requests to them; otherwise 2,048 possible sizes fragment the cache.
+- **Negative caching**: "no avatar" (a 404 or default) should also be cached, briefly, so missing avatars don't hammer the origin.
+- **Application side**: cache the avatar URL in the user object; lists of comments shouldn't call the avatar service at all.
+
+%%flow Versioned avatar URLs: the profile points to the current version, so every image can be cached forever at the CDN.
+Profile u42: avatar v7 -(render)-> /avatars/u42/v7-96.jpg -> *CDN, cached 1 year -(user uploads new)-> Profile now v8, new URL
+%%
+
+## Designing your own avatar service
+- **Upload**: presigned upload of the original (13.01), then generate the few standard sizes (13.02).
+- **Storage**: object storage keyed by user and version; metadata (current version) in the user record.
+- **Serving**: CDN with long cache lifetimes on versioned URLs; a default generated from the user ID (initials or identicon) when none exists.
+- **Privacy**: plain hashing doesn't hide emails from someone who already has a list of addresses to test, a known criticism of email-hash avatars; an app-generated random ID avoids it.
+
+! Example: a comment thread with 200 comments
+! The page includes 200 `<img>` tags. With versioned URLs and a CDN, the browser fetches 60 distinct avatars (many repeat commenters), nearly all from the edge cache or the browser's own cache. The origin sees almost nothing. When Bob changes his picture, his profile switches from v3 to v4, and new pages reference v4; old v3 copies age out of caches unused.
+
+> Takeaway: Gravatar serves avatars by a hash of the normalised email, with size, default-image and rating parameters, so any site can build the URL without a lookup. To cache avatars well, use a CDN, limit sizes, and prefer versioned image URLs that can be cached forever, changing the URL when the image changes.
+
+?? The site hashes the user's normalised email (trimmed, lower-cased) with SHA-256 and requests gravatar.com/avatar/<hash> with a size and a default-image option; Gravatar looks up the account by hash and returns its image, or a generated or placeholder default if there isn't one. To cache it, put a CDN in front with a small set of allowed sizes; either give fixed URLs a modest expiry or, better, use versioned image URLs cached for a year, changing the URL whenever the avatar changes, and cache "no avatar" responses briefly too.
+
+@13.04
+## Why one big upload fails
+A 5 GB video uploaded in a single HTTP request is fragile. On a phone, a network blip at 80% loses the whole transfer and the next attempt starts from zero. Single requests also can't use parallel connections, and S3 limits a single PUT anyway.
+
+## Multipart upload
+The S3 docs describe **multipart upload**: upload one object as a set of independently uploaded **parts**, in any order, which S3 assembles when you finish. AWS recommends it for objects of **100 MB or more**. Three steps:
+1. **Initiate** (`CreateMultipartUpload`): S3 returns an **upload ID** used in all later calls.
+2. **Upload parts** (`UploadPart`): each part has a **part number from 1 to 10,000**; S3 returns an **ETag** per part. Uploading the same part number again overwrites that part.
+3. **Complete** (`CompleteMultipartUpload`): send the upload ID with the list of part numbers and ETags; S3 concatenates the parts in part-number order and creates the object.
+
+From AWS's general limits (the overview page links to them): parts are **5 MiB to 5 GiB** (the last part may be smaller) and an object can be up to **5 TiB**.
+
+%%seq Multipart with presigned parts: the API starts the upload and signs one URL per part; the client uploads parts in parallel and the API completes it.
+Client > API : start upload, 5 GB
+API > S3 : CreateMultipartUpload
+S3 -> API : uploadId
+API -> Client : uploadId + presigned URL per part
+Client > S3 : PUT part 1..500 (parallel)
+S3 -> Client : ETag per part
+Client > API : complete(uploadId, parts + ETags)
+API > S3 : CompleteMultipartUpload
+S3 -> API : object created
+%%
+
+## The benefits the docs list
+- **Throughput**: upload parts **in parallel**.
+- **Quick recovery from network issues**: a failed part is retried alone; the rest are unaffected.
+- **Pause and resume**: an upload **doesn't expire** once initiated; it stays until you complete or abort it.
+- **Start before you know the final size**: upload while the file is still being produced (a live recording).
+
+## Resuming at 80%
+The question: with 10 MB parts, a 5 GB file has 500 parts. At 80%, about 400 parts have been acknowledged with ETags.
+1. The client (or the server, which tracked progress) knows the upload ID and which parts completed.
+2. On reconnect, it uploads only parts **401 to 500** (and retries any that failed in between), with fresh presigned URLs if the old ones expired.
+3. It completes with all 500 part numbers and ETags.
+
+The client should **record part numbers and ETags itself** (or the server should, per Hello Interview's Dropbox design, which stores chunk status in the file's metadata and verifies them with S3's `ListParts` before marking the file uploaded). The S3 docs say listing is for verification, not for building the completion request.
+
+%%flow Resuming: parts already acknowledged are kept; only the rest are sent.
+Parts 1..400 done, ETags saved -(network drops)-> *Resume same uploadId -(upload parts 401..500)-> Complete with 500 ETags
+%%
+
+Uploading **straight from the client** with presigned part URLs keeps the bytes off your servers, as in 13.01.
+
+## Cleaning up and integrity
+- **Incomplete uploads cost money**: S3 bills storage for uploaded parts until the upload is completed or aborted. Abort abandoned uploads, and add a lifecycle rule with `AbortIncompleteMultipartUpload` after N days.
+- **Checksums**: SDKs send a checksum with each part, and S3 rejects mismatches (`BadDigest`). Full-object checksums (e.g. CRC64NVME) cover the whole object; composite ones are per part. With checksums, part numbers must be consecutive from 1. The final ETag is not simply the MD5 of the file.
+- **Concurrent uploads to one key**: use conditional writes (`If-None-Match`) on completion if overwrites must be prevented.
+
+! Example: picking a part size
+! A 5 GB file in 5 MiB parts is about 1,024 parts: fine. A 200 GB file in 5 MiB parts would need 40,960 parts, over the 10,000 limit, so use at least about 20 MiB parts. Larger parts mean fewer requests but more re-sent data per failure; 8 to 64 MiB is a common range, sized so a part uploads in a few seconds on the expected network.
+
+> Takeaway: multipart upload splits a large object into numbered parts (1 to 10,000, 5 MiB to 5 GiB each) uploaded independently and in parallel, then assembled on completion. A failure only costs the parts in flight: resume with the same upload ID, upload the missing parts and complete with every part's ETag. Abort or expire incomplete uploads, since their parts are billed.
+
+?? The file was started as a multipart upload with an upload ID, and each part acknowledged so far has a part number and ETag saved by the client or server. Because initiated uploads don't expire, after the failure the client resumes the same upload ID, uploads only the parts that weren't acknowledged (roughly the last 20%), possibly in parallel with fresh presigned URLs, and then calls complete with all part numbers and ETags. Only the parts that were in flight are re-sent, not the whole 5 GB.
+
+@13.05
+## What the pipeline does
+An uploaded video is one large, high-quality file in one format. Viewers need many versions: different **codecs** for different devices and several **bitrates and resolutions** per codec, so players can adapt to bandwidth (13.06). Netflix's post *High quality video encoding at scale* describes its pipeline: ingest high-quality sources, inspect them, encode **multiple codec profiles** (VC1, H.264 Baseline, H.264 Main, HEVC at the time) at **multiple quality levels from 100 kbps to 16 Mbps** for connections from under 0.5 Mbps cellular to over 100 Mbps, package them, and deploy to a CDN.
+
+The ByteByteGo chapter on designing YouTube is behind a login; this lesson uses Netflix's post.
+
+%%flow Netflix's pipeline: inspect the source in chunks, encode chunks in parallel per profile, assemble, verify, package and push to the CDN.
+Source upload -(inspect in chunks)-> Accepted source -(split)-> *Chunks encoded in parallel -(assemble)-> Stream per profile -(verify, package)-> CDN
+%%
+
+## Inspect first
+Netflix rejects bad sources rather than patching them ("garbage in means garbage out"): corrupted frames or production errors produce bad encodes. Inspection verifies the source conforms to its specification, detects problems, and generates metadata the encoder needs. If a source fails, the partner is asked to redeliver.
+
+A 4K source can be **larger than an EC2 instance's local disk**, so inspection itself is chunked: index the file (byte offsets for frame-accurate seeking, resolution, frame count), then inspect chunks **in parallel** on different instances, computing spatial and temporal **fingerprints**, and aggregate the results. Netflix reports inspecting a 4K source in **under 15 minutes**, independent of length, because longer sources just have more chunks.
+
+## Why chunk the encoding
+Netflix's reasons, which answer the question:
+1. **Parallelism cuts wall-clock time.** Before chunked encoding, a 1080p movie **could take days** to encode. With chunks encoded on many instances at once, a title is inspected and encoded for every profile, with quality checks, **within a few hours**, and processing time doesn't grow with length.
+2. **Small failures stay small.** If an instance is lost (Netflix uses an internal spot market where instances can be reclaimed), only one chunk's work is lost and rescheduled. A failure late in a days-long single encode would restart everything.
+3. **Less local storage.** Each worker needs only its chunk, not the whole multi-hundred-gigabyte source.
+4. **Earlier error detection.** Each encoded chunk is verified as soon as it finishes; problems are triaged or retried without waiting for the whole video.
+5. **Elastic capacity.** Short tasks fit spare compute anywhere in the cloud, scaling up for big releases and down afterwards.
+
+%%flow Why chunks help: one long sequential job versus many short parallel ones.
+[One job] 2 h film -(one encoder)-> *Days, and a late failure restarts it all
+[Chunked] 2 h film -(split into 3 min chunks)-> 40 chunks on 40 machines -(assemble)-> *Hours, failures redo one chunk
+%%
+
+## Putting chunks back together safely
+Chunking introduces new failure modes: chunks assembled in the wrong order, frames dropped or duplicated at chunk boundaries. Netflix's assembler stitches each stream's chunks and **validates the result by comparing fingerprints** of the encode against the source's fingerprints from inspection. It also computes **full-reference quality metrics** for every output stream to monitor quality and catch bugs. For sources that pass inspection, Netflix reports **99.99% or better** encode reliability.
+
+(Encoders generally need chunk boundaries at keyframes, scene changes or closed GOPs so each chunk decodes independently; that detail is general knowledge, not from the post.)
+
+## A YouTube-style pipeline
+For user uploads the same structure applies:
+1. Upload the original directly to object storage (13.01, 13.04).
+2. An event starts a workflow (a DAG of tasks) that validates the file, extracts metadata and a thumbnail, and splits the video into segments.
+3. A queue of encode tasks (segment × resolution × codec) feeds a pool of workers.
+4. Assemble and package into HLS/DASH segments and manifests (13.06), write to storage, and push or let the CDN pull.
+5. Mark the video ready; optionally publish a low resolution first so it's watchable sooner while higher resolutions finish.
+
+! Example: a 10-minute 1080p upload
+! The file is split into 20 segments of 30 seconds. Encode targets: 1080p, 720p, 480p, 360p, 240p in H.264, plus 1080p and 720p in AV1: 7 renditions × 20 segments = 140 tasks. With 140 workers available, the whole job takes about as long as encoding one 30-second segment at the slowest setting, a couple of minutes, instead of 30+ minutes sequentially. If one worker dies, one 30-second task is retried.
+
+> Takeaway: a transcoding pipeline inspects the source, splits it into chunks, encodes each chunk for every codec and bitrate in parallel, then assembles and verifies the streams before packaging for the CDN. Chunking turns a days-long, fragile job into hours of small, retryable, parallel tasks with modest local storage, at the cost of careful reassembly and validation.
+
+?? Encoding a whole film sequentially on one machine can take days, needs the entire huge source on local disk, and loses all progress if the machine fails late. Splitting into chunks lets many machines encode in parallel, so time stays roughly constant regardless of length (Netflix went from days to hours), a failed or reclaimed instance only costs one chunk, each worker needs little storage, and each chunk can be quality-checked as soon as it's done. The price is reassembling chunks correctly and verifying the stitched stream, which Netflix does by comparing fingerprints with the source.
+
+@13.06
+## The idea
+Network bandwidth changes from second to second: a train enters a tunnel, someone starts a download, Wi-Fi hands over to 4G. **Adaptive bitrate streaming** (ABR) keeps playback smooth by switching quality on the fly. Wikipedia's description:
+- The same video is encoded at **several bitrates** (the renditions from 13.05).
+- Each rendition is cut into **short segments** of a few seconds.
+- A **manifest** (playlist) lists the available renditions and their segments.
+- The player downloads the manifest, usually starts at a low bitrate, and then for **each next segment** chooses which bitrate to request.
+
+%%flow ABR: the player fetches the manifest, then picks a rendition for every segment based on what it measures.
+Player -(GET master manifest)-> Renditions 240p .. 1080p -(bandwidth ok)-> *Segment 5 at 1080p -(bandwidth drops)-> Segment 6 at 480p
+%%
+
+## Who decides: the player
+Wikipedia states that in HTTP-based ABR, **all the adaptation logic runs on the client**. The server is an ordinary **web server** or CDN that serves files; it keeps **no per-viewer session state**, which is what makes it scale. The client measures, in real time, its throughput, its buffer level and its device capabilities (CPU, screen size), and picks the rendition. Wikipedia lists the families of algorithms:
+- **Throughput-based**: estimate bandwidth from how fast recent segments downloaded; pick the highest bitrate below it (with a safety margin).
+- **Buffer-based**: if many seconds are buffered, you can afford higher quality; if the buffer is draining, step down before it empties and playback stalls.
+- **Hybrid**: combine both.
+
+Apple's HLS page says the same in its own words: HLS uses the protocol that powers the web, can be deployed with **ordinary web servers and CDNs**, and **dynamically adapts to network conditions**.
+
+## Why HTTP and segments won
+Wikipedia lists the benefits of HTTP-based ABR over dedicated streaming servers:
+- Passes through **firewalls and NAT** like any web traffic.
+- Segments are ordinary files, so **browsers, proxies and CDNs cache them**. A popular episode's segments are served from thousands of edges; the origin sees a trickle.
+- Reuses existing HTTP infrastructure.
+- Costs: more encoding and storage (every rendition), and interactions between ABR logic and TCP.
+
+## The protocols
+- **HLS** (Apple, 2009 with iOS 3.0; standardised as RFC 8216): `.m3u8` playlists that index MPEG-TS or fragmented MP4 segments. A **master playlist** lists renditions; each **media playlist** lists segments.
+- **MPEG-DASH** (ISO/IEC 23009-1, 2012): the international standard, with an XML manifest (MPD).
+- **CMAF** (2018): a common fragmented-MP4 segment format usable by both, so one set of segment files serves HLS and DASH players.
+Wikipedia notes HLS and DASH are the only ones still actively developed.
+
+```
+#EXTM3U                          # master playlist
+#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x360
+360p/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080
+1080p/index.m3u8
+```
+
+## The CDN "decider"
+The roadmap's lesson title pairs ABR with a "CDN decider". The player decides bitrate, but **which CDN or edge** it fetches from is usually decided by the service: Wikipedia notes the CDN routes each viewer to a nearby edge, and large services choose among several CDNs (or their own, like Netflix's Open Connect) per session based on measured performance and cost, by handing the player different segment URLs or using DNS. Apple's HLS documentation lists "Content Steering", which lets the server tell players to switch CDN pathways mid-stream. So: the **server side** steers *where* segments come from; the **player** chooses *which quality*.
+
+%%flow Two decisions: the service steers each session to a CDN; the player picks the bitrate of every segment.
+Playback request -(steering: best CDN for this user)-> *CDN edge chosen -(player measures throughput, buffer)-> Bitrate per segment
+%%
+
+! Example: a commute
+! The player starts at 480p to begin quickly, sees segments arriving at 12 Mbps with 20 seconds buffered, and steps up to 1080p (5 Mbps). In a tunnel, throughput falls to 1 Mbps and the buffer drains from 20 to 8 seconds; the player requests the next segments at 360p (0.8 Mbps) and playback never stalls. All the while the CDN edge just served whichever segment files were requested.
+
+> Takeaway: ABR encodes several renditions cut into short segments and lists them in a manifest; the player decides which bitrate to fetch for each segment using measured throughput and buffer level, while the server or CDN just serves files statelessly (which lets segments be cached anywhere). The service side decides which CDN serves the session.
+
+?? The player. In HTTP adaptive streaming, the server or CDN only serves the manifest and segment files and keeps no per-viewer state; the client measures its download throughput, buffer level and device capabilities and chooses which rendition to request for each next segment. The service may steer which CDN or edge the player uses, but the bitrate choice is client-side.
+
+@13.07
+## What signed URLs do
+AWS CloudFront's documentation describes **signed URLs** for private content:
+1. You create a **trusted key group** on the distribution containing public keys (RSA 2048 or ECDSA 256); you keep the private keys.
+2. When a user requests protected content, your application checks they're **entitled** (logged in, subscribed), then generates a URL signed with your private key.
+3. CloudFront verifies the signature (the URL wasn't tampered with) and the **policy**, then serves the file from cache or origin.
+
+Two policy types:
+| | Canned policy | Custom policy |
+|---|---|---|
+| Expiry | Yes | Yes |
+| Start time | No | Optional |
+| IP address or range | No | Optional |
+| Covers multiple files (wildcards) | No | Yes |
+
+The docs note expiry is checked when a request **starts** (a download in progress finishes; a restarted one or a later range request fails), and that adding query parameters after signing returns 403.
+
+From general CloudFront knowledge (not the page above): **signed cookies** grant access to many files at once, which suits HLS/DASH, where one video is hundreds of segment files; and **origin access control** must stop users fetching the files directly from the S3 bucket, otherwise signed URLs can be bypassed.
+
+%%flow Signed delivery: the app checks entitlement and signs; the CDN verifies the signature and policy before serving.
+User -(watch episode)-> App: check subscription -(signed URL or cookie, expires 2 h)-> *CDN verifies signature -(origin locked to CDN)-> Video segments
+%%
+
+## What signed URLs stop, and what they don't
+They control **who can fetch the bytes, and for how long**. A link posted publicly stops working when it expires (and an IP-restricted custom policy doesn't work from elsewhere at all).
+
+They do **not** control what happens **after** the bytes arrive. The segments are delivered as ordinary, unencrypted media files. A paying user with a valid URL can:
+- save the segments and stitch them into a file to share forever;
+- run a downloader that fetches every segment while the URL is valid;
+- re-host the video on another site.
+
+## What DRM adds
+**DRM** tries to protect the content itself, even on the authorised user's device:
+- Video is **encrypted** (e.g. with Common Encryption) and stored and cached encrypted, so downloaded segments are useless on their own.
+- To play, the player obtains a **licence** with the decryption key from a licence server, which checks entitlement and can set rules (expiry, offline allowed, resolution limits, number of devices).
+- Decryption happens inside a **Content Decryption Module** (CDM), not in page JavaScript, so the key is never exposed to the application.
+
+Wikipedia's *Encrypted Media Extensions* article explains how browsers support this: EME, a **W3C Recommendation since September 2017**, is the browser API that lets HTML video talk to a CDM, replacing plugins like Flash and Silverlight. It works with Media Source Extensions and MPEG-DASH/CENC content. The CDMs it names:
+- **Widevine** (Google): Chrome, Firefox, newer Edge
+- **PlayReady** (Microsoft): older Edge, Internet Explorer 11
+- **FairPlay** (Apple): Safari
+
+The article records the controversy: CDMs are proprietary, closed components with per-browser licensing, raising concerns about open-source browsers, security, privacy and accessibility; the **EFF resigned from the W3C** the day EME was published.
+
+%%flow DRM playback: segments stay encrypted end to end; only the CDM, with a licence, can decrypt them for display.
+Encrypted segments from CDN -> Player via EME -(request licence)-> *Licence server checks entitlement -(key, sealed to CDM)-> CDM decrypts for display
+%%
+
+## What DRM doesn't stop either
+DRM raises the bar but isn't absolute (the EME article doesn't cover this; it's general knowledge). Pointing a camera at the screen (the "analog hole"), or using compromised devices to capture decrypted output, still works; services respond with hardware-backed security levels (Widevine L1 for HD and 4K), HDCP on outputs, and **forensic watermarking** that embeds an invisible per-user mark so leaks can be traced.
+
+! Example: a subscription video service
+! Free trailers: public CDN URLs. Episodes: signed cookies valid for 4 hours covering `/series/s1e3/*`, so every HLS segment request is authorised, and the bucket is reachable only through the CDN. Premium films: additionally encrypted with Widevine, FairPlay and PlayReady; HD keys are only issued to hardware-secure devices, and each stream carries a viewer watermark.
+
+> Takeaway: signed URLs and cookies control who may download content and until when, so shared links die. They do nothing once a legitimate user has the bytes. DRM encrypts the content and gives the key only to a sandboxed decryption module after a licence check (in browsers through EME), so copied files are useless; even DRM can't stop camera capture, which watermarking addresses.
+
+?? Signed URLs only control access to the files: who can download them and until when. They don't stop an authorised user from saving the downloaded segments, stitching them into a file and sharing or re-hosting it, because the content itself is unencrypted. DRM encrypts the video so the files are useless without a key, and issues keys through a licence server to a protected decryption module (via EME in browsers) that decrypts only for playback and enforces rules such as expiry and device limits.
+
+@13.08
+## Where HLS latency comes from
+HLS (13.06) is built for scale and robustness, not immediacy. For live video, the delay from camera to screen adds up across stages (this breakdown is general knowledge; the assigned MDN page doesn't discuss latency):
+1. **Encoding and packaging**: the encoder must finish a whole **segment** (traditionally 6 seconds; Apple once recommended 10) before it can be published.
+2. **Playlist update**: the playlist is updated after the segment exists; the player discovers it on its next playlist poll.
+3. **Player buffer**: players traditionally start **about three segments behind** the live edge to absorb network hiccups: with 6-second segments, that's 18 seconds of buffer by design.
+4. **CDN propagation and HTTP request overhead** for each segment.
+
+Add it up: typically **10 to 30+ seconds** behind real time.
+
+%%flow Classic HLS live latency: a segment must be finished, published and discovered, and the player keeps several in its buffer.
+Camera -(encode 6 s segment)-> Packager -(publish, update playlist)-> CDN -(player polls, buffers 3 segments)-> *Screen, 15 to 30 s behind
+%%
+
+The design choices that cause it are what make HLS scale: **files over HTTP** can be cached on CDN edges for millions of viewers, and **large buffers** ride out network variation.
+
+**Low-Latency HLS** (Apple's documentation links it) cuts this to a few seconds using partial segments published as they're produced and blocking playlist requests that return as soon as new parts exist; it keeps CDN cacheability.
+
+## WebRTC
+MDN's *WebRTC API* page describes WebRTC as letting browsers capture and stream audio and video, and exchange arbitrary data, **directly between peers**, often without intermediary servers. Its pieces:
+- **RTCPeerConnection**: the connection between two peers, carrying media tracks and **data channels** (an API deliberately similar to WebSocket).
+- **ICE** (with STUN and TURN): finds a network path between peers through NATs and firewalls; when no direct path exists, a TURN server relays the traffic.
+- **SDP offer/answer**: peers exchange session descriptions; MDN's guides use an existing WebSocket server for this **signalling**, which WebRTC leaves to the application.
+- Media travels over **RTP**, secured with **DTLS** (SRTP); data channels use SCTP over DTLS.
+
+## Why WebRTC is sub-second
+MDN's page doesn't discuss latency, so this is general knowledge:
+- **No segments**: frames are sent as soon as they're encoded, as a continuous stream of small packets, rather than waiting for multi-second files.
+- **UDP rather than TCP**: a lost packet isn't retransmitted in a way that blocks everything behind it (no head-of-line blocking); the receiver conceals the gap and moves on. For live conversation, a glitch is better than a delay.
+- **Tiny jitter buffers**: tens to a few hundred milliseconds, adjusted dynamically, instead of tens of seconds.
+- **Congestion control adapts the encoder** in real time (lower bitrate or resolution), rather than switching between pre-encoded renditions.
+- **Direct path**: peer to peer, or through one media server, not through a chain of packagers and CDN tiers.
+
+| | HLS / DASH | WebRTC |
+|---|---|---|
+| Latency | 10 to 30 s (2 to 5 s low-latency variants) | Under 0.5 s |
+| Transport | HTTP over TCP, files | RTP over UDP, packets |
+| Scale | Millions via CDN caching | Needs media servers (SFUs) per few hundred to thousands of viewers |
+| Quality on bad networks | Buffers absorb problems | Drops quality or frames immediately |
+| Use | Broadcasts, sports, on-demand | Calls, conferencing, auctions, interactive streams |
+
+## Scaling WebRTC to an audience
+Peer-to-peer only works for small calls (each sender would upload to every receiver). Larger sessions use a **Selective Forwarding Unit** (SFU): each participant sends one stream up, and the SFU forwards it to everyone else, often choosing among **simulcast** layers (the sender encodes 2 or 3 qualities) per receiver. For big audiences, SFUs cascade across regions. This costs far more per viewer than CDN delivery, which is why large broadcasts still use HLS/DASH and reserve WebRTC for the interactive participants.
+
+%%flow Choosing by latency budget: conversation needs WebRTC; large broadcasts use HLS, low-latency HLS in between.
+Interaction needed in under 1 s? -(yes: calls, auctions)-> *WebRTC with SFUs -(no: a few seconds is fine)-> Low-latency HLS -(10+ s ok, huge audience)-> Standard HLS via CDN
+%%
+
+! Example: a live auction
+! Bidders must see the auctioneer within half a second or bids are unfair, so the auctioneer's stream goes out over WebRTC to 2,000 bidders through regional SFUs. 200,000 spectators who can't bid watch the same event over low-latency HLS from the CDN at about 4 seconds behind, far cheaper per viewer.
+
+> Takeaway: HLS live latency comes from waiting for whole multi-second segments, publishing playlists, and players buffering several segments, a design that buys CDN-scale delivery. WebRTC sends small RTP packets over UDP as frames are encoded, with tiny jitter buffers and real-time bitrate adaptation, so it is sub-second but needs SFUs and costs more per viewer.
+
+?? HLS works in whole files: the encoder must finish a multi-second segment before publishing it, the playlist must be updated and polled, and players deliberately buffer about three segments to survive network hiccups, so 6-second segments alone add around 18 seconds; that design is what lets CDNs cache and serve millions. WebRTC streams individual frames as small RTP packets over UDP the moment they're encoded, doesn't block on retransmission, keeps only a tiny jitter buffer, and adapts the encoder's bitrate in real time, so end-to-end delay is a few hundred milliseconds.
+
+@13.09
+## The goal
+A sync service keeps a folder identical across devices. The question captures the core efficiency requirement: if a user changes 1 byte in a 1 GB file, uploading 1 GB again is unacceptable on a slow connection. Ideally you upload roughly the size of the change, plus a little metadata.
+
+ByteByteGo's *Design Google Drive* chapter is behind a login; this lesson uses Dropbox's engineering posts and Hello Interview's Dropbox breakdown.
+
+## Dropbox's block model
+Dropbox's post *Streaming file synchronization* describes the foundation:
+- Every file is split into **4 MB blocks** (the last may be smaller).
+- Each block is identified by its **SHA-256 hash**.
+- A file is represented by its **blocklist**: the ordered list of its block hashes.
+- **Only changed blocks are uploaded.**
+
+There are two kinds of server:
+- **Block servers**: a key-value store mapping hash → (encrypted) block contents, knowing nothing about users or files.
+- **Metadata server**: users, namespaces, and the **Server File Journal** (SFJ), recording which blocklist each path has.
+
+## The commit protocol
+%%seq Dropbox's commit: the client proposes a blocklist; the server replies with the blocks it lacks; the client uploads only those, then commits again.
+Client > Metaserver : commit(path, blocklist h1..h250)
+Metaserver -> Client : need blocks: h137
+Client > Blockserver : store(h137, 4 MB)
+Blockserver -> Client : ok
+Client > Metaserver : commit(path, blocklist h1..h250)
+Metaserver -> Client : ok, journal updated
+%%
+
+1. The client computes the new blocklist and tries to **commit** it for the path.
+2. The metadata server checks which hashes it already has (and that the user may access them). If any are missing, it answers **"need blocks"** with the list.
+3. The client uploads just those blocks directly to block servers.
+4. The client commits again; the metadata server records the new version in the SFJ.
+
+Other clients learn of the change, fetch the new blocklist, and download only the blocks they don't already have.
+
+## The 1-byte edit
+Changing 1 byte in a 1 GB file (256 blocks of 4 MB) changes exactly **one** block's hash, as long as the file's length doesn't change (an overwrite in place). The client uploads **one 4 MB block** plus a blocklist of 256 hashes (about 8 KB). That's about 0.4% of the file.
+
+%%flow A 1-byte edit with fixed 4 MB blocks: one hash changes, so one block is uploaded.
+1 GB file = 256 blocks -(edit 1 byte in block 137)-> *Only h137 changes -(commit: need h137)-> Upload 4 MB, not 1 GB
+%%
+
+Two refinements make it better still:
+- **Smaller blocks or deltas**: Hello Interview's design uses 5 to 10 MB chunks; rsync-style delta encoding (13.10) can send just the changed bytes within a block.
+- **Insertions**: if the edit **inserts** a byte rather than overwriting, every fixed block boundary after it shifts, and all later blocks change. **Content-defined chunking** (13.10) fixes that.
+
+## Streaming sync: overlap upload and download
+The same post explains a latency improvement. Originally, sync had two strict phases: the uploader uploaded every block and committed, and only then did other clients learn of the file and start downloading. **Streaming sync** lets downloading clients **prefetch blocks of a not-yet-committed file** while the upload is still happening, so by commit time they're nearly done. Dropbox reports up to **2× faster** multi-client sync in theory; in a test with about 1.2 Mbps upload and 5 Mbps download, about **25%** faster (e.g. 500 MB: 293 s vs 383 s; 100 MB: 64 s vs 89 s).
+
+## The rest of a sync design
+Hello Interview's Dropbox breakdown fills in the system around the blocks:
+- **Uploads** go directly to blob storage with presigned URLs and multipart upload, supporting files up to **50 GB**, with per-chunk status in the file's metadata so uploads resume (13.04).
+- **Fingerprints** (SHA-256) for each chunk and the whole file enable deduplication and resumability.
+- **Local changes** are detected with OS file-system events (FSEvents on macOS, FileSystemWatcher on Windows) and queued.
+- **Remote changes** arrive by a WebSocket or SSE notification, with periodic polling (`GET /changes?since=…`) as a safety net.
+- **Conflicts**: last write wins in its basic design (real clients often keep both copies as "conflicted copy").
+- **Compression** on the client before upload (and before encryption), skipped for already-compressed media.
+- **Downloads** through a CDN with short-lived signed URLs.
+
+! Example: a designer saves a 1 GB Photoshop file
+! The client re-hashes the file and finds blocks 37 and 38 changed (an edit touching a 6 MB region). Commit returns "need h37', h38'"; 8 MB is uploaded. The designer's laptop at home gets a notification, fetches the new blocklist, sees it already has 254 of 256 blocks, and downloads 8 MB. With streaming sync, it started downloading those 8 MB before the commit finished.
+
+> Takeaway: split files into blocks identified by content hashes; a file version is a list of hashes. The client commits the list, the server asks only for blocks it lacks, and other devices download only blocks they lack. A 1-byte overwrite in a 1 GB file uploads one block (about 4 MB) plus metadata, and insertions need content-defined chunking to stay cheap.
+
+?? Roughly one block, not the file. Split the file into blocks (Dropbox uses 4 MB) identified by SHA-256 hashes; after the edit, re-hash and send the new blocklist. Only the block containing the changed byte has a new hash, so the server asks for that one block (about 4 MB) plus a blocklist of a few kilobytes. Smaller blocks or rsync-style deltas shrink it further, and content-defined chunking keeps it small even when the edit inserts bytes and shifts the rest of the file.
+
+@13.10
+## Content addressing
+In a **content-addressed** store, the key of a piece of data is a cryptographic hash of the data itself. *Pro Git*'s chapter on Git objects describes Git as exactly this: "a content-addressable filesystem", a simple key-value store where you insert content and get back a key (a SHA-1 hash) to retrieve it.
+- `git hash-object` hashes a header (`blob <size>\0`) plus the content; the object is zlib-compressed and stored at `.git/objects/xx/yyyy…`, where xx is the first two hex characters of the hash.
+- **Blobs** hold file contents (no names); **trees** list names, modes and the hashes of blobs or subtrees; **commits** point to a top-level tree and parent commits.
+
+```
+$ echo 'test content' | git hash-object -w --stdin
+d670460b4b4aece5915caf5c68d12f560a9fe3e4
+```
+
+## What it gives you for free
+1. **Deduplication**: identical content always has the same hash, so it is stored once, whether it's two copies of a file, the same file in many commits, or (in Dropbox's case) the same block in files of different users.
+2. **Integrity**: the name *is* a checksum. If stored bytes are corrupted or tampered with, their hash no longer matches their key, and the problem is detected on read.
+3. **Cheap snapshots and versions**: a commit references a whole tree, but unchanged subtrees and blobs are reused by hash rather than copied; each snapshot costs only what changed (lesson 13.11).
+4. **Easy caching and replication**: content at a hash can never change, so it can be cached forever and copied anywhere without invalidation.
+5. **Efficient sync**: to synchronise, compare hashes; only send objects the other side doesn't have (Dropbox's "need blocks").
+
+%%flow Content addressing: the key is the hash of the content, so equal content collapses to one stored object.
+Block from file A, Same block in file B -(SHA-256)-> *Same key 9c1e... -> Stored once, verified on every read
+%%
+
+## Fixed-size blocks and the insertion problem
+Split a file into fixed 4 MB blocks: block 1 is bytes 0 to 4 MB, block 2 is 4 to 8 MB, and so on. Now **insert one byte** at the start. Every byte moves one position later, so every block's contents shift by one byte, every hash changes, and the whole file looks new. Fixed-size blocking only works well for **in-place overwrites**, not insertions or deletions.
+
+%%flow The boundary-shift problem: one inserted byte shifts every fixed block boundary, so every hash changes.
+[Before] ABCD EFGH IJKL -(hash each block)-> h1, h2, h3
+[Insert X at start] XABC DEFG HIJK L -(hash each block)-> *All new: h4, h5, h6, h7
+%%
+
+## rsync's answer: match at any offset
+Andrew Tridgell's rsync technical report solves file update over a slow link. Machine β has old file B; α has new file A:
+1. β splits B into **fixed blocks** of S bytes and computes, for each, a **weak 32-bit rolling checksum** and a **strong 128-bit MD4** checksum, and sends them to α.
+2. α scans A for windows of S bytes at **every byte offset**, not just multiples of S, looking for a window whose weak and then strong checksum match one of B's blocks.
+3. α sends back instructions: "copy block k of B" or "here are literal bytes", with literals only for the parts that matched nothing. One round trip.
+
+The **rolling checksum** makes scanning every offset cheap. It has two parts: a = the sum of the bytes, b = a position-weighted sum. When the window slides one byte, both update in constant time from the byte leaving and the byte entering (`a' = a − X_k + X_{l+1}`, and b similarly), so there's no need to re-sum the window at each offset. Only weak matches are checked with the strong hash.
+
+So an inserted byte costs only the block containing it as literal data; all the following blocks still match, just at offsets shifted by one. The report's results on two Linux kernel tarballs (about 24 MB each) show that with blocks of 500 bytes or more, **only about 5% of the file was transferred**, less than the equivalent diff/patch, and false matches of the weak checksum were under 1 in 1,000 true matches.
+
+## Content-defined chunking
+Sync systems that store blocks (rather than computing a one-off delta) use **content-defined chunking** (CDC), which Hello Interview's Dropbox breakdown describes: run a **rolling hash** (e.g. Rabin fingerprinting) over the file and declare a chunk boundary wherever the hash meets a condition (say, its low 13 bits are zero, giving about 8 KB average chunks). Boundaries depend on **content**, not position, so after an insertion, boundaries further on reappear at the same content and only the chunks around the edit change.
+
+%%flow Content-defined chunking: boundaries follow the content, so after an insert they resynchronise and later chunks keep their hashes.
+Rolling hash over bytes -(hash mod 8192 = 0: cut here)-> *Chunk boundaries tied to content -(insert 1 byte)-> Only 1 or 2 chunks change
+%%
+
+! Example: inserting a paragraph
+! A 40 MB document is stored as about 5,000 content-defined chunks. The user inserts a paragraph on page 3. The rolling hash finds the same boundaries before and after the edit; only the chunk containing the insertion (and perhaps its neighbour) differs. The sync uploads 2 new chunks (about 16 KB) and a new chunk list. With fixed 4 MB blocks, all 10 blocks after the insertion point would have changed.
+
+> Takeaway: content addressing names data by its hash, which gives deduplication, integrity checking, cheap versioning and simple sync for free. Fixed-size blocks break on insertions because every later boundary shifts; rsync's rolling checksum finds matches at any offset, and content-defined chunking puts boundaries where the content says so, so only chunks near an edit change.
+
+?? Content addressing gives deduplication (identical content has the same hash and is stored once), integrity (data that doesn't hash to its key is corrupt), cheap snapshots and versions (unchanged objects are reused by hash), cache-forever immutability and efficient sync by comparing hashes. Fixed-size blocks are defined by position, so inserting or deleting even one byte shifts every later boundary and changes every later block's hash, making the rest of the file look new. Rolling-checksum matching (rsync) or content-defined chunking solves it.
+
+@13.11
+## A version is a list of hashes
+From 13.09 and 13.10: a file's content is stored as blocks in a content-addressed block store, and the file itself is represented by its **blocklist**, the ordered list of block hashes (Dropbox's term, from its *Streaming file synchronization* post). The metadata service records, for each file, which blocklist is current.
+
+To keep **history**, don't overwrite the blocklist; append a new version:
+
+```
+file_versions
+  file_id | version | blocklist                     | size  | modified_at | author
+  f9      | 1       | [h1, h2, h3, ..., h250]       | 1.0GB | 10:02       | ana
+  f9      | 2       | [h1, h2, h3', ..., h250]      | 1.0GB | 10:47       | ana
+  f9      | 3       | [h1, h2, h3', ..., h250, h251]| 1.0GB | 11:30       | ben
+```
+
+Dropbox's metadata server keeps exactly this kind of record in its **Server File Journal**; its block servers store hash → block and know nothing about files.
+
+## Why history is cheap
+Version 2 differs from version 1 in one block. Storing version 2 costs:
+- one new **block** (h3', 4 MB) in the block store;
+- one new **row** with a list of 250 hashes (about 8 KB of metadata).
+
+All the other 249 blocks are shared by reference: the hashes in both lists point to the same stored objects. So 100 versions of a 1 GB file that each change a few blocks cost a few hundred MB, not 100 GB. This is the same mechanism as Git's trees and commits (13.10): every version is a full snapshot logically, but physically only changes are stored.
+
+%%flow Two versions share every unchanged block by hash; only the edited block is new.
+[Version 1] Blocklist -> h1, h2, *h3 ... h250
+[Version 2] Blocklist -> h1, h2, *h3-new ... h250
+[Block store] Stored once each -> h1, h2, h3, h3-new ... h250
+%%
+
+What falls out of this model:
+- **Restore** an old version: make the old blocklist current again (write a new version row pointing to it). No data is copied; the blocks are already there.
+- **View or download** an old version: fetch the blocks in its list.
+- **Dedup across users**: two users uploading the same file share blocks (with care: cross-user dedup can leak "this file exists" information, so many systems dedup only within an account or encrypt per user).
+- **Integrity**: each downloaded block is verified against its hash.
+- **Moves and renames** change metadata only; no block moves.
+
+## Garbage collection
+Deleting is the cost of sharing. When old versions expire (e.g. after 30 or 180 days) or files are deleted, a block may still be referenced by other versions or other files. Blocks need **reference counting** or a periodic **mark-and-sweep**: mark every hash reachable from live versions, then delete unmarked blocks, with a grace period so a block being uploaded but not yet committed isn't removed.
+
+%%flow Garbage collection: blocks are deleted only when no live version anywhere refers to them.
+Expire old versions -(scan live blocklists)-> *Mark referenced hashes -(grace period passes)-> Sweep unreferenced blocks
+%%
+
+## Metadata as its own hard problem
+Dropbox's post *Rewriting the heart of our sync engine* is a reminder that the block layer is the easy part. Its scale: **hundreds of millions of users**, **hundreds of billions of files**, **trillions of file revisions**, **exabytes** of data. Dropbox rewrote its sync engine ("Nucleus", in Rust) largely because of its **data model**:
+- The old engine lacked **stable identifiers** for files preserved across moves (a move was a delete plus an add), which made shared folders and concurrent moves error-prone. The new model gives files and shared folders **globally unique IDs**, never seen in transiently duplicated or missing states.
+- The old engine wasn't designed for testing; the new one is deterministic given inputs and scheduling, so it is fuzzed with **millions of randomised scenarios a day**, each reproducible from a seed.
+
+The lesson for a design: identify files by a stable **file ID**, not by path; keep path as metadata; and treat the version table (file ID → ordered versions → blocklists) as the source of truth that sync clients reconcile against.
+
+Hello Interview's Dropbox breakdown gives a simpler interview-scale version: a `FileMetadata` record with `id`, `name`, `size`, `mimeType`, `uploadedBy`, `status`, and a `chunks` list with per-chunk status; versions can be added by keeping previous chunk lists.
+
+! Example: a year of edits
+! A 200 MB spreadsheet is edited 500 times, each edit changing about 2 blocks (8 MB). Full copies would be 100 GB. With blocklists, storage is 200 MB + 500 × 8 MB = 4.2 GB of blocks plus 500 small metadata rows. Restoring the version from March is a single metadata write. When versions older than 180 days expire, a sweep finds about 300 blocks no longer referenced by any live version and deletes them.
+
+> Takeaway: store each file version as an ordered list of content hashes pointing into a deduplicated block store. A new version costs only its new blocks plus a small metadata row, restores are pointer changes, and blocks are garbage-collected when no live version references them. Identify files by stable IDs rather than paths, as Dropbox's rewrite stresses.
+
+?? Each version is just metadata, an ordered list of block hashes, while the blocks live once in a content-addressed store. A new version that changes a few blocks adds only those blocks plus a list of hashes; every unchanged block is shared with earlier versions by reference. So keeping hundreds of versions costs little more than the changes themselves, restoring an old version is a metadata write that points the file back at an old list, and the only extra work is garbage-collecting blocks no live version references.

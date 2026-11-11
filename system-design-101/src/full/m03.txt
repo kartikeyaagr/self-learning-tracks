@@ -1,0 +1,688 @@
+@03.01
+## Tables, rows and keys
+A relational database stores data as tables. Each row is one thing (a user, a post), each column is one attribute, and every row has a **primary key** that identifies it. The power of the model is that relationships are expressed by storing one row's key in another row, and the database can enforce that those references stay valid.
+
+The PostgreSQL tutorial's running example has two tables: `cities` with `name` as its primary key, and `weather` whose `city` column `REFERENCES cities(name)`. That **foreign key** makes the database reject a weather row for a city that does not exist. The rule lives in the database, so every application and every script obeys it.
+
+## Constraints are free correctness
+Constraints turn business rules into guarantees the database checks on every write:
+- `PRIMARY KEY`: unique and not null.
+- `FOREIGN KEY`: the referenced row must exist. You choose what happens when the parent is deleted (reject, cascade, set null).
+- `UNIQUE`: no two rows share this value or combination. This is how you stop a user liking the same post twice.
+- `NOT NULL` and `CHECK` (for example `CHECK (price >= 0)`).
+
+Application checks like "does this email already exist?" are not enough on their own: two requests can both check, both see nothing, and both insert. A unique constraint closes that race.
+
+%%flow Primary and foreign keys: each order row points at exactly one existing customer, enforced by the database.
+orders.customer_id -(FOREIGN KEY)-> *customers.id (PRIMARY KEY) -(ON DELETE RESTRICT)-> Orphans impossible
+%%
+
+## Normalisation in practice
+Normalising means storing each fact once. A user's name lives in `users`, not copied into every post. Updates then happen in one place and cannot disagree. The cost is joins at read time. The working rule: start normalised, and denormalise specific hot read paths later, on purpose, when you can measure the need (lesson 03.10 and Module 4).
+
+Relationships map to tables like this:
+- **One-to-many** (a user has many posts): the "many" side holds the foreign key, `posts.user_id`.
+- **Many-to-many** (users like many posts, posts are liked by many users): a join table, `likes(user_id, post_id)`, with a composite primary key or unique constraint on the pair.
+
+%%flow Normalising: move repeated data into its own table and reference it by key.
+[Denormalised] Order row: customer name, email, address -(repeated per order)-> *Update anomalies
+[Normalised] Order row: customer_id -(join)-> *One customer row
+%%
+
+## Transactions
+A transaction groups statements so they all happen or none do. The tutorial's bank transfer subtracts from one account and adds to another between `BEGIN` and `COMMIT`. If anything fails, `ROLLBACK` leaves both untouched. Savepoints let you undo part of a transaction. Lessons 03.06 to 03.08 cover what happens underneath.
+
+%%seq A transaction is all or nothing: a crash or error before COMMIT leaves no trace.
+App > DB : BEGIN
+App > DB : debit account A $100
+App > DB : credit account B $100
+App > DB : COMMIT
+DB -> App : both applied, or neither
+%%
+
+## What a database engine is made of
+CMU's 15-445 course (Andy Pavlo) teaches the inside of a database in layers. The course page itself is a syllabus, so this part is a summary of its standard topics:
+- **Storage**: tables live in fixed-size pages (8 KB in Postgres) on disk.
+- **Buffer pool**: a cache of pages in memory, with an eviction policy.
+- **Access methods**: indexes, usually B+ trees and hash tables (03.03, 03.04).
+- **Query processing**: the planner chooses how to run a query (03.05).
+- **Concurrency control**: locks and MVCC (03.06, 03.07).
+- **Recovery**: write-ahead logging (03.08).
+
+Knowing these layers lets you explain why a design is fast or slow instead of guessing.
+
+! Example: users, posts and likes
+! users(id PK, email UNIQUE NOT NULL, name, created_at)
+! posts(id PK, user_id FK → users.id NOT NULL, body, created_at); index on (user_id, created_at) for "posts by this user, newest first"
+! likes(user_id FK → users.id, post_id FK → posts.id, created_at, PRIMARY KEY (user_id, post_id)); index on (post_id) to count or list likes for a post
+! The composite primary key on likes makes a double like impossible, even if the button is clicked twice at once.
+
+> Takeaway: put relationships in foreign keys and rules in constraints, so the database enforces them for every writer. Normalise first; denormalise on evidence.
+
+?? posts.user_id is a foreign key to users. likes has foreign keys to users and posts, and a unique constraint (or composite primary key) on (user_id, post_id) so a user can like a post only once. users.email is unique. Add an index on likes.post_id for counting likes per post and on posts(user_id, created_at) for profile pages.
+
+@03.02
+## The surprising pattern
+Several large companies built key-value or document stores on top of MySQL instead of adopting a NoSQL database. Two well-known write-ups explain why: FriendFeed in 2009 and Uber's Schemaless in 2016.
+
+## FriendFeed: schema changes had become impossible
+FriendFeed stored over 250 million entries in sharded MySQL, with read replicas and memcache. Traffic was fine. The problem was change: on tables beyond 10 to 20 million rows, adding an index or a column locked the table for hours. Teams avoided shipping features that needed schema changes.
+
+Their design:
+- **One entities table** holding each object as a compressed blob (a serialized Python dictionary) with a 16-byte UUID. Adding a property is just storing it: no migration.
+- **Each index is its own table**, for example `index_user_id(user_id, entity_id)`, sharded by the indexed value. Adding an index means creating a new table and letting a background "Cleaner" fill it while the site runs. Rollouts went from about a week to about a day.
+- **Joins happen in the application**: query index tables for IDs, then fetch the entities.
+
+Because entities and indexes live on different shards, there is no transaction across them. FriendFeed accepted that:
+- The entities table is the source of truth. Indexes can be stale.
+- Writes go to the entity first, then to the indexes.
+- Reads use indexes only to find candidates, then re-check the filter against the real entity.
+- The Cleaner continuously repairs indexes, usually within a couple of seconds.
+
+%%flow FriendFeed's layout: entities stored as blobs, and one small index table per query pattern.
+Save entity -(JSON blob)-> *entities (id, body) -(also write)-> index_user (user_id, entity_id)
+Feed query -(user_id)-> index_user -(entity ids)-> entities
+%%
+
+## Uber Schemaless: running out of Postgres
+In early 2014, Uber projected that trip growth would exhaust its Postgres storage before the year ended. Requirements for the replacement: add capacity by adding servers, keep accepting writes during failures, notify downstream systems (like billing) of changes, support secondary indexes, and be something the team could debug at 3 a.m.
+
+They evaluated Cassandra, Riak and MongoDB. All could scale, but few accepted writes during failover, none had built-in change notification, and the team lacked operational trust in them. The decisive factor was operational confidence: they knew MySQL deeply.
+
+Schemaless's model, similar to Bigtable:
+- A **cell** is an immutable JSON blob addressed by row key (UUID), column name and ref key (a version number). Updates write a new cell with a higher ref key. Nothing is overwritten.
+- A trip stores BASE, STATUS, NOTES and FARE ADJUSTMENTS as separate columns written at different times by different services, avoiding conflicts.
+- Because data is append-only, the store doubles as a change log. **Triggers** let services react: when a trip's BASE cell is written, billing charges the card and writes STATUS.
+- **Secondary indexes** are sharded by a chosen field (driver UUID is good, city ID is bad because it is uneven) and are eventually consistent, usually lagging well under 20 ms. Making them consistent would need two-phase commit across shards, which they judged too costly.
+
+%%flow Uber Schemaless: append-only cells, sharded across many MySQL instances by row key.
+Write cell (row, column, version) -(shard by row key)-> *MySQL shard n -(append, never update)-> Trigger downstream jobs
+%%
+
+## Why build on SQL?
+- MySQL/InnoDB is a battle-tested storage engine: crash recovery, replication, backups and tooling all exist.
+- The team already knows how to operate and debug it.
+- You only use the parts you need (a durable sorted store per shard) and skip the parts that do not scale across shards (joins, cross-shard transactions).
+- You control the trade-offs, such as eventual consistency for indexes, instead of inheriting a product's.
+
+The cost is that you now own a database layer: sharding, routing, index maintenance and consistency repair are your code.
+
+! Example: user settings store
+! A team needs a flexible per-user settings store with 500 million users. Instead of a new database, they create settings(user_id, key, value_json, updated_at) on 64 MySQL shards keyed by user_id. New setting types need no migration. Their DBAs already run MySQL, so backups, failover and monitoring are reused.
+
+> Takeaway: FriendFeed and Uber chose MySQL as a reliable storage engine and built a simple, schemaless layer on top, trading SQL features for painless change and operational familiarity.
+
+?? Because the storage engine is proven and the team already knows how to run it: backups, replication, failover and debugging are solved. Storing blobs means schema changes need no migrations, and the company controls trade-offs like eventually consistent indexes. A new NoSQL product brings unfamiliar failure modes, and at the time few met requirements like accepting writes during failover or change notification.
+
+@03.03
+## Without an index, every query reads everything
+A table's rows sit in pages on disk in no particular order (a heap). To find `email = 'a@b.com'` without an index, the database reads every page. Hello Interview's comparison: searching every book in a library one by one. On millions of rows that means many slow disk reads for one record.
+
+An index is a separate structure, sorted by the indexed column(s), that points to the rows. Markus Winand's Use The Index, Luke compares it to a phone book: because it is sorted, you can jump to the right place.
+
+%%flow Without an index the database reads every row; with one it walks a few pages straight to the match.
+[Full scan] WHERE email = 'a@x.com' -(read 10M rows)-> *1 match
+[Index] WHERE email = 'a@x.com' -(3-4 page reads)-> *1 match
+%%
+
+## What indexes cost
+- **Writes**: every insert, update or delete must also update every index on the table. Five indexes means up to six writes per insert.
+- **Space**: an index can be nearly as large as the table.
+- **Not always used**: for small tables or queries that match a large fraction of rows, scanning is cheaper (03.05).
+
+So index the queries you actually run, not every column. Write-heavy tables like logs should have few indexes. Postgres's `pg_stat_user_indexes` shows which indexes are never used.
+
+## Index types
+Postgres offers several; the B-tree is the default and covers most needs.
+| Type | Good for |
+| B-tree | Equality, ranges, sorting, prefix LIKE. The default. |
+| Hash | Equality only |
+| GIN | Values containing many keys: arrays, JSONB, full-text search (an inverted index) |
+| GiST / SP-GiST | Geometry, ranges, nearest-neighbour, geospatial |
+| BRIN | Huge tables whose values follow physical order, like timestamps in an append-only log. Tiny, but approximate. |
+
+Hello Interview also covers LSM trees (used by write-heavy stores like Cassandra and RocksDB, Module 5) and geospatial indexes such as geohashes, quadtrees and R-trees (Module 13).
+
+## Composite indexes and column order
+An index on `(a, b)` is sorted by `a`, and by `b` only within each value of `a`. Use The Index, Luke's phone book analogy: it is sorted by surname, then first name. Finding all "Smith"s is easy. Finding everyone called "John" means reading the whole book, because the Johns are scattered across every surname.
+
+So a composite index helps queries that use its **leftmost columns**:
+- `(a, b, c)` helps `WHERE a = ?`, `WHERE a = ? AND b = ?`, and all three.
+- It does not help `WHERE b = ?` or `WHERE c = ?` alone. (Postgres can sometimes skip-scan, but do not rely on it.)
+
+Winand's example: after a merger, the employees primary key became `(employee_id, subsidiary_id)`. Queries for all employees of one subsidiary did a full table scan. Reversing the order to `(subsidiary_id, employee_id)` kept uniqueness and made the subsidiary query a range scan. One well-ordered index beats two single-column ones: less space and cheaper writes.
+
+How to choose the order: put columns used with equality first and the range or sort column last, and lead with the column the most queries filter on.
+
+%%flow A composite index on (country, city) is sorted by country first, so it helps queries that filter on its leftmost columns.
+[Uses index] WHERE country = 'IN' AND city = 'Pune' -> *Seek straight to (IN, Pune)
+[Can't seek] WHERE city = 'Pune' -> *Scan: cities are spread across every country
+%%
+
+## More tools
+- **Unique indexes** enforce uniqueness (03.01).
+- **Expression indexes**: `CREATE INDEX ON users (lower(email))` serves `WHERE lower(email) = ?`.
+- **Partial indexes** index only some rows: `WHERE billed IS NOT TRUE` keeps an "unbilled orders" index small.
+- **Covering indexes**: if the index holds every column a query needs (Postgres `INCLUDE`), the database can answer from the index alone (an index-only scan), skipping the table.
+- **Sorting**: a B-tree on `(user_id, created_at)` returns a user's posts already ordered, so `ORDER BY created_at DESC LIMIT 20` stops after 20 entries.
+
+! Example: feed query
+! Query: SELECT id, body FROM posts WHERE user_id = 42 ORDER BY created_at DESC LIMIT 20.
+! Index on (user_id, created_at): jump to user 42, read the newest 20 entries in order, fetch 20 rows. Done in a few page reads.
+! Index on (created_at, user_id): sorted by time first, so user 42's posts are scattered across the whole index. The planner will likely scan far more.
+
+> Takeaway: indexes trade write cost and space for fast reads. A composite index works left to right, so order columns by how you query.
+
+?? The index is sorted by a first, and by b only within each a. For WHERE a = ? the database jumps straight to that a's contiguous block. Rows with a given b are scattered across every value of a, so there is no single range to seek to, and it would have to read the whole index or table.
+
+@03.04
+## Two structures working together
+Use The Index, Luke explains a database index as two structures combined.
+
+**Leaf nodes** hold the index entries in sorted order: the indexed value plus a pointer to the table row. Each leaf is one database page (8 KB in Postgres), so it holds hundreds of entries. Leaves are linked to their neighbours in a doubly linked list, which lets the database walk forward or backward through a range. Inserts do not shift the whole index: a new entry goes into the right leaf, and if the leaf is full it splits and the list is relinked.
+
+**The tree** sits on top so the database can find the right leaf quickly. Each branch node entry holds the largest value in the child node it points to. Branch layers are added until everything fits in one root node.
+
+%%layers A B-tree index: a tiny tree of branch pages above a long, linked chain of leaf pages.
+Root page | keys that split the whole range
+Branch pages | narrow it down, one page per level
+*Leaf pages | sorted entries + row pointers, linked both ways
+Table (heap) | the actual rows
+%%
+
+## Walking the tree
+To find 57, start at the root and read entries in order until one is greater than or equal to 57 (say 83). Follow that pointer down a level and repeat until you reach a leaf. Because the tree is **balanced**, every leaf is the same distance from the root, so every lookup takes the same number of steps.
+
+A B-tree is not a binary tree. Each node has hundreds of children. Note: the version databases use is technically a B+ tree, where all values live in the leaves and inner nodes only guide the search.
+
+## Why the depth stays tiny
+The tree's depth grows with the logarithm of the number of entries, with a base equal to the number of children per node. Winand's toy example with 4 entries per node:
+| Depth | Max entries |
+| 3 | 64 |
+| 4 | 256 |
+| 6 | 4,096 |
+| 10 | 1,048,576 |
+
+Real nodes hold hundreds of entries, so each extra level multiplies capacity by around a hundred. Indexes with millions of rows are typically 4 or 5 levels deep; 6 is rare. Hello Interview's example: finding one row in Postgres might read only 2 or 3 pages. The root and upper levels are read constantly, so they stay in memory. A lookup often costs just one or two actual disk reads.
+
+That is the answer to "O(log n) but fast": the log has a huge base, so n of a billion still gives a depth of about 4 or 5, and the top levels are cached.
+
+## Why an index lookup can still be slow
+Winand breaks every index lookup into three steps:
+1. **Tree traversal**: bounded by the depth. Always fast.
+2. **Following the leaf chain**: reading every matching entry. Unbounded: a range that matches a million entries reads a million entries.
+3. **Fetching table rows**: one table access per match. Unbounded, and often random I/O, because matching rows are scattered across many pages.
+
+Steps 2 and 3 are where slow "indexed" queries spend their time. Rebuilding the index will not help; Winand calls "degenerated indexes" a myth. Fixes are a more selective index, a better column order, or a covering index that avoids step 3.
+
+%%flow Lookup cost by step: the descent is cheap and fixed; following the leaf chain and visiting the table can be expensive.
+Tree traversal (~4 pages) -> Leaf chain (1 to many pages) -> *Table access (1 page per match)
+%%
+
+%%flow A page split: inserting into a full leaf moves half its entries to a new page and adds a pointer in the parent.
+Insert into full leaf -(split)-> Old page: lower half -(link)-> *New page: upper half -(new key)-> Parent branch
+%%
+
+## B-trees and writes
+Every write updates the tree in place, which means random writes to pages scattered across the disk. That is fine for read-heavy workloads. Write-heavy systems often use LSM trees instead, which turn writes into sequential appends at the cost of more work on reads (Module 5).
+
+! Example: sizing an index
+! A users table has 1 billion rows and an index on email. Say each 8 KB page holds about 300 entries. Depth: 300^3 = 27 million, 300^4 = 8.1 billion, so 4 levels cover it. The root and second level (about 300 pages, under 3 MB) stay in memory. A lookup reads maybe 2 pages from disk, then 1 table page.
+
+> Takeaway: a B-tree is a very wide, balanced tree over a sorted, linked list of leaves. Depth stays at 3 to 5 even for billions of rows; slow index queries come from reading many leaves and table rows, not from the tree.
+
+?? Each node is a disk page with hundreds of children, so the base of the logarithm is in the hundreds. A billion keys need only about 4 levels, and the top levels are hit so often they are always cached in memory. So a lookup costs one or two real disk reads.
+
+@03.05
+## The planner decides how
+SQL says what you want, not how to get it. The query planner (optimiser) considers possible plans (which index, which join order, which join algorithm) and estimates the cost of each, then picks the cheapest. Use The Index, Luke calls the execution plan the first place to look when a query is slow.
+
+%%flow The planner turns one SQL statement into the cheapest plan it can find, using table statistics.
+SQL -(parse)-> Query tree -(estimate costs with stats)-> *Cheapest plan -(execute)-> Rows
+%%
+
+## Reading EXPLAIN
+`EXPLAIN` shows the chosen plan as a tree of nodes. Each line shows:
+- `cost=X..Y`: estimated start-up cost and total cost, in arbitrary units.
+- `rows`: estimated rows this node outputs.
+- `width`: average row size in bytes.
+
+Costs are relative to reading one page sequentially, which is 1.0. The Postgres docs work an example on a table `tenk1` with 10,000 rows in 345 pages: a full scan costs 345 × 1.0 for pages plus 10,000 × 0.01 for per-row CPU = 445. Random page reads are assumed to cost more (default 4.0), which is why an index that leads to many random reads can lose to a scan.
+
+## The same table, different plans
+The docs show how the plan changes as the query matches more rows:
+| Query on tenk1 | Plan | Estimated cost |
+| unique1 = 42 (1 row) | Index Scan | 8.30 |
+| unique1 < 100 (1%) | Bitmap Index Scan + Bitmap Heap Scan | 225 |
+| unique1 < 7000 (70%) | Seq Scan with filter | 470 |
+
+- **Index scan**: walk the index, fetch each row in index order. Best for very few rows.
+- **Bitmap scan**: collect all matching row locations from the index, sort them by physical position, then read each needed page once. Good for a moderate number of rows. It can also combine two indexes with BitmapAnd or BitmapOr.
+- **Sequential scan**: read the whole table in order. Best when a large fraction of rows match, because sequential reads are cheap and you avoid random jumps.
+- **Index-only scan**: answer from the index alone when it covers every needed column.
+
+## When the planner ignores your index
+It is usually right to:
+- The query matches a large share of the table (low selectivity), so random reads would cost more than one sequential pass.
+- The table is tiny (a few pages), so scanning is cheapest. The docs warn not to judge plans on small test tables.
+- The index cannot be used: the query filters only on the second column of a composite index, wraps the column in a function (`lower(email)` with an index on `email`), or compares mismatched types.
+
+Or it is wrong because its **statistics** are wrong. Estimates come from statistics gathered by `ANALYZE`. After a large data load, stale stats can make it misjudge row counts badly.
+
+## EXPLAIN ANALYZE
+`EXPLAIN ANALYZE` actually runs the query and adds actual time, actual rows and `loops` (how many times a node ran; times are per loop). The single most useful check is whether estimated rows are close to actual rows. A 100× mismatch means a bad plan is likely. `BUFFERS` shows how many pages came from cache (hit) versus disk (read). Careful: it really executes, so wrap writes in `BEGIN; ... ROLLBACK;`.
+
+%%flow The same query, different plans depending on how many rows match.
+[Few rows match] WHERE id = 7 -> *Index Scan
+[Some match] WHERE status = 'late' -> *Bitmap Index Scan -> Bitmap Heap Scan
+[Most match] WHERE active = true -> *Seq Scan
+%%
+
+## Joins in plans
+- **Nested loop**: for each outer row, look up matches (ideally via an index). Best when the outer side is small.
+- **Hash join**: build a hash table on the smaller input, probe with the larger. Good for big unsorted inputs.
+- **Merge join**: walk two inputs already sorted on the join key.
+
+! Example: why the index was skipped
+! SELECT * FROM orders WHERE status = 'shipped' on 10 million rows, where 85% are shipped. The planner estimates 8.5 million rows. Fetching them through the index means millions of random page reads, so it chooses a Seq Scan. For status = 'refunded' (0.2% of rows) it uses the index. A partial index on WHERE status = 'refunded' would be even smaller.
+
+> Takeaway: the planner picks the cheapest plan from statistics. Seq scans win when many rows match; check EXPLAIN ANALYZE and compare estimated with actual rows.
+
+?? When the query matches a large fraction of the table, because many random index-driven page reads cost more than one sequential pass. Also for tiny tables, when the index cannot serve the predicate (wrong leading column, function on the column, type mismatch), or when stale statistics make it overestimate the rows.
+
+@03.06
+## Concurrency causes anomalies
+When many transactions run at once, their reads and writes interleave. Without care you get results that no one-at-a-time order could produce. The Postgres docs list the classic anomalies:
+- **Dirty read**: reading another transaction's uncommitted change, which might be rolled back.
+- **Non-repeatable read**: reading the same row twice and getting different values because someone committed in between.
+- **Phantom read**: re-running a query with a condition and getting a different set of rows.
+- **Serialization anomaly**: a set of committed transactions whose result matches no serial order.
+- **Lost update** (not in the standard's list but the most common in practice): two transactions read a value, both compute a new value, both write, and one overwrites the other.
+
+%%seq A lost update: two transactions read the same balance and both write, so one write vanishes.
+Tx 1 > Row : read balance 100
+Tx 2 > Row : read balance 100
+Tx 1 > Row : write 100 + 50 = 150
+Tx 2 > Row : write 100 - 30 = 70
+Row -> Tx 1 : final 70: the +50 is lost
+%%
+
+## Isolation levels in Postgres
+| Level | What it prevents in Postgres |
+| Read committed (default) | Dirty reads. Each statement sees data committed before that statement began. |
+| Repeatable read | Also non-repeatable and phantom reads. The whole transaction sees one snapshot (snapshot isolation). |
+| Serializable | Everything: the result always equals some serial order. |
+
+Read uncommitted behaves like read committed in Postgres.
+
+**Read committed** has a subtlety. If an `UPDATE` finds a row that another transaction changed and committed, it waits, then re-checks its WHERE clause on the new version and applies to that. So `UPDATE counters SET n = n + 1` is safe, because the increment is computed on the latest value. But read-then-write in application code is not: `SELECT n` (gets 5), compute 6, `UPDATE SET n = 6` loses the other session's increment.
+
+**Repeatable read** fails instead: if your transaction tries to update a row someone else changed after your snapshot, you get `could not serialize access due to concurrent update`. You retry the whole transaction.
+
+**Serializable** adds tracking of what each transaction read. The docs' example: transaction A sums class 1 and inserts the total into class 2, while B sums class 2 and inserts into class 1. Under repeatable read both commit, giving a result no serial order allows. Under serializable, one fails. Applications must retry on SQLSTATE 40001. Keep these transactions short and mark read-only ones `READ ONLY`.
+
+%%flow Postgres isolation levels, weakest to strongest: each prevents more anomalies and aborts more transactions.
+Read committed (default) -> Repeatable read (snapshot) -> *Serializable (aborts on conflicts)
+%%
+
+## Explicit locks
+- **Row locks**: `SELECT ... FOR UPDATE` locks the rows you read, so no one else can update them until you commit. It is the classic fix for read-modify-write. Plain reads are not blocked.
+- **Table locks** are taken automatically. Most are harmless, but `ACCESS EXCLUSIVE` (taken by many `ALTER TABLE` forms, `DROP`, `TRUNCATE`, `VACUUM FULL`) blocks even reads, and plain `CREATE INDEX` blocks writes (03.11).
+- **Advisory locks**: locks on an application-chosen number, useful for "only one worker runs this job at a time".
+
+**Deadlocks** happen when two transactions each hold a lock the other needs, for example updating accounts 1 then 2 while another updates 2 then 1. Postgres detects them and aborts one. Avoid them by always locking in a consistent order (for example by ID) and keeping transactions short.
+
+## The bigger map
+Jepsen's consistency page frames all of this as consistency models: rules for which histories of operations a system may produce, often defined by which dependency cycles between transactions are forbidden. Serializable is near the top, snapshot isolation and read committed lower down. Distributed systems add linearizability and causal consistency (Module 6).
+
+! Example: lost update on a wallet
+! Balance is 100. T1 reads 100 to deduct 30. T2 reads 100 to deduct 50. T1 writes 70. T2 writes 50. Final balance 50, but it should be 20.
+! Fixes: write it as one statement (UPDATE wallets SET balance = balance - 30 WHERE id = 1 AND balance >= 30); or SELECT ... FOR UPDATE before computing; or run at repeatable read or serializable and retry on serialization failure; or optimistic locking with a version column (UPDATE ... WHERE version = 7).
+
+> Takeaway: the default level (read committed) does not stop read-modify-write races. Use atomic updates, FOR UPDATE, optimistic version checks, or serializable with retries.
+
+?? Two transactions read a balance of 100; one deducts 30 and writes 70, the other deducts 50 and writes 50, so the first deduction is lost. Prevent it with SELECT ... FOR UPDATE so the second waits, an atomic UPDATE balance = balance - 30, a version-checked optimistic update, or repeatable read/serializable isolation, where the second commit fails and is retried.
+
+@03.07
+## Many versions instead of many locks
+The Postgres docs describe MVCC (multiversion concurrency control) as the way Postgres keeps transactions isolated without heavy locking. Each statement or transaction sees a snapshot of the database as of some moment. When a row is updated, Postgres does not overwrite it. It writes a new version and leaves the old one in place for transactions that still need it.
+
+The headline benefit: **reading never blocks writing, and writing never blocks reading**, even at serializable. A long report query does not stop users from updating rows, and updates do not stall the report.
+
+## How visibility works (mechanics beyond the intro page)
+Every row version carries the ID of the transaction that created it (`xmin`) and the one that deleted or replaced it (`xmax`). A snapshot records which transactions had committed when it was taken. A row version is visible to you if its creator had committed by your snapshot and its deleter had not. An `UPDATE` is effectively "mark old version deleted, insert new version". The snapshot is per statement in read committed, and per transaction in repeatable read and serializable (03.06).
+
+%%flow MVCC: an UPDATE writes a new row version; old readers keep seeing the old one until they finish.
+Row v1 (xmin 100) -(UPDATE by tx 200)-> v1 marked xmax 200 -(new tuple)-> *v2 (xmin 200)
+%%
+
+## The catch: dead rows pile up
+Once no running transaction can see an old version, it is dead, but it still takes space in the table and in every index. A table with heavy updates accumulates dead rows (bloat), and scans slow down because they wade through them.
+
+%%seq Readers don't block writers: each transaction reads from its own snapshot.
+Tx A (reader) > Table : snapshot at start
+Tx B (writer) > Table : UPDATE row, creates v2
+Tx A (reader) > Table : still sees v1
+Tx B (writer) > Table : COMMIT
+Tx C (new) > Table : sees v2
+%%
+
+## VACUUM's four jobs
+The Postgres docs list why routine `VACUUM` is required:
+1. **Reclaim space** from dead row versions in tables and indexes so new rows can reuse it. Plain `VACUUM` runs alongside normal traffic but usually does not shrink the file. `VACUUM FULL` rewrites the table compactly but takes an `ACCESS EXCLUSIVE` lock (blocking everything) and needs room for a full copy, so it is rarely the right tool.
+2. **Update planner statistics** (`ANALYZE`) so the planner's estimates stay accurate (03.05).
+3. **Update the visibility map**, which marks pages where every row is visible to everyone. Vacuum skips those pages next time, and index-only scans can skip the table for them.
+4. **Prevent transaction ID wraparound.** Transaction IDs are 32-bit and compared in a circle: about 2 billion are "older" and 2 billion "newer". After about 2 billion transactions, old rows would appear to be in the future and vanish. Vacuum **freezes** old rows, marking them as older than everything. If freezing falls behind, Postgres warns at 40 million remaining IDs and, at 3 million, refuses new writes to protect data.
+
+## Autovacuum
+The autovacuum daemon is on by default and should stay on. It vacuums a table once its dead rows exceed a threshold (a base number plus a fraction of the table) and forces an anti-wraparound vacuum once a table's oldest unfrozen ID passes 200 million transactions old.
+
+What stops it working:
+- **Long-running or idle-in-transaction sessions**: dead rows cannot be removed while any snapshot might still see them.
+- **Stale replication slots** and old prepared transactions, for the same reason.
+- Very large, very busy tables where the default thresholds are too lazy.
+
+This is not theoretical. Notion's write-up on sharding Postgres (03.10) says vacuum was stalling on their monolith and transaction ID wraparound became an existential risk, which is what pushed them to shard.
+
+! Example: the forgotten transaction
+! A developer opens a psql session, runs BEGIN and a SELECT, then goes to lunch. Their snapshot pins every row version created since. The orders table gets 5 million updates over the next hours, and vacuum cannot remove any of the old versions. The table and its indexes bloat, queries slow down. Setting idle_in_transaction_session_timeout would have killed the session.
+
+> Takeaway: MVCC lets readers and writers avoid blocking each other by keeping old row versions. VACUUM cleans those versions up, refreshes stats and freezes rows to prevent transaction ID wraparound.
+
+?? Because updates and deletes leave old row versions behind for MVCC, and something must remove them once no transaction can see them, or tables and indexes bloat. VACUUM also updates planner statistics and the visibility map, and freezes old rows so 32-bit transaction IDs can wrap around without making data disappear.
+
+@03.08
+## The durability problem
+When `COMMIT` returns, the user is told their data is safe. But writing every changed data page to disk at every commit would be slow: the pages are scattered, so that is lots of random I/O. And if the machine crashes halfway through writing them, the files are left half-updated.
+
+%%flow The durability problem: data pages are written lazily, so a crash can leave them behind the committed state.
+Commit -(page still only in memory)-> *Crash -> Data file missing the change
+%%
+
+## Write-ahead logging
+The Postgres docs state the rule simply: a change to a data file may only be written after the log record describing that change has been flushed to permanent storage.
+
+So a commit works like this:
+1. The transaction's changes are made to pages in memory (the buffer pool).
+2. Log records describing the changes are appended to the write-ahead log (WAL).
+3. At `COMMIT`, only the WAL is flushed to disk (fsync). Then the client is told "committed".
+4. The changed data pages are written to their real locations later, in the background.
+
+This is fast because the WAL is written **sequentially**, and one fsync can commit many small concurrent transactions at once (group commit).
+
+%%seq WAL: the log record is flushed before COMMIT returns; the data page can be written much later.
+Tx > Shared buffers : modify page in memory
+Tx > WAL buffer : log record
+Tx > WAL on disk : fsync at COMMIT
+WAL on disk -> Tx : commit acknowledged
+Shared buffers > Data files : checkpoint, later
+%%
+
+## Recovery after a crash
+On restart, Postgres reads the WAL from the last checkpoint and **redoes** every change whose effect may not have reached the data files. This is roll-forward or REDO recovery. Committed transactions are fully restored. Changes from transactions that never committed are simply not visible, thanks to MVCC.
+
+**Checkpoints** (mechanics beyond the intro page) bound recovery time. Periodically, Postgres flushes all dirty pages to disk and records a checkpoint in the WAL. Recovery only needs to replay from the last checkpoint. More frequent checkpoints mean faster recovery but more write I/O.
+
+CMU 15-445 covers the general version of this, ARIES, used by many databases: analysis, redo and undo phases, with undo needed in engines that write uncommitted changes in place.
+
+%%flow Recovery: start at the last checkpoint and replay WAL forward to the crash point.
+Last checkpoint -(redo WAL records)-> *State at the moment of the crash -> Accept connections
+%%
+
+## WAL does much more
+Once every change is in an ordered log, the log becomes useful in other ways:
+- **Point-in-time recovery**: restore a base backup and replay archived WAL up to any moment, say 14:02, just before someone dropped a table. The backup does not even need to be an instant snapshot, because replay fixes inconsistencies.
+- **Replication**: replicas receive the WAL stream and replay it to stay in sync (Module 5).
+- **Change data capture**: tools like Debezium read the log to publish database changes as events (Module 7).
+
+## Trade-offs you can tune
+- `synchronous_commit = off` returns before the WAL flush, so a crash can lose the last fraction of a second of commits, but the database stays consistent. It is acceptable for data like metrics, not payments.
+- Storage that lies about fsync (write caches without battery backup) silently breaks the guarantee.
+
+! Example: crash after commit
+! A user pays an invoice. The UPDATE changes a page in memory, a WAL record is appended, and COMMIT fsyncs the WAL and returns success. One second later, the server loses power before the data page is written. On restart, Postgres replays the WAL from the last checkpoint, re-applies the UPDATE to the page, and the invoice shows as paid.
+
+> Takeaway: log first, data later. A commit only needs a sequential fsync of the log; after a crash, replaying the log rebuilds any changes that never reached the data files.
+
+?? Before COMMIT returned, the transaction's changes were written to the write-ahead log and the log was fsynced to disk. On restart, Postgres replays the WAL from the last checkpoint and reapplies every logged change to the data pages, so the committed data is restored even though the pages were never flushed.
+
+@03.09
+## Why IDs get hard after sharding
+On one database, an auto-increment column gives every row a unique ID. Once data is split across many databases, each has its own counter, and they collide. Flickr hit this in the 2000s: data was sharded across many MySQL databases, each a master-master pair, and rows sometimes had to move between shards, so IDs had to be unique everywhere.
+
+## Options Flickr rejected
+- **GUIDs/UUIDs**: unique without coordination, but 128-bit random values are big and scatter inserts all over a B-tree index. Flickr's performance depended on indexes fitting in memory. Sequential IDs also make debugging and reporting easier.
+- **Consistent hashing with GUID keys** (Dynamo style): suits write-optimised stores, not MySQL tuned for fast random reads.
+- **One central database with an auto-increment table**: at 60+ photos per second, plus comments, favourites and tags, the table would grow huge.
+
+## The ticket server
+A ticket server is a tiny dedicated MySQL database whose only job is handing out numbers. Its table `Tickets64` has an auto-increment 64-bit `id` and a one-character `stub` column with a unique key, and holds a single row.
+
+To get an ID:
+- `REPLACE INTO Tickets64 (stub) VALUES ('a');` deletes the existing row and inserts a new one, which bumps the auto-increment.
+- `SELECT LAST_INSERT_ID();` returns the new ID for this connection.
+
+The table never grows past one row, and MySQL's auto-increment guarantees each call gets a new number. Separate tables give separate sequences for photos, accounts, groups and so on.
+
+%%seq Flickr's ticket server: REPLACE bumps the auto-increment and the app reads the new id.
+App > Ticket DB : REPLACE INTO Tickets64 (stub) VALUES ('a')
+App > Ticket DB : SELECT LAST_INSERT_ID()
+Ticket DB -> App : 4,816,001
+App > Photo shard : INSERT photo with id 4,816,001
+%%
+
+## Two servers without coordination
+One ticket server is a single point of failure, so Flickr runs two. Replicating between them would be slow and fragile at that write rate. Instead each owns half the number space:
+- Server A: `auto_increment_increment = 2`, `auto_increment_offset = 1`, giving 1, 3, 5, 7...
+- Server B: same increment, offset 2, giving 2, 4, 6, 8...
+
+Clients round-robin between them and skip whichever is down. The two can never produce the same number. They drift apart (Flickr had a few hundred thousand more odd IDs than even), which does not matter: IDs are unique and roughly increasing, not strictly ordered. This has run in production since January 2006, in keeping with Flickr's "dumbest possible thing that will work" principle.
+
+%%flow Two ticket servers, same step, different offsets: odd and even numbers never collide.
+[Server A: offset 1] 1 -> 3 -> 5 -> *7
+[Server B: offset 2] 2 -> 4 -> 6 -> *8
+%%
+
+## Where it fits among ID schemes
+| Scheme | Pros | Cons |
+| Single auto-increment | Simple, strictly ordered | One database, does not scale across shards |
+| Ticket servers (Flickr) | Compact 64-bit, roughly ordered, simple | Network call per ID, small fleet to run |
+| UUID v4 | No coordination | 128 bits, random inserts hurt B-tree indexes |
+| Snowflake-style (time + machine + sequence) | No coordination, roughly time-ordered, 64-bit | Needs unique machine IDs and sane clocks |
+
+Module 10 covers ID generation in more depth. Callers often fetch IDs in batches (for example 1,000 at a time) to avoid a round trip per row.
+
+! Example: ID ranges with N servers
+! With 3 ticket servers, set auto_increment_increment = 3 and offsets 1, 2, 3. Server 1 issues 1, 4, 7; server 2 issues 2, 5, 8; server 3 issues 3, 6, 9. Adding a fourth later requires choosing a new increment and a starting point above the current maximum, which is the scheme's main inflexibility.
+
+> Takeaway: Flickr's ticket servers are single-row MySQL tables that hand out auto-increment IDs; two servers use the same step with different offsets (odd and even) so they never collide.
+
+?? Each server uses auto_increment_increment = 2 with a different offset: one starts at 1 and issues only odd numbers, the other starts at 2 and issues only even numbers. Their number spaces never overlap, so no coordination or replication between them is needed. Clients round-robin between them and fail over to the other if one is down.
+
+@03.10
+## The order to try things
+A relational database that is struggling does not need sharding first. Sharding is the most powerful option and also the most expensive to build and live with. Try cheaper steps first.
+
+**1. Tune queries and indexes.** The System Design Primer lists SQL tuning as the first lever: find slow queries, add the right indexes, fix the schema (fixed-length types, DECIMAL for money), split hot data into its own tables. Often a single missing index is the whole problem.
+
+**2. Cache hot reads.** Put Redis or Memcached in front of the database for data read far more than written (Module 4). This can remove most read load.
+
+**3. Scale vertically.** Move to a bigger machine: more RAM so the working set fits in memory, faster disks, more cores. It is boring and it works, up to a limit. Notion's write-up notes that maintenance (vacuum) degraded well before hardware limits, so vertical scaling is a bridge, not a destination.
+
+**4. Add read replicas.** Replicas copy the primary's changes and serve reads. The Primer's caveats: replicas lag behind (users may not see their own writes immediately), more replicas mean more lag, a primary failure can lose writes that were not yet copied, and promotion to primary needs logic or tooling. Writes still all go to one primary.
+
+**5. Partition by function (federation).** Split into separate databases per domain: users, orders, forums. Each is smaller and writes happen in parallel, but cross-domain joins move into the application.
+
+**6. Shard.** Split one table's rows across many databases by a key. Writes scale out. Costs: queries that span shards are slow or impossible, joins and transactions across shards are hard, hot shards appear if the key is uneven, and rebalancing is complex.
+
+Caching and replicas usually come before vertical scaling only when the load is read-heavy and cheap to cache; in practice teams interleave steps 2 to 4. Denormalisation (storing copies to avoid joins) also helps reads, at the cost of keeping copies in sync.
+
+%%flow The order to try things when a relational database struggles: cheapest first.
+Tune queries -> Cache -> Bigger machine -> Read replicas -> Split by domain -> *Shard
+%%
+
+%%flow Read replicas: writes go to the primary, reads spread across replicas that lag slightly behind.
+Writes -> *Primary -(stream WAL)-> Replica 1, 2, 3 -(serve)-> Reads (may be stale)
+%%
+
+## Case study: Notion shards Postgres
+Notion ran on one Postgres database for five years and four orders of magnitude of growth. By mid-2020, CPU spikes paged on-call engineers, schema changes were unsafe, vacuum was stalling and transaction ID wraparound loomed.
+
+Decisions:
+- **Application-level sharding**, rather than Citus or Vitess, to keep control over data placement.
+- **Shard everything reachable from a block** by foreign key, so related data stays together and transactions still work.
+- **Partition key: workspace ID.** Every block belongs to exactly one workspace and users work within one workspace at a time, so cross-shard queries are rare.
+- **480 logical shards on 32 physical databases** (15 each). 480 has many factors, so hosts can grow 32 → 40 → 48 with even distribution. 512 would only divide evenly by powers of two. Each logical shard is a Postgres schema.
+
+Migration:
+1. **Double-write** via an audit log and a catch-up script (direct dual writes were flaky; logical replication could not keep up).
+2. **Backfill** existing data, about three days on a 96-vCPU machine, skipping records with newer versions.
+3. **Verify** by sampling and with "dark reads" from both systems, comparing results. Different engineers wrote migration and verification code.
+4. **Switch over** in about a five-minute maintenance window.
+
+Lessons: shard earlier, before the old database is too strained to absorb migration load.
+
+! Example: a social app at 50k QPS
+! 95% of traffic is reads of profiles and posts. Step 1: EXPLAIN finds a missing index on posts(user_id, created_at), and p99 drops by half. Step 2: cache profiles and post bodies in Redis, removing 80% of database reads. Step 3: add two read replicas for the remaining reads. Writes at 2,500 per second fit on one large primary, so sharding waits until write volume or data size demands it, and the plan for it (shard by user_id) is written down now.
+
+> Takeaway: tune, cache, scale up and add replicas before sharding. When you shard, pick a key that keeps related data and common queries on one shard, and use many logical shards so you can move them later.
+
+?? First tune queries and indexes, then cache hot reads, then scale vertically and add read replicas (the order of these middle steps depends on the workload, read-heavy loads favour cache and replicas). Shard last, only when write volume or data size outgrows one primary, because sharding adds cross-shard query, rebalancing and operational complexity.
+
+@03.11
+## Why CREATE INDEX can take a site down
+The Postgres docs explain that a normal `CREATE INDEX` locks the table against writes for the whole build. Reads still work, but every `INSERT`, `UPDATE` and `DELETE` waits. On a big table, building the index can take minutes or hours. On a busy table, even a short build is a problem: requests pile up waiting for the lock, connection pools fill, timeouts cascade, and the application is effectively down.
+
+There is a second trap, true of any lock-taking DDL. A request for a strong lock waits for current transactions to finish, and while it waits, new queries queue behind it. A single long-running query can therefore turn a quick schema change into an outage. Setting a short `lock_timeout` on migrations makes them fail fast instead.
+
+%%flow A plain CREATE INDEX blocks writes for the whole build; queued writes then pile up behind it.
+CREATE INDEX starts -(holds lock)-> *Writes blocked for minutes -> Request queue grows -> Timeouts
+%%
+
+## CREATE INDEX CONCURRENTLY
+`CREATE INDEX CONCURRENTLY` builds the index without blocking writes. It works in phases:
+1. Add the index to the catalog marked **invalid**, so queries ignore it but new writes start maintaining it.
+2. Wait for transactions that might have modified the table, then scan the table and build the index.
+3. Wait again, then do a second scan to catch rows changed during the first.
+4. Wait for older snapshots to finish, then mark the index **valid**.
+
+The costs:
+- Two table scans and more total work, so it takes significantly longer and adds CPU and I/O load.
+- It waits for existing transactions, so a long-running transaction stalls it.
+- It cannot run inside a transaction block, which matters for migration tools that wrap everything in one.
+- Only one concurrent build per table at a time.
+
+%%flow CREATE INDEX CONCURRENTLY builds in passes so writes keep flowing; it takes longer and can fail, leaving an INVALID index.
+Pass 1: build from snapshot -> Pass 2: catch up changes -> Wait for old transactions -> *Index VALID
+%%
+
+## When it fails
+If the build fails (a deadlock, or duplicate values for a unique index), it leaves an **INVALID** index behind. Queries ignore it, but writes still pay to maintain it. You must drop it and retry, or `REINDEX INDEX CONCURRENTLY`. For unique indexes, uniqueness is enforced from the second scan onward, so other transactions can see unique violations even before the index is usable, and even if the build then fails.
+
+## The general lesson: online schema changes
+Every schema change on a large, busy table needs a plan:
+- Know which lock each statement takes. Adding a nullable column without a default is a quick catalog change; some operations rewrite the whole table.
+- Use concurrent or online variants where they exist (`CONCURRENTLY` in Postgres; gh-ost or pt-online-schema-change for MySQL, which copy the table in the background).
+- Run during low traffic, with `lock_timeout` and monitoring.
+- Partitioned tables need the concurrent build on each partition, then a quick metadata-only parent index.
+
+! Example: adding an index to orders
+! The orders table has 400 million rows and 3,000 writes per second. Plain CREATE INDEX would block writes for perhaps 40 minutes. The team runs CREATE INDEX CONCURRENTLY orders_customer_idx ON orders (customer_id) outside a transaction, with statement_timeout disabled. It takes 90 minutes with writes flowing. They then check pg_index for indisvalid; if the build failed, they drop the invalid index and retry.
+
+> Takeaway: plain CREATE INDEX blocks writes for the whole build. Use CONCURRENTLY on live tables, accept that it is slower, and check for and clean up invalid indexes if it fails.
+
+?? A normal CREATE INDEX blocks every insert, update and delete on the table until the build finishes, which can take minutes or hours on a large table. Writes queue behind the lock, connection pools fill and requests time out, so the application goes down. CREATE INDEX CONCURRENTLY avoids the write lock at the cost of a slower build.
+
+@03.12
+## Code and schema must change in steps
+In production, you cannot change the schema and all running code at the same instant. During a deploy, old and new versions of the application run side by side, and caches, queues and replicas may still hold old data. So every change must be safe for both versions at once. The trick is to break one breaking change into several compatible ones.
+
+## Stripe's four-phase pattern
+Stripe's "Online migrations at scale" post moved hundreds of millions of subscriptions out of a field on the customer record into their own table, with no downtime. (At one second per object, a naive serial migration of 100 million would take over three years.)
+1. **Dual write**: write every change to both the old and new places. Backfill existing data. Stripe found which records needed copying by running jobs on Hadoop over database snapshots, so the search did not load production, then copied them with a parallel worker fleet.
+2. **Change reads**: switch reads to the new place. Stripe used GitHub's Scientist library to read from both, compare results and alert on mismatches, without affecting users.
+3. **Change writes**: make the new place the source of truth, writing to it first. This was the hardest phase: subscription logic spanned thousands of lines and several services. They made old access paths raise errors so stragglers surfaced.
+4. **Remove old data and code.**
+
+Each step is small (a few hundred lines) and can be rolled back.
+
+%%flow Stripe's four phases: each is small and reversible.
+Dual write + backfill -> Read from new (compare) -> Write new first -> *Remove old
+%%
+
+## Renaming a column with zero downtime
+A rename is the classic case. `ALTER TABLE ... RENAME COLUMN` is instant in the database, but every running app server still uses the old name and breaks. Instead:
+1. Add the new column (nullable, no default, so it is a fast change).
+2. Deploy code that writes both columns and still reads the old one.
+3. Backfill: copy old values into the new column in small batches.
+4. Deploy code that reads the new column (still writing both). Verify.
+5. Deploy code that stops writing the old column.
+6. Drop the old column.
+
+%%flow Renaming a column with no downtime: add, write both, backfill, switch reads, then drop.
+Add new column -> Write both -> Backfill -> Read new -> Stop writing old -> *Drop old
+%%
+
+## Evolving serialised data
+The same thinking applies to data in queues, caches and files. Martin Kleppmann compares Thrift, Protocol Buffers and Avro:
+- **Protocol Buffers and Thrift** store a numeric tag with each field, not its name. His example record is 33 bytes in protobuf versus 82 bytes as JSON. You can add fields with new tag numbers, remove optional fields, and rename fields freely (names are not in the data). You must never reuse a removed tag or change a tag's meaning. Marking fields `required` makes evolution risky.
+- **Avro** stores no tags (32 bytes for the same record). The reader resolves data using both the writer's schema and its own, matching fields by name. New fields need defaults; renames go through aliases. The writer's schema must be available, through a file header or a schema registry.
+
+These are the same rules as in 02.08: additive, optional changes are safe; changing meaning or reusing identifiers is not.
+
+## Practical guardrails
+- Separate schema migrations from code deploys; ship them in the safe order (expand first, contract last).
+- Make backfills batched, throttled and resumable.
+- Read from both and compare before switching.
+- Keep each step reversible until the final cleanup.
+
+! Example: splitting name into first_name and last_name
+! Add first_name and last_name (nullable). Deploy writes to all three columns. Backfill by splitting existing names in batches of 1,000 rows. Compare reads for a week. Switch reads to the new columns. Stop writing name. Two weeks later, drop name.
+
+> Takeaway: never make a breaking change in one step. Expand (add and dual write), migrate (backfill and switch reads), then contract (stop old writes and drop).
+
+?? 1) Add the new column. 2) Deploy code that writes both old and new columns, reading the old. 3) Backfill old values into the new column in batches. 4) Switch reads to the new column and verify. 5) Stop writing the old column. 6) Drop the old column.
+
+@03.13
+## The appeal
+Soft deletion means never running `DELETE`. Instead you set `deleted_at = now()` and treat rows with a timestamp as gone. Undeleting is setting it back to null. It feels safer: a hard delete is permanent, and support staff can inspect deleted data when investigating a bug.
+
+Brandur Leach's post "Soft deletion probably isn't worth it", drawing on experience at Heroku and Stripe, argues the costs usually outweigh this.
+
+%%flow Soft delete: a flag hides the row, but every query must remember to filter it.
+DELETE -(becomes)-> UPDATE deleted_at = now() -> *Every query: WHERE deleted_at IS NULL
+%%
+
+## What goes wrong
+- **Every query must remember the filter.** Each query needs `WHERE deleted_at IS NULL`. Miss it once, in a report, an admin tool or a hand-written query, and deleted data shows up where it should not. ORM plugins add the filter automatically, but people querying the database directly forget.
+- **Foreign keys stop protecting you.** A soft-deleted customer still exists as a row, so the database is happy for its invoices to stay "live" under a deleted parent. Nothing enforces that children are soft-deleted too.
+- **Unique constraints break** (the post does not cover this; it is a well-known consequence). A user deletes their account and signs up again with the same email, and the unique index on email rejects it, because the deleted row still holds that email. The usual fix is a partial unique index: `CREATE UNIQUE INDEX ON users (email) WHERE deleted_at IS NULL`. Every unique constraint needs that treatment.
+- **Indexes and tables fill with dead data**, slowing queries unless indexes are partial too.
+- **You still have to hard-delete eventually.** Privacy laws like GDPR discourage keeping data forever. Purging soft-deleted rows means deleting their dependents first, across dozens of tables. Brandur's purge query touched about 30 tables and could break whenever someone added a new reference.
+- **Undelete rarely works anyway.** Deleting usually has side effects outside the database: files removed, external services called, servers stopped. Flipping `deleted_at` back does not undo those. In over ten years across three companies, Brandur saw undelete used almost never.
+
+## The alternative: an archive table
+Delete rows for real, and copy them into a generic `deleted_record` table first:
+- Columns like `id`, `deleted_at`, `original_table`, `original_id`, and `data` (the full row as JSONB).
+- One statement does both: `DELETE ... RETURNING *` feeding an `INSERT` of `to_jsonb(...)`. A trigger can do the same.
+
+Benefits: normal queries need no filter, foreign keys work again (deleting a parent with children is an error, as it should be), and purging old data is one statement on one table. The cost: restoring from JSON takes manual work, which is acceptable because it is rare.
+
+%%flow The alternative: move deleted rows to an archive table so the live table stays clean.
+DELETE row -(trigger or same tx)-> *archive table (JSON copy, deleted_at) -> Live table has only real rows
+%%
+
+## When soft delete is still reasonable
+- A real product feature like a trash bin with restore, where the business wants it and the side effects are reversible.
+- Small, simple tables where the filter is applied in one place (a view or a default scope).
+
+Even then, use partial unique indexes and a scheduled purge.
+
+! Example: users table with soft delete
+! Problem: unique(email) blocks re-signup. Fix: CREATE UNIQUE INDEX users_email_live ON users (email) WHERE deleted_at IS NULL.
+! Problem: SELECT count(*) FROM users in a dashboard includes deleted users. Fix: a view live_users that applies the filter, and all reads use it.
+! Problem: GDPR erasure requests. Fix: a nightly job hard-deletes rows deleted more than 30 days ago, after deleting their dependents.
+
+> Takeaway: soft delete looks safe but leaks deleted data into queries, breaks foreign keys and unique constraints, and complicates purging. Prefer real deletes plus an archive table.
+
+?? Unique constraints still see soft-deleted rows, so a deleted email or username cannot be reused unless you switch to partial unique indexes WHERE deleted_at IS NULL. Every query must remember to filter deleted_at IS NULL, or deleted data leaks into results and counts. Foreign keys no longer stop live children pointing at deleted parents.

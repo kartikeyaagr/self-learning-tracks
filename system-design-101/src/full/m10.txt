@@ -1,0 +1,604 @@
+@10.01
+## Why counting gets hard
+Counting looks trivial: `UPDATE videos SET views = views + 1 WHERE id = 42`. At small scale it is. Hello Interview's *Top-K videos* breakdown sizes the real problem: YouTube-scale traffic of 70 billion views a day is about **700,000 increments per second** (70B divided by roughly 100,000 seconds in a day). It notes that a well-tuned relational database node handles on the order of 10,000 writes per second, so a design where every view becomes a database write fails by almost two orders of magnitude.
+
+The question asks why even 50,000 increments per second on **one row** falls over. The reasons stack up:
+- **Row lock contention.** Every `UPDATE` of the row takes an exclusive lock on it until the transaction commits. All 50,000 writers queue on one lock, so throughput is limited to how fast one transaction after another can commit, no matter how many CPU cores or replicas you add.
+- **Durable commit per write.** Each commit appends to the write-ahead log and usually waits for it to reach disk. Group commit helps, but one hot row still serialises.
+- **Replication and MVCC overhead.** Each update creates a new row version (in Postgres) and a log record that every replica must also apply.
+- **No way to shard one row.** Partitioning spreads different keys across machines; a single key always lands on one machine.
+
+%%flow A single counter row serialises every writer on one lock.
+Writers 1..50,000 -(UPDATE views + 1)-> *Row lock on video 42 -(one at a time)-> WAL fsync -> Commit
+%%
+
+## Fix 1: count in memory with Redis INCR
+The Redis docs describe `INCR key`: increment the integer stored at a key by one and return the new value. If the key doesn't exist it starts at 0. It is **O(1)**, works on 64-bit signed integers, and because Redis runs commands one at a time, concurrent increments never lose updates. With no disk wait per increment, one Redis node can absorb far more increments than a database row (in practice on the order of 100,000 simple commands per second per core; this figure is general knowledge, not from the INCR page). `INCRBY key n` adds n in one step, which matters for batching.
+
+The catch: Redis is memory-first. If the counter must survive a crash exactly, you need persistence (AOF) or a periodic flush to a database, and a single hot key is still one Redis node.
+
+## Fix 2: split the counter
+A **sharded counter** stores N sub-counters for one logical counter (`views:42:0` to `views:42:15`). Each write picks a random sub-counter; a read sums all N. Writes spread across N rows or N nodes; reads cost N lookups, which is fine when reads are rarer than writes or cached.
+
+%%flow A sharded counter: writes pick a random slot, reads add up all slots.
+[Write] View event -(random slot 0..15)-> *views:42:7 += 1
+[Read] Read count -(sum 16 slots)-> views:42 = total
+%%
+
+## Fix 3: batch before writing
+The biggest win is to stop doing one write per event. Hello Interview's design puts view events onto **Kafka, partitioned by video ID**, and has a stream processor (Flink) or consumer aggregate counts in memory per video for a short window, then flush one write such as `views += 3,812`. It notes that bulk writes reduce write volume by roughly **2 to 100 times**, and that batching is also the answer to hot keys: a viral video's thousands of views per second become one write per flush. Sharding the database by video ID (it estimates about 70 shards to bring 700k TPS down to about 10k per instance) handles the rest.
+
+%%flow Batching: Kafka partitions by video, a consumer sums in memory, the database sees one write per video per flush.
+View events -(partition by video id)-> Kafka -> *Consumer sums per video for 5 s -(views += 3,812)-> Counter DB, sharded by video
+%%
+
+The trade-off is freshness: counts lag by the flush interval, and if the consumer crashes before flushing, Kafka offsets let it replay the uncounted events (lesson 10.03 covers duplicates).
+
+! Example: a viral video
+! Video 42 gets 40,000 views per second. Direct writes: 40,000 row-lock acquisitions per second on one row; the database stalls. With batching: the Kafka partition for video 42 feeds one consumer, which adds to an in-memory counter and every 5 seconds runs `UPDATE ... SET views = views + 200000`: one write per 5 seconds. The displayed count is up to 5 seconds stale, which nobody notices.
+
+> Takeaway: one counter row serialises every increment on a single lock and a durable commit, so it tops out far below 50,000 per second. Count in memory (Redis INCR), split hot counters into sub-counters, and above all batch increments in a stream consumer so the database sees one write per key per interval.
+
+?? Every increment must lock the same row and commit durably, so all writers queue on one lock and one log flush; adding CPUs or replicas doesn't help, and a single row can't be partitioned. Throughput is capped by serial commits, typically thousands per second. The fixes are to aggregate in memory (Redis INCR, or a stream consumer that sums per key and flushes periodically) and to split a hot counter into several sub-counters that are summed on read.
+
+@10.02
+## Reddit's requirements
+Reddit's engineering post *View Counting at Reddit* (read through the Internet Archive, since the original URL now redirects to Reddit's news page) sets out four requirements:
+1. Counts must be **real time** or near real time, not daily or hourly batches.
+2. **Each user is counted once** within a short time window, so refreshing doesn't inflate views.
+3. The displayed count must be **within a few percent** of the actual tally.
+4. The system must run at production scale and process events within seconds.
+
+Requirement 2 is what makes it hard. A simple counter can't tell a new viewer from a returning one; you need to remember who has already viewed each post.
+
+## Why exact counts were rejected
+An exact unique count needs the set of user IDs that viewed each post, checked on every view. Reddit's numbers: popular posts have over a million unique viewers, and at 8 bytes per user ID, **1 million IDs take 8 MB for a single post**. Multiply by thousands of active posts, and add the CPU cost of set lookups at view rate, and it became "extremely taxing" on memory and CPU.
+
+**HyperLogLog** (lesson 10.04) estimates the number of distinct items with a fixed small amount of memory. Reddit uses Redis's implementation, which counts over a million IDs in **12 KB**, about 0.15% of the exact set's 8 MB. The price is a small error (Redis's standard error is 0.81%), well inside the "few percent" requirement.
+
+%%flow Memory per popular post: the exact set grows with viewers; HyperLogLog stays fixed.
+[Exact] 1M viewers x 8 bytes -> *8 MB per post
+[HLL] 1M viewers -(16,384 registers)-> *12 KB per post, about 1% error
+%%
+
+## The pipeline
+%%flow Reddit's view-counting pipeline: Nazar decides whether a view counts, Abacus adds it to a HyperLogLog in Redis, Cassandra persists it.
+View event -> Event collector -(batches)-> Kafka -> *Nazar: should it count? -(flagged event)-> Kafka -> Abacus -(PFADD)-> Redis HLL -(every 10 s)-> Cassandra
+%%
+
+- **Event collector**: browsers fire a view event; the collector batches events into Kafka.
+- **Nazar** (a Kafka consumer) applies rules about whether the view should count, using Redis to keep state, for example ignoring **repeat views from the same user within a short period**. It adds a boolean "count this" flag and writes the event back to Kafka.
+- **Abacus** (a second consumer) reads Nazar's output. For counted views it runs `PFADD` on the post's HLL in Redis. If the post's HLL isn't in Redis (typically an older post whose key was evicted), it loads the saved HLL from Cassandra into Redis first.
+- **Cassandra** persists both the HLL and the count. Abacus writes them out in batches, **grouped per post every 10 seconds**.
+
+Reddit also mentions evaluating linear probabilistic counting versus HLL and choosing an HLL variant that uses a **sparse** representation (accurate, small) for small sets and switches to the **dense** HLL as the set grows, so small posts are counted precisely and cheaply.
+
+## Why approximate was acceptable
+The answer to the question is product judgment: a view count is a signal of popularity shown to users, not money. Nobody can tell 1,004,213 views from 1,012,000. Being within a few percent while using about 0.15% of the memory and staying real time was a better outcome than exact counts that would have needed huge memory or slow batch jobs. Contrast this with ad billing (10.03), where every click is money and approximations are not acceptable.
+
+! Example: one user refreshing
+! User u7 opens post p1 at 12:00:00 and refreshes at 12:00:20. Nazar sees the second event, finds in Redis that u7 viewed p1 20 seconds ago, and flags it "don't count". Abacus skips it. Even if it were counted, `PFADD p1 u7` a second time would not change the HLL, because HLL counts distinct values; the time-window rule matters for policies such as counting a user again after some hours.
+
+> Takeaway: Reddit needed real-time unique-viewer counts. An exact set of 1 million IDs costs 8 MB per post; a Redis HyperLogLog counts the same in 12 KB within about 1%. A Kafka pipeline decides which views count (Nazar), adds them to HLLs in Redis (Abacus), and persists to Cassandra every 10 seconds.
+
+?? Exact unique counts require storing every viewer ID per post and checking it on every view; for posts with over a million viewers that is about 8 MB each plus heavy CPU, which didn't scale in real time. A HyperLogLog gives a count within about 1% using 12 KB, and a view count only needs to be accurate to a few percent because it is a popularity signal, not a billing figure.
+
+@10.03
+## Why duplicates are the central problem
+For ads, counts are money: advertisers pay per click or per thousand impressions, so both over-counting (advertisers overcharged) and under-counting (revenue lost) are unacceptable. Hello Interview's *Ad click aggregator* breakdown lists **idempotent click tracking** ("should not count the same click multiple times") as a non-functional requirement, alongside no data loss, a peak of **10,000 clicks per second** across 10 million active ads (about 100 million clicks per day), and minute-granularity queries.
+
+Duplicates come from:
+- **Client retries**: the browser or app re-sends after a timeout, even though the first request arrived.
+- **Pipeline retries**: a consumer processes an event, crashes before committing its Kafka offset, and processes it again after restart.
+- **Abuse**: users or bots clicking the same ad repeatedly.
+
+## Give every impression an ID
+Hello Interview's design has the **ad placement service** generate a unique **impression ID** each time an ad is shown to a user. That ID is the idempotency key for everything downstream. A click carries its impression ID, so "the same click" has a precise definition: two clicks with the same impression ID.
+
+To stop clients from inventing IDs (each fake ID would look like a new click), the impression ID is **signed** with an HMAC over the impression ID and ad ID, using a server-side secret. The click processor verifies the signature before accepting a click.
+
+## Deduplicate on the way in
+%%seq Dedupe at the click processor: verify the signature, check the impression ID in a cache, write to the stream first, then remember the ID.
+Browser > Click processor : click(ad 9, imp 7f3, sig)
+Click processor > Click processor : verify HMAC
+Click processor > Redis : seen imp 7f3?
+Redis -> Click processor : no
+Click processor > Kafka : append click event
+Click processor > Redis : SET imp 7f3 (TTL)
+Click processor -> Browser : 302 to advertiser
+%%
+
+The order matters. The processor writes to the stream **first** and records the ID in the dedupe cache second. If it crashes between the two, the click is not lost; at worst, a retry produces a duplicate, which is caught later. The reverse order could mark a click as seen and then lose it. Hello Interview uses a distributed cache such as a Redis cluster for seen IDs, with a TTL long enough to cover realistic retry windows.
+
+## Exactly-once inside the pipeline
+The stream processor (Flink) counts clicks per ad per minute. Flink's checkpoints store both the window state and the Kafka offsets together, so after a crash it rewinds to the last checkpoint and reprocesses from those offsets without double-counting in its state. Writes to the analytics store should then be **idempotent**: write "ad 9, minute 12:03 = 418" (an upsert keyed by ad and minute) rather than "add 1 to ad 9", so writing the same result twice is harmless.
+
+%%flow End-to-end: one ID per impression, dedupe on ingest, checkpointed aggregation, idempotent upserts, and a batch job that reconciles.
+Impression ID, signed -> *Dedupe cache -(new clicks only)-> Kafka -(Flink, checkpointed)-> Per-minute upsert -> OLAP store
+%%
+
+## Reconcile with raw data
+Hello Interview adds a safety net: Kafka also dumps all raw click events to a data lake (S3), and a **daily batch job** (for example in Spark) recomputes the aggregates from the raw events, deduplicating by impression ID, and compares them with what the streaming path produced. Differences are corrected. This is the Lambda-style "batch layer checks the speed layer" idea from lesson 10.07.
+
+It also covers **hot ads**: a hugely popular ad's clicks all land on one Kafka partition, so the partition key becomes `adId:N` with a random suffix N; Flink strips the suffix and sums partial counts for the ad.
+
+! Example: a retried click
+! The user clicks ad 9 on a slow network. The click with impression 7f3 reaches the processor, which writes it to Kafka, records 7f3 in Redis and responds, but the response is lost. The browser retries. The processor verifies the signature, finds 7f3 in Redis and redirects without writing a second event. If Redis had been down at the first click, both events would reach Kafka; the nightly job, grouping by impression ID, would find two events for 7f3 and correct the count.
+
+> Takeaway: give each impression a unique, signed ID and treat it as the idempotency key. Dedupe clicks against a cache of seen IDs (write to the stream first, then mark the ID), use checkpointed stream processing and idempotent upserts, and reconcile against raw events with a periodic batch job.
+
+?? Attach a unique impression ID (signed so clients can't forge new ones) to every ad shown and make it the idempotency key. The ingest service checks the ID against a cache of recently seen IDs and drops repeats, writing the event to the stream before marking the ID so nothing is lost. The stream processor uses checkpoints tied to Kafka offsets and writes results as idempotent upserts keyed by ad and minute, and a batch job over raw events deduplicates by impression ID to catch anything the real-time path missed.
+
+@10.04
+## The problem: count distinct without remembering
+"How many distinct users visited today?" An exact answer needs a set of every user seen, which grows with the answer: a billion users need gigabytes. **HyperLogLog** (HLL) answers within about 1% using a fixed 12 KB, however large the count.
+
+## The coin-flip intuition
+Antirez (Salvatore Sanfilippo, Redis's author) explains it with coins. Flip a coin repeatedly and note your longest run of heads. If someone tells you their longest run was 3, they probably didn't flip many times; if it was 13, they must have flipped a lot, because a run of 13 heads has probability 1 in 8,192.
+
+HLL applies this to hashes. Hash each item to a uniform random bit string. Look at the number of **leading zeros**:
+- Half of all hashes start with 1 (0 leading zeros).
+- A quarter start with 01 (1 leading zero).
+- One in 2ᵏ⁺¹ start with k zeros followed by a 1.
+
+So if the longest run of leading zeros you have seen is r, you have probably seen around 2ʳ **distinct** items. Duplicates don't matter: the same item always hashes to the same string, so it can never extend the maximum. That is why this counts distinct items rather than events.
+
+%%flow Leading zeros as a counter: each extra zero is half as likely, so the longest run seen estimates about 2 to the power r distinct items.
+Hash starts 1...: 1 in 2 -> 01...: 1 in 4 -> 001...: 1 in 8 -> *0000000001...: 1 in 1,024, so about 1,000 seen
+%%
+
+## Registers and averaging
+One maximum is noisy: a single lucky hash with 20 zeros would claim a million items. Antirez's fix is "multiple coins". HLL splits the hash into two parts:
+- The first p bits choose one of m = 2ᵖ **registers** (buckets).
+- The rest of the bits are scanned for leading zeros, and the register keeps the **maximum** seen.
+
+Each register estimates the count of its own share of the items, and the registers are combined with a **harmonic mean**, which limits the influence of the occasional extreme register. The standard error is **1.04 / √m**.
+
+%%flow Each item updates one register: the first 14 bits pick the register, the remaining bits give the leading-zero count.
+Item user:812 -(64-bit hash)-> First 14 bits: register 9,301 -(rest: 5 leading zeros)-> *register 9,301 = max(old, 6)
+%%
+
+## Redis's implementation
+Antirez gives the numbers for Redis (since 2.8.9):
+- **16,384 registers** (14 bits of a 64-bit hash pick the register; 50 bits remain).
+- Each register is **6 bits**, enough to store a run of up to 63 zeros.
+- 16,384 × 6 bits = **12 KB** per HLL (12,296 bytes including an 8-byte cached result).
+- Standard error **0.81%** (1.04 / √16384).
+- Commands: `PFADD key item...` (returns 1 if a register changed), `PFCOUNT key` (estimate), and `PFMERGE dest src...`, which takes the **per-register maximum** across HLLs.
+- `PFCOUNT` caches its last result and recomputes only if a register changed.
+
+HLL's raw estimate is biased for small counts, below about 2.5 × m (about 40,000 for Redis). The original algorithm switches to **linear counting** (estimating from how many registers are still zero) there. Antirez describes correcting the remaining bias with a polynomial fitted to measurements, between about 40,960 and 72,000.
+
+## HyperLogLog in practice
+Google's paper *HyperLogLog in Practice* (Heule, Nunkesser and Hall) describes improvements made for a Google system that, its abstract says, reduce memory and significantly improve accuracy for an important range of cardinalities, while still running in a single pass and parallelising perfectly. I could only reach the abstract; the specifics usually attributed to it (a 64-bit hash, empirical bias correction, and a sparse representation for small sets) come from general knowledge. Redis's design follows the same ideas.
+
+! Example: daily unique visitors
+! `PFADD uv:2026-11-09 user:1 user:2 user:1` → registers updated for user:1 and user:2; the repeat of user:1 changes nothing. After 3 million visits by 1.2 million distinct users, `PFCOUNT uv:2026-11-09` returns about 1,190,000 to 1,210,000. The key is 12 KB. A set of 1.2 million 8-byte IDs would be about 10 MB before overhead.
+
+> Takeaway: HyperLogLog hashes each item and records, in each of m registers, the longest run of leading zeros; seeing a run of r zeros suggests about 2ʳ distinct items. Averaging many registers with a harmonic mean gives an error of 1.04/√m: in Redis, 0.81% with 16,384 registers in 12 KB.
+
+?? With a uniform hash, a run of k leading zeros occurs with probability 1 in 2ᵏ⁺¹, so a long run only becomes likely after many distinct items have been hashed; seeing a maximum run of r suggests about 2ʳ items. Duplicates hash identically and can't raise the maximum, so the estimate counts distinct items. Because one maximum is noisy, HLL keeps many registers for different subsets of hashes and combines them with a harmonic mean.
+
+@10.05
+## Distinct counts don't add
+Apache DataSketches' background page, *The Challenge*, states the core problem: **unique counts are not additive**. If the apps site had 3 million unique visitors and the music site 2 million, the total is not 5 million, because people who visited both are counted twice. The same holds across time: Monday's unique users plus Tuesday's unique users is not the two-day unique count.
+
+To answer exactly, the page explains, you must keep **a copy of every unique item** seen: a site with a billion users a day needs a billion records on hand. Quantile queries (10.11) are worse, needing every value seen, sorted. So exact distinct counting can't be parallelised by computing partial counts and adding them: the partial counts have thrown away the information needed to remove the overlap.
+
+%%flow Why exact counts don't merge: the overlap is invisible once each server has reduced its users to a number.
+Server A: 3M uniques -(add)-> 5M? -(but 1M users hit both)-> *True answer: 4M
+%%
+
+## Sketches keep enough to merge
+DataSketches describes **sketches** as small data structures, usually kilobytes, built by streaming algorithms that see each item once and answer queries approximately with mathematically proven error bounds. The key property is that they are **mergeable**: input can be split into many fragments, each summarised by its own sketch, and the sketches combined quickly into a sketch of the whole. The merged sketch is the same as (or as good as) one built from all the data in one place.
+
+For HyperLogLog, merging is simple: take the **maximum of each register** across sketches (Redis's `PFMERGE`). A user who appears on two servers sets the same register to the same value on both, so the max doesn't double-count them. That is why 100 servers' HLLs can be merged and their exact counts can't: the HLL still encodes which hashes were seen (in compressed form), while a plain number doesn't.
+
+%%flow Merging sketches: per-server sketches combine into one global sketch, which is then queried.
+Server 1 HLL, Server 2 HLL, ... Server 100 HLL -(register-wise max)-> *Global HLL -(PFCOUNT)-> Global distinct count
+%%
+
+## What this enables
+- **Parallel processing**: each worker sketches its shard of data; a reducer merges.
+- **Rollups over time**: store one sketch per minute or hour. To answer "unique users this week", merge 168 hourly sketches. The DataSketches page describes a system (Flurry) storing 1-minute sketches that reporting servers query every 15 seconds, and reports **theta sketch merge speeds of 10 to 20 million sketches per second** on real data.
+- **Rollups over dimensions**: one sketch per (country, device, day) combination can answer any coarser grouping by merging.
+- **Set expressions**: DataSketches' **Theta sketches** support union, intersection and difference, returning sketches rather than numbers, so expressions like ((A ∪ B) ∩ (C ∪ D)) \ (E ∪ F) work. "Users who used search and checkout but not support" becomes a sketch calculation. Intersections have larger relative error when the overlap is small.
+
+## Sketch families
+DataSketches includes several families (I list the names from general familiarity with the library, since the pages I read cover the principles):
+- **Distinct counting**: HLL, CPC, Theta (set operations).
+- **Quantiles**: KLL and others; t-digest (10.11) is a separate project with the same mergeable idea.
+- **Frequent items**: heavy-hitter summaries (10.09).
+- **Sampling**: reservoir samples (10.10), also mergeable.
+
+This is how OLAP stores such as Druid and Pinot answer "count distinct" over billions of rows interactively: they store pre-aggregated sketches in each segment and merge them at query time.
+
+! Example: weekly actives from daily sketches
+! Each day, each of 100 app servers keeps an HLL of user IDs. At midnight, the 100 sketches are merged into one daily sketch (12 KB) and stored. For "weekly actives", merge 7 daily sketches: 84 KB read, one merge, answer within about 1%. Storing daily counts instead (say 4.1M, 4.3M, ...) could never produce the weekly figure, because most users appear on several days.
+
+> Takeaway: distinct counts aren't additive because the overlap is lost once you have a number. Sketches such as HyperLogLog keep a compact summary that can be merged (HLL by register-wise max), so partial sketches from servers, time buckets or dimensions combine into an accurate total.
+
+?? An exact distinct count is just a number; adding numbers from 100 servers counts every user seen on several servers multiple times, and the information needed to remove the overlap is gone. An HLL sketch keeps, for each register, the longest leading-zero run of the hashes it saw; the same user produces the same hash on every server, so taking the register-wise maximum across sketches yields exactly the sketch you would have built from all the data, with no double counting.
+
+@10.06
+## Windows turn a stream into finite answers
+A stream never ends, so "how many clicks?" needs a time range. The Flink documentation describes **windows** as splitting the stream into finite buckets over which you compute. Flink's built-in window types:
+
+| Window | Definition | Typical use |
+|---|---|---|
+| **Tumbling** | Fixed size, no overlap, e.g. every 5 seconds | Per-minute counts, hourly reports |
+| **Sliding** | Fixed size, a new window every *slide*; overlap when slide < size, e.g. 10 s every 5 s | "Last hour, updated every minute" |
+| **Session** | Closes after a gap of inactivity, e.g. 10 minutes | User sessions |
+| **Global** | All elements of a key in one window; needs a custom trigger | Count-based or custom logic |
+
+Tumbling windows can take an offset (Flink's example: daily windows offset by −8 hours to align with a time zone).
+
+## Sliding windows: the naive cost
+With a sliding window of size 1 hour and slide 1 minute, each event belongs to **60** windows at once (every window whose hour covers it). Flink's documentation notes that elements are assigned to every overlapping window. Computing each window from scratch would mean processing every event 60 times.
+
+## The bucketed approach
+The efficient answer to "clicks in the last hour, updated every minute" is to aggregate once into small **buckets** and combine buckets:
+1. Keep a count per **1-minute tumbling bucket**.
+2. Keep the last **60 buckets** (a ring buffer).
+3. The hourly total is the sum of the 60 buckets. Even better, keep a running total: when a new minute closes, **add the new bucket and subtract the bucket that fell out**. Hello Interview's top-K breakdown describes exactly this for sliding windows: increase by the most recent minute's views and decrease by the views from 60 minutes ago.
+
+%%flow A sliding hour from 60 one-minute buckets: each minute, add the newest bucket and subtract the one that expired.
+Minute 12:01 .. 13:00 buckets -(new minute 13:01 closes)-> *Total + bucket 13:01 - bucket 12:01 -> Updated hourly count
+%%
+
+So the answer to the question is **60 buckets** (plus perhaps one in progress), with resolution equal to the update interval. Finer buckets give smoother windows but more state; coarser buckets save memory. For long windows, use a hierarchy: 60 minute-buckets, 24 hour-buckets, 30 day-buckets, rolling the small ones up into larger ones.
+
+## Aggregate incrementally
+Flink offers two styles of window function:
+- **ReduceFunction / AggregateFunction**: update an accumulator as each element arrives. State is one small value per window (a count, a sum).
+- **ProcessWindowFunction**: buffers **all** elements of the window and processes them when it fires. Flexible but expensive; Flink recommends combining it with an incremental aggregate when possible.
+
+For counts and sums, always aggregate incrementally. This works because counts are additive; for distinct counts, keep a mergeable sketch per bucket (10.05) instead of a number.
+
+## When does a window fire, and what about late events?
+Windows are defined in **event time** (when the click happened), not when it arrived. Flink tracks progress with **watermarks**: a watermark at time t says "no more events older than t are expected". When the watermark passes a window's end, the window fires. Hello Interview's design uses a bounded out-of-orderness watermark of about **30 seconds**.
+
+Events that arrive after the watermark are **late**. Flink's options:
+- **Allowed lateness** (default 0): keep the window state a while longer and re-fire with updated results when late events arrive.
+- **Side output**: send late events to a separate stream for correction or inspection rather than silently dropping them.
+
+%%flow Event time with watermarks: a window fires when the watermark passes its end; stragglers go to allowed lateness or a side output.
+Events out of order -> *Watermark = max seen - 30 s -(passes 12:01:00)-> Fire bucket 12:00 -(late event)-> Re-fire or side output
+%%
+
+! Example: dashboard of clicks per ad, last hour
+! Flink keys clicks by ad ID and counts in 1-minute tumbling windows with an AggregateFunction. Each closed minute is written to Redis as `clicks:ad9:202611091301 = 418`, with a 2-hour TTL. The dashboard keeps a running hourly total per ad: on each new minute, add the newest bucket, subtract the one from 60 minutes ago. Per ad, that is 60 small integers of state.
+
+> Takeaway: aggregate a stream into small tumbling buckets (say, 1 minute) with incremental functions, then build longer or sliding windows by combining buckets: for "last hour, updated each minute", keep 60 buckets and add the newest while subtracting the expired one. Use event time with watermarks, and decide explicitly what happens to late events.
+
+?? Keep 60 one-minute buckets of click counts (plus the one currently filling). Each minute, when the newest bucket closes, add it to a running total and subtract the bucket from 60 minutes ago, so each update is O(1) rather than re-counting the hour. The bucket size sets the update granularity; for distinct counts, store a mergeable sketch per bucket instead of a number.
+
+@10.07
+## The question behind the question
+Once you have tables of per-minute clicks, per-day uniques and top-K lists, why pay to store the raw events too? Two essays answer it.
+
+## Kleppmann: the log is the truth, everything else is derived
+Martin Kleppmann's *Turning the database inside out* looks at four things databases already do: **replication**, **secondary indexes**, **caching** and **materialized views**. In each, something is derived from something else. A replication log turns an imperative update ("set quantity to 3") into an immutable event ("customer X changed quantity of product Y to 3 at time T"). An index is "a data structure derived from table data". His proposal is to make this explicit: treat an append-only **log of immutable facts** (in Kafka, say) as the source of truth, and treat tables, indexes, caches and materialized views as **derived views** computed from it.
+
+%%flow Kleppmann's inverted database: the immutable event log is the source of truth; every table, cache and index is a view derived from it.
+Writes -> *Immutable event log -(derive)-> Tables, Aggregates, Search index, Cache
+%%
+
+The benefits he lists include:
+- **Better data.** Updating in place destroys information. His shopping-cart example: a table only shows what's in the cart now, while the event log also shows items added and later removed, which is valuable for analytics and recommendations. "Accountants don't use erasers."
+- **Recovery and auditing.** If a bug writes bad data, you can see what happened and recompute.
+- **Fully precomputed caches.** Views are maintained from the log, so there are no cold-start misses or invalidation races, since the log fixes the order of writes.
+- **New views without migrations.** A new feature can build a new view by reading the log from the beginning, beside the old one.
+
+## Kreps: reprocessing without two code bases
+Jay Kreps's *Questioning the Lambda Architecture* starts from the **Lambda architecture**: raw immutable data feeds a batch system (Hadoop) and a stream system (Storm) in parallel, the logic is written twice, and results are stitched together at query time. He praises one part of it: "retaining the input data unchanged" and modelling processing as stages derived from an original input, because it makes **reprocessing** possible. Code changes, bugs are fixed, and you need to recompute outputs from inputs.
+
+His criticism is the double implementation: keeping the same logic in sync in two complex distributed systems is "exactly as painful as it seems like it would be", and frameworks that hide both are leaky.
+
+His alternative (later called the **Kappa architecture**) keeps the raw log but uses one processing system:
+1. Keep the full input log in Kafka (for example with 30 days' retention), allowing multiple subscribers.
+2. To reprocess, start a **second instance** of the streaming job reading from the beginning of the log, writing to a **new output table**, with extra parallelism so it catches up quickly.
+3. When it has caught up, switch the application to the new table.
+4. Stop the old job and delete the old table.
+
+%%flow Kreps's reprocessing: replay the retained log through the new code into a new table, then switch readers over.
+[Running] Kafka log -(job v1)-> Table v1 -> App reads
+[Reprocess] Kafka log from offset 0 -(job v2)-> *Table v2 -(caught up: switch)-> App reads v2
+%%
+
+## So why keep raw events?
+Aggregates are lossy: a per-minute count can't tell you per-country counts, distinct users, or which clicks came from a bot you only discovered last week. Keeping raw events lets you:
+- **Fix bugs**: recompute aggregates after correcting logic (or bot filtering).
+- **Answer new questions**: build a new aggregate over past data, not just from today onwards.
+- **Reconcile and audit**: check real-time results against a recomputation (the ad-click design in 10.03).
+- **Backfill new systems**: populate a new store or index from history.
+
+The cost is storage, which is why raw events usually move to cheap object storage (S3, in columnar formats such as Parquet) after the Kafka retention period, with aggregates kept hot for queries.
+
+! Example: a bot filter after the fact
+! On Thursday you learn a click farm inflated ad 9's clicks since Monday. With only per-minute aggregates, the bad clicks are mixed in forever. With raw events in S3, you run the new bot filter over Monday to Thursday, recompute ad 9's per-minute counts into a new table, compare, switch, and issue the advertiser a credit with evidence.
+
+> Takeaway: aggregates are derived and lossy; raw events are the source of truth. Keeping them lets you recompute after bugs, answer new questions over history and reconcile real-time results. Kleppmann frames all tables and caches as views over an immutable log; Kreps shows how to reprocess with one streaming code base by replaying the log into a new table and switching.
+
+?? Aggregated tables throw information away and bake in today's logic. With raw events you can fix a bug or a filter and recompute the aggregates, build new metrics or dimensions over past data, reconcile real-time results with a batch recomputation, and backfill new stores. Following Kreps, you replay the retained log through the new code into a new table and switch over once it catches up.
+
+@10.08
+## What count-min sketch answers
+HyperLogLog counts **distinct** items. Count-min sketch answers a different question: "**how many times** has item x appeared?" for any x, using memory much smaller than one counter per item. Wikipedia credits Graham Cormode and S. Muthukrishnan, who invented it in 2003 (published 2005). Hello Interview's big-data structures page covers it, but that section is behind its paywall, so this lesson uses Wikipedia and the top-K breakdown.
+
+## Structure and operations
+- A 2D array of counters with **d rows** and **w columns**, all starting at 0.
+- Each row has its own hash function hⱼ mapping items to a column.
+- **Update(x)**: for each row j, increment the counter at column hⱼ(x).
+- **Query(x)**: look at x's counter in each row and return the **minimum**.
+
+%%flow Count-min sketch with 3 rows: an update increments one cell per row; a query takes the minimum of those cells.
+[Update #cats] #cats -(h1)-> row 1, col 4 += 1 -(h2)-> row 2, col 1 += 1 -(h3)-> row 3, col 7 += 1
+[Query #cats] Read 52, 49, 61 -(minimum)-> *Estimate 49
+%%
+
+## Why it never underestimates
+Every time x appears, all d of its cells are incremented. Other items may hash to the same cells (collisions) and add to them, but nothing ever subtracts. So each of x's cells holds **x's true count plus some collision noise ≥ 0**. The minimum of numbers that are all ≥ the true count is also ≥ the true count. Taking the minimum picks the cell with the least noise; with several independent hash functions, it is unlikely that all of x's cells collided with heavy items.
+
+## The error guarantee
+Wikipedia gives the sizing:
+- w = ⌈e / ε⌉ columns
+- d = ⌈ln(1/δ)⌉ rows
+
+With these, the estimate is at most **true count + ε·N** with probability at least **1 − δ**, where N is the total number of events. Memory depends only on ε and δ, not on how many distinct items there are.
+
+| Target | w | d | Counters |
+|---|---|---|---|
+| ε = 0.001, δ = 0.01 | 2,719 | 5 | about 13,600 |
+| ε = 0.0001, δ = 0.001 | 27,183 | 7 | about 190,000 |
+
+The error is relative to the **total** N, so the sketch is accurate for frequent items and useless for rare ones: with N = 10 million and ε = 0.001, the error bound is 10,000. An item seen 2 million times is estimated within 0.5%; an item seen 50 times may be reported as 9,000. That is why it pairs naturally with heavy-hitter problems (10.09), which only care about frequent items.
+
+## Variants and properties
+- **Mergeable**: Wikipedia notes the sketch is linear: adding two sketches cell by cell gives the sketch of the combined stream. So per-server sketches merge like HLLs.
+- **Conservative update**: when adding x, first compute x's current estimate, then raise each of its cells only as far as needed (to at least estimate + 1), rather than incrementing all. This reduces overcounting; the sketch is no longer linear but remains mergeable.
+- **Bias correction**: the minimum is biased upward; estimators that subtract an estimate of the noise exist.
+- **Count sketch** is a related structure using signed updates and a median; Wikipedia notes it is more accurate when the distribution is not skewed, while count-min works well when it is.
+
+## In a design
+Hello Interview's top-K breakdown uses count-min as an option when exact per-item counts are too big: add each view to the sketch, query the sketch for the item's estimated count, and maintain a heap or sorted set of the top 1,000 using those estimates. Redis supports this with RedisBloom commands (`CMS.INCRBY`, `CMS.QUERY`) alongside a sorted set (`ZADD`).
+
+! Example: overestimation in action
+! A 1-row, 4-column sketch (for illustration). Stream: a, b, a, c, a, d. Suppose h(a) = 2, h(b) = 0, h(c) = 2, h(d) = 3. Cells: [1, 0, 4, 1]. Query a = 4 (true 3: c collided). Query c = 4 (true 1). Query b = 1 (exact). Adding a second row with a different hash, say h2(a) = 1 and h2(c) = 3, gives a cell for a with just 3 if nothing else lands there, and the minimum recovers a's true count.
+
+> Takeaway: count-min sketch estimates any item's frequency with d rows of w counters: increment one cell per row, and read the minimum. Collisions only add, so it never underestimates; with w = e/ε and d = ln(1/δ), the overestimate is at most εN with probability 1 − δ. It is good for heavy items and poor for rare ones.
+
+?? Each occurrence of an item increments one cell in every row, and nothing is ever subtracted, so every cell the item maps to holds its true count plus the counts of any other items that collided there. Collisions can only add, so every one of the item's cells is at least its true count, and their minimum is too. Taking the minimum just chooses the least-polluted cell.
+
+@10.09
+## The problem
+"Top 10 hashtags in the last hour" over 1 million events per second. Exact counting means a counter per hashtag per time bucket, which may be millions of distinct keys, then a sort. The pieces from this module (bucketed windows, count-min, heaps, mergeable summaries) combine into a standard pipeline. Hello Interview's *Top-K videos* breakdown is the reference design.
+
+## Keeping the top K: a min-heap
+Given a stream of (item, count) updates, keep a **min-heap of size K**. The heap's root is the smallest count among the current top K. A new candidate enters only if its count beats the root, replacing it. Each update costs O(log K), and K is small, so this is cheap. Hello Interview's design uses a heap inside the stream processor, or a Redis sorted set (`ZADD`, then `ZREVRANGE` for the top).
+
+## Misra-Gries: heavy hitters with k−1 counters
+When even a counter per distinct item is too much, the **Misra-Gries summary** (Misra and Gries, 1982) finds frequent items with only **k − 1 counters**. Wikipedia gives the update rule for each arriving item i:
+1. If i already has a counter, increment it.
+2. Else, if fewer than k − 1 counters are in use, start a counter for i at 1.
+3. Else, **decrement every counter by 1**, removing any that reach 0.
+
+The guarantee: any item that occurs **more than n/k times** in a stream of n items is certain to be in the summary. Its counts are underestimates; a second pass (or a parallel exact count for the few candidates) gives exact counts. With k = 2 it is the classic Boyer-Moore majority vote. Summaries are **mergeable** (add counters keywise, then decrement until only k remain), so each server can keep one and a coordinator merges them.
+
+%%flow Misra-Gries with 2 counters (k = 3) on a b a c a d a: unseen items evict by decrementing everyone.
+a:1 -> a:1, b:1 -> a:2, b:1 -(c: decrement all)-> a:1, b gone -> a:2 -> a:2, d:1 -> *a:3, d:1
+%%
+
+(Stream a, b, a, c, a, d, a. When "c" arrives both counters are in use, so every counter drops by 1: "b" disappears and "a" falls to 1. "d" later takes the free slot. "a" ends at 3 against its true 4, an undercount, but it is correctly kept as the heavy hitter, since 4 > 7/3.)
+
+## Count-min plus heap
+The alternative Hello Interview describes: add each event to a count-min sketch (10.08), read back the item's estimated count, and offer (item, estimate) to a min-heap of size K. Memory is the sketch (fixed size) plus K entries. Estimates can be slightly high, but heavy hitters are precisely the items count-min estimates well.
+
+## The pipeline
+%%flow Top 10 hashtags per hour at 1M events per second: partition, count locally per minute, merge partial top lists, combine 60 minutes.
+Events, 1M per s -(partition by hashtag)-> Kafka, 64 partitions -(local counts per minute)-> *64 workers -(local top 100)-> Merger -(sum 60 minute buckets)-> Top 10, cached
+%%
+
+1. **Ingest**: events to Kafka, **partitioned by hashtag**, so every occurrence of a hashtag goes to the same worker and its count on that worker is complete. (At 1M events/s, 64 or more partitions spread the load.) For extremely hot hashtags, add a random suffix and sum later, as in 10.03.
+2. **Count locally per minute**: each worker keeps counts per hashtag in 1-minute tumbling buckets (exact counts if memory allows; count-min or Misra-Gries if not).
+3. **Emit a local top list per minute**: each worker sends its top N (say 100, more than K for safety) with counts.
+4. **Merge**: a single merger combines workers' lists. Because partitioning by hashtag makes worker key sets disjoint, the global top K for a minute is the top K of the union of local top lists.
+5. **Sliding hour**: keep 60 minute-buckets of counts for candidate hashtags and add/subtract as minutes roll (10.06), then take the top 10.
+6. **Serve**: write the result to a cache (Redis) every minute; reads never touch the pipeline.
+
+The subtle point is step 5. Combining **per-minute top-100 lists** into an hourly top 10 is approximate: a hashtag that was 101st every minute but steady all hour might be the hour's true number 8. Remedies: emit larger local lists, keep per-hashtag hourly counts on each worker (still disjoint per partition, so each worker can produce an exact hourly local top list), or accept the approximation and reconcile with a batch job, as Hello Interview suggests.
+
+! Example: the numbers
+! 1M events per second × 60 = 60M events per minute. Suppose 2M distinct hashtags per hour. Exact hourly counters per hashtag: 2M × (key ~20 bytes + 8 bytes) ≈ 60 MB, spread over 64 workers that's under 1 MB each, so exact counting per worker is actually affordable here. The sketches matter when keys are far more numerous (URLs, IPs, search queries) or memory per worker is tight.
+
+> Takeaway: partition events by key so each worker's counts are complete, count in time buckets, keep a min-heap of the top K, and merge local top lists. When distinct keys are too many for exact counts, use Misra-Gries (k−1 counters, guaranteed to keep anything over n/k) or count-min plus a heap.
+
+?? Send hashtag events to Kafka partitioned by hashtag so each worker sees all occurrences of its hashtags. Each worker counts per hashtag in 1-minute buckets (exactly, or with count-min plus a heap or Misra-Gries if the key space is huge) and keeps a running hour by adding the new minute and subtracting the expired one. Every minute, workers send their local top 100 to a merger, which combines the disjoint lists, takes the top 10 and writes it to a cache that the API reads.
+
+@10.10
+## The problem
+You want a uniform random sample of k items from a stream whose length n you don't know in advance, in one pass, without storing the stream. Examples: 1,000 sample log lines from a day of logs for debugging, a sample of requests for tracing, or a sample of users for a survey. Wikipedia's *Reservoir sampling* article describes the standard algorithms.
+
+## Algorithm R
+1. Put the first k items into the **reservoir**.
+2. For the i-th item (i > k), draw a random integer j between 1 and i. If j ≤ k, **replace reservoir slot j** with item i. Otherwise, discard item i.
+
+So item i enters the reservoir with probability **k / i**, and if it does, it evicts a uniformly random current member.
+
+%%flow Algorithm R with k = 1,000: item i replaces a random reservoir slot with probability 1,000 / i.
+Items 1..1,000 -(fill)-> *Reservoir of 1,000 -(item i: keep with prob 1,000 / i)-> Replace random slot -(else)-> Discard
+%%
+
+## Why it is uniform
+Wikipedia's proof is by induction. Suppose that after i − 1 items, each of them is in the reservoir with probability k/(i − 1). Now item i arrives:
+- Item i is included with probability **k/i**. Good.
+- An earlier item survives step i unless item i is included **and** picks its slot: probability (k/i) × (1/k) = 1/i. So it survives with probability 1 − 1/i = (i − 1)/i.
+- Its probability of being in the reservoir after step i is therefore k/(i − 1) × (i − 1)/i = **k/i**.
+
+Every item seen so far has the same probability k/i of being in the sample, at every point in the stream. That's what lets you stop at any time and have a valid sample.
+
+! Example: k = 1,000, item 5,000
+! Item 5,000 is kept with probability 1,000/5,000 = 20%. If kept, it replaces a random one of the 1,000 slots. Each of items 1 to 4,999 was in the reservoir with probability 1,000/4,999 and survives this step with probability 1 − 1/5,000, giving 1,000/5,000 = 20%. All 5,000 items now have a 20% chance of being in the sample. By item 1,000,000, each has 0.1%.
+
+## Faster: Algorithm L
+Algorithm R generates one random number per item. Later items are almost always discarded, so **Algorithm L** (Li, 1994) instead computes how many items to **skip** before the next replacement; Wikipedia notes the skip length follows a geometric distribution and the expected running time becomes **O(k(1 + log(n/k)))**, which is optimal. Skipped items aren't even examined, which matters when reading items is cheap but random numbers or per-item work aren't.
+
+## Weighted and distributed variants
+- **Weighted (A-Res, Efraimidis and Spirakis)**: give each item a key u^(1/w), where u is uniform random and w the item's weight, and keep the k items with the largest keys in a min-heap. Heavier items are more likely to be kept.
+- **Distributed**: Wikipedia only links to a MapReduce write-up, so this is general knowledge: give every item a random tag in [0, 1) and keep the k items with the **smallest** tags. Each server keeps its local k smallest; merging means taking the k smallest of the union. That is equivalent to sampling the combined stream, so it is mergeable like the sketches in 10.05.
+
+%%flow Distributed reservoir sampling by random tags: each server keeps its k smallest tags, and the merge keeps the k smallest overall.
+Server 1: k smallest tags, Server 2: k smallest tags -(union)-> *Keep k smallest -> Uniform sample of all streams
+%%
+
+Limits Wikipedia notes: the reservoir must fit in memory, and when k is a large fraction of n, other methods are better.
+
+> Takeaway: reservoir sampling keeps a uniform sample of k items from a stream of unknown length: keep the first k, then keep item i with probability k/i, replacing a random slot. By induction every item seen is in the sample with probability k/i. Algorithm L skips ahead for speed, and random tags make it mergeable across servers.
+
+?? Fill the reservoir with the first 1,000 items. For the i-th item after that, keep it with probability 1,000/i, replacing a uniformly random slot. Item i enters with probability 1,000/i, and an earlier item is evicted at step i with probability (1,000/i)×(1/1,000) = 1/i, so if it was in the sample with probability 1,000/(i−1) it stays with probability 1,000/(i−1) × (i−1)/i = 1,000/i. Every item seen so far has the same probability 1,000/i of being sampled, at every point.
+
+@10.11
+## The problem: quantiles from a stream
+Latency targets are stated as quantiles: "p99 under 300 ms" means 99% of requests are faster than 300 ms. An exact quantile needs every value, sorted. DataSketches notes this is worse than exact distinct counting: you must keep a copy of every item plus sort them. For billions of requests, you need a compact, mergeable summary that answers quantile queries approximately.
+
+Ted Dunning's **t-digest** is one of the most widely used. Its README describes it as a data structure for accurate online accumulation of rank-based statistics (quantiles, trimmed means), handling both floating-point and integer values, with digests that can be **merged**, which suits map-reduce and parallel streaming systems such as Spark.
+
+## How it works: clusters of values
+A t-digest summarises the distribution as a sorted list of **centroids**: each centroid is a mean value and a count of how many values it represents. The README describes building it with a variant of one-dimensional k-means clustering. To estimate the value at quantile q, walk the centroids in order, adding counts until you reach q × N total, and interpolate between neighbouring centroids.
+
+The key design choice is that **centroids are not equal in size**. A **scale function** limits how many values a centroid may absorb, depending on where it sits in the distribution:
+- Near the median (q ≈ 0.5), centroids may be large, holding thousands of values.
+- Near the tails (q close to 0 or 1), centroids must be small; the README says they are sometimes kept to a **single sample**.
+
+%%flow t-digest centroid sizes across the distribution: big clusters in the middle, tiny ones at the extremes.
+q 0.001: 1 value -> q 0.01: 10 values -> *q 0.5: thousands of values -> q 0.99: 10 values -> q 0.999: 1 value
+%%
+
+## Why the tails get the detail
+The question asks why. Three reasons:
+1. **The tails are what people query.** p99, p99.9 and p0.1 are what latency and risk metrics care about; the median is rarely the problem.
+2. **Relative accuracy needs it.** An error of 0.001 in quantile terms is negligible at the median (0.500 vs 0.501) but huge at p99.9 (it would turn p99.9 into p99.8, which may be a very different latency). To keep error small **relative to the distance from the edge**, the tails need finer resolution.
+3. **Tail values are spread out.** In a latency distribution, the middle values are packed close together, so merging many of them into one centroid loses little; the slowest requests may differ by seconds, so merging two of them blurs exactly the information you wanted.
+
+The README notes that the original assumption (accuracy scales with the square of cluster size) didn't hold in practice, so newer scale functions limit cluster size near the tails more aggressively.
+
+## Accuracy and cost
+The README's claims:
+- **Parts-per-million accuracy** for extreme quantiles, and typically under 1,000 ppm (0.1%) error for middle quantiles.
+- About **140 ns per value added** in the main `MergingDigest` implementation, which allocates no memory after creation.
+- A "compression" parameter trades size for accuracy; a digest typically holds a few hundred centroids, so it is a few kilobytes regardless of N.
+- The author compares it with KLL, another mergeable quantile sketch from DataSketches, claiming t-digest is smaller and much more accurate at the tails; the README presents this as work toward publication rather than a published result.
+
+## Merging
+Digests from many servers merge by combining their centroids and re-clustering under the same size limits. That is what makes global percentiles possible (10.12): each server keeps a digest per minute, a collector merges them, and p99 is read from the merged digest. Averaging the servers' p99 values would be wrong, as the next lesson shows.
+
+! Example: latencies from 10 million requests
+! A t-digest with compression 100 holds perhaps 300 centroids, a few KB. Near the median, one centroid might summarise 80,000 requests averaging 42 ms. The last 10 centroids might each hold one request: 1.9 s, 2.3 s, 4.0 s... So p99.99 (the 1,000th slowest) is read from small, precise centroids, while p50 is interpolated from a large one where 42 ms vs 43 ms makes no difference.
+
+> Takeaway: t-digest summarises a distribution as sorted centroids (mean and count), with a scale function that allows big centroids in the middle and tiny ones at the tails. That gives parts-per-million accuracy at extreme quantiles in a few KB, and digests merge across servers.
+
+?? Tail quantiles such as p99 and p99.9 are what people actually monitor, and they need accuracy relative to the edge: a small quantile error near the median changes nothing, while the same error at p99.9 points at a very different latency. Tail values are also spread far apart, so merging them would blur them. t-digest's scale function therefore keeps centroids small, down to single values, near q = 0 and q = 1, and lets them grow large in the dense middle.
+
+@10.12
+## The trap: averaging percentiles
+Ten servers each report their p99 latency. The tempting global p99 is the average of the ten numbers. The Prometheus documentation is blunt about the equivalent query, `avg(http_request_duration_seconds{quantile="0.95"})`, which it marks "BAD!": averaging quantiles gives **statistically nonsensical values**.
+
+Why it is wrong:
+- **Servers carry different traffic.** One server handling 90% of requests and another handling 1% count equally in an average.
+- **Quantiles aren't linear.** The global p99 depends on where the slowest 1% of **all** requests lie. If one server is degraded, nearly all of the global slowest 1% may come from it; its p99 is high, the other nine are low, and their average hides the problem.
+- There is no formula from ten p99 values to the true global p99; the information about the rest of each distribution is gone (the same non-additivity as distinct counts in 10.05).
+
+%%flow Averaging p99s hides a bad server: the global p99 is driven by where the slowest 1% of all requests are.
+9 healthy servers: p99 100 ms, 1 bad server: p99 2,000 ms -(average)-> 290 ms -(but true global p99)-> *about 1,900 ms
+%%
+
+(Illustration: if the bad server handles 10% of traffic and a fifth of its requests take about 2 s, those slow requests alone are 2% of all traffic, more than the slowest 1%, so the global p99 lands among them, near 2 s, not at 290 ms.)
+
+## What to aggregate instead: things that add
+The fix is to ship **additive** data and compute the quantile after combining. Prometheus offers two metric types:
+
+| | Histogram | Summary |
+|---|---|---|
+| What the client sends | Counts per bucket (`le` = less than or equal), plus `_sum` and `_count` | Pre-computed quantiles, plus `_sum` and `_count` |
+| Client cost | Cheap counter increments | Relatively expensive streaming quantile calculation |
+| Quantile computed | On the server, at query time, any quantile | In the client, fixed quantiles and window chosen up front |
+| Error | Limited by bucket width | Configurable, usually very low, but per instance |
+| Aggregation across instances | Yes: bucket counts add | **No** |
+
+With histograms, the global p95 across replicas is:
+
+`histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))`
+
+Bucket counts from every server are summed first (counts are additive), and only then is the quantile estimated.
+
+%%flow Correct aggregation: sum the additive bucket counts across servers, then compute the percentile once.
+10 servers: bucket counts -(sum by le)-> *Global histogram -(histogram_quantile 0.99)-> Global p99
+%%
+
+## The price of buckets
+`histogram_quantile` finds the bucket containing the target rank and **interpolates linearly** inside it, assuming values are spread evenly within the bucket. So the error is bounded by the bucket's width. The Prometheus docs give an example with an SLO of p95 under 300 ms:
+- Requests actually cluster at **220 ms**. A classic histogram with a 200 to 300 ms bucket estimates p95 as **295 ms**, making a healthy service look close to breaching its SLO.
+- A **native histogram** (fine exponential buckets, growth factor 1.1) puts the value in a 210 to 229 ms bucket and estimates **228 ms**.
+- After a change shifts latencies to 320 ms, the native histogram says 323 ms while a classic 300 to 450 ms bucket says 443 ms.
+
+Hence the advice: choose bucket boundaries around your SLO thresholds (for example a boundary at exactly 0.3 s), or use native histograms, whose exponential buckets give bounded **relative** error everywhere. Prometheus notes OpenTelemetry's exponential histograms map directly onto them.
+
+Averages are still easy: `rate(_sum) / rate(_count)` gives mean latency, and both series add across instances.
+
+## Other mergeable options
+The same principle covers the sketches in this module: ship a **t-digest** (10.11), DDSketch or HdrHistogram per server per interval, merge them centrally, then read any quantile. Prometheus histograms are the simplest bucketed version of this idea.
+
+! Example: an SLO dashboard
+! Each of 40 API pods exports `http_request_duration_seconds_bucket` with boundaries 0.05, 0.1, 0.2, 0.3, 0.5, 1, 2.5. The dashboard runs `histogram_quantile(0.99, sum by (le) (rate(...[5m])))` for the global p99 and the same query `by (pod)` to spot a bad pod. "Fraction of requests under 300 ms" is simply the `le="0.3"` bucket rate divided by the total rate, exact because 0.3 is a boundary.
+
+> Takeaway: percentiles don't average, because each server's p99 hides its traffic volume and the shape of its distribution. Aggregate additive data instead: sum histogram bucket counts (or merge sketches such as t-digest) across servers, then compute the quantile once. Bucket placement determines accuracy, so put boundaries at your SLO thresholds or use native exponential histograms.
+
+?? A p99 is a single point of each server's distribution, not something that adds. Servers handle different amounts of traffic, and the global p99 is determined by where the slowest 1% of all requests fall, which may be almost entirely on one degraded server; averaging gives that server one-tenth of the weight and produces a number that corresponds to no real percentile. Instead, ship additive data such as histogram bucket counts or mergeable sketches, combine them across servers, and compute the global p99 from the combined distribution.
+
+@10.13
+## The problem
+A live stream with 1 million viewers receives 10,000 reactions (hearts, likes) per second. Naively, each reaction is sent to every viewer: 10,000 × 1,000,000 = **10 billion messages per second**. No system should do that, and no viewer can perceive 10,000 individual hearts per second anyway.
+
+The assigned source, Hello Interview's *FB Live Comments* breakdown, puts reactions explicitly out of scope, but its delivery architecture for comments is the foundation. The aggregation design for reactions below is my own synthesis from that architecture and the earlier lessons in this module.
+
+## Delivery: what the comments design teaches
+Hello Interview's requirements: millions of concurrent live videos, thousands of comments per second per video, eventual consistency, and under **200 ms** end-to-end delivery. Its key decisions:
+- **Polling fails**: to get under 200 ms you'd poll every few milliseconds per viewer, crushing the database with mostly empty requests.
+- **Server-Sent Events over WebSockets**: viewers mostly read. SSE is a one-way server push over plain HTTP; writes (posting a comment) go through normal HTTP POSTs. WebSockets' two-way channel adds overhead that this read-heavy pattern doesn't need.
+- **Pub/sub between servers**: viewers are spread over many realtime servers. When a comment is created, it is published to a channel; servers subscribed to it forward it to their viewers. Channels are chosen by `hash(liveVideoId) % N` so a server only receives traffic for videos it serves. Redis pub/sub is used because it is low latency, and its fire-and-forget delivery is acceptable since comments are also stored.
+- **Co-locate viewers**: an L7 load balancer uses consistent hashing on the video ID so viewers of the same video tend to land on the same realtime servers, minimising subscriptions per server.
+- **Mega-streams**: for hundreds of millions of viewers it suggests **sampling** comments (from 50% down to 1 to 2% as velocity rises) or CDN delivery of periodic snapshots.
+
+## Aggregate reactions instead of forwarding them
+Reactions differ from comments in one crucial way: they are **countable and interchangeable**. A heart from user A and a heart from user B look the same to viewers. So the system should forward **totals per time slice**, not events.
+
+%%flow Reactions aggregated twice: ingest servers count per 200 ms, an aggregator merges, and each viewer gets one small update per tick.
+Viewers send reactions, 10k per s -(POST)-> Ingest servers: count per type per 200 ms -(partial counts)-> *Aggregator for video -(5 updates per s)-> Pub/sub channel -> Realtime servers -(SSE)-> 1M viewers
+%%
+
+1. **Ingest**: reactions arrive as small HTTP POSTs to stateless ingest servers. Each keeps in-memory counters per (video, reaction type) and every 200 ms emits a partial count, like `{video: v1, heart: 312, wow: 40}`, instead of 2,000 individual events.
+2. **Aggregate**: partial counts for the video go to one aggregator (Kafka partitioned by video ID, or a sharded counter). It sums partials into a per-tick total and a running total (10.01, 10.06): one message per tick, regardless of reaction volume.
+3. **Fan out**: the aggregator publishes one update per tick to the video's pub/sub channel. Each realtime server holding viewers of that video receives it once and pushes it to its local viewers over SSE.
+4. **Render**: the client animates "about 300 hearts in the last 200 ms" as a burst of floating hearts. The visual effect is the same as individual events.
+
+## The numbers
+| Design | Messages per second to viewers |
+|---|---|
+| Forward every reaction | 10,000 × 1,000,000 = 10 billion |
+| One aggregate update every 200 ms | 5 × 1,000,000 = 5 million |
+
+The aggregate approach is independent of reaction volume: 10,000 or 1 million reactions per second still produce 5 updates per second per viewer. Between servers, it's 5 messages per second per video per realtime server. With, say, 500 realtime servers holding 2,000 viewers each, a server receives 5 updates per second and writes 10,000 small SSE frames per second, which is ordinary.
+
+## Details that matter
+- **Write path protection**: 10,000 POSTs per second is easy to spread over stateless servers; rate-limit per user (a user can't send 100 hearts a second) and drop rather than queue under overload, since a lost heart doesn't matter.
+- **Exact totals?** If the final count matters (it's shown or stored), persist partial counts to a counter store with batching; if not, the in-memory aggregate is enough. Duplicates from retries barely matter for hearts, unlike ad clicks (10.03).
+- **Personal feedback**: the user who tapped sees their own heart instantly, rendered locally, without waiting for the round trip.
+- **Hot videos**: one aggregator per video can become a hotspot for the biggest streams; shard the ingest counters (random suffixes) and let a final step sum them, as in 10.03 and 10.09.
+- **Mega-streams**: lower the tick rate or move to CDN-delivered snapshots, as Hello Interview suggests for comments.
+
+! Example: one tick
+! Between 20:00:00.000 and 20:00:00.200, 2,070 hearts and 130 "wow" reactions arrive across 20 ingest servers. Each server sends its partial counts to the video's aggregator, which sums to `{heart: 2070, wow: 130, totalHearts: 4,812,330}` and publishes it once. 500 realtime servers each receive that one message and push it to their 2,000 viewers. Each phone draws a burst of hearts sized to 2,070.
+
+> Takeaway: don't fan out individual reactions. Count them on ingest servers in short time slices, merge per video, and push one small aggregate update per tick through pub/sub to realtime servers holding the video's viewers over SSE. Fan-out becomes proportional to viewers × tick rate, not viewers × reactions.
+
+?? Treat reactions as counts, not messages. Clients POST reactions to stateless ingest servers that count per video and reaction type in memory and emit partial counts every 200 ms; an aggregator per video (Kafka partitioned by video) sums them and publishes one update per tick to a pub/sub channel. Realtime servers, which hold viewers of that video grouped by consistent hashing, receive the update once and push it over SSE. Each viewer then gets about 5 small updates per second regardless of whether there are 10,000 or a million reactions per second, and the client animates the counts.

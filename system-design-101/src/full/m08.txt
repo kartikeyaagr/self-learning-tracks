@@ -1,0 +1,428 @@
+@08.01
+## Don't make the user wait for slow work
+Hello Interview's long-running tasks pattern (only its introduction is free; the rest is behind a paywall) starts from a contrast. Loading a profile page takes under 100 ms. Generating an annual activity PDF that aggregates millions of rows and renders charts takes 45 seconds or more. Web servers and load balancers usually time out requests after 30 to 60 seconds, so the slow request may fail outright, and even when it works the user stares at a spinner with no progress. Other examples: video transcoding (minutes), resizing photos into thumbnails, sending a newsletter, importing a big CSV.
+
+The pattern splits the request into two phases:
+1. **Acknowledge immediately**: the web server validates the request, writes a job record, pushes a message onto a queue (Redis, RabbitMQ, SQS) and returns a job ID in milliseconds.
+2. **Process in the background**: separate worker processes pull jobs from the queue, do the slow work and update the job's status in a database.
+
+%%seq The API answers in milliseconds; the slow work happens on a worker, and the client checks back for the result.
+Client > API : POST /reports
+API > DB : insert job (queued)
+API > Queue : enqueue job id
+API -> Client : 202 + job id
+Worker > Queue : pull job
+Worker > Worker : build PDF (45 s)
+Worker > DB : status = done + URL
+Client > API : GET /jobs/{id}
+API -> Client : done + download URL
+%%
+
+%%flow Synchronous versus asynchronous: the queue removes the slow step from the request path.
+[Before] Client -(waits 45 s)-> API -> PDF builder
+[After] Client -(202 in ms)-> API -(enqueue)-> *Queue -(pull)-> Worker -(write)-> Job DB
+%%
+
+The client then learns the result by polling `GET /jobs/{id}`, or by being pushed an update over a WebSocket or server-sent events, or through a webhook or email for very long jobs. The paywalled sections cover failures, duplicates and backpressure; those are handled in the lessons that follow (08.04) and in Module 2's idempotency lesson.
+
+## Why messaging helps
+microservices.io's Messaging pattern explains the general idea. Synchronous calls tie the caller and callee together at runtime: both must be up for the whole request. With asynchronous messaging over a broker, the sender only needs the broker. Benefits: looser runtime coupling, and better availability because the broker holds messages until a consumer is ready. The drawback is a new piece of infrastructure, the broker, which must itself be highly available. The page lists the interaction styles messaging supports: request/response, one-way notifications, request with asynchronous response, publish/subscribe, and publish with asynchronous responses.
+
+! Example: the 30-second PDF
+! `POST /reports` inserts `{id: r_81, status: queued}`, enqueues `r_81`, and returns `202 Accepted` with the ID. The UI shows "Preparing your report" and polls every 3 seconds. A worker picks up `r_81`, sets `running`, builds the PDF, uploads it to object storage, sets `done` with a download URL. If the worker dies, the job's lease expires and another worker retries it, so the job must be safe to run twice.
+
+> Takeaway: for slow work, accept the request, record a job, queue it and return an ID at once. Workers do the work in the background and the client checks status or gets notified.
+
+?? Turn it into an asynchronous job. The API validates the request, stores a job record with status "queued", puts the job ID on a queue and returns 202 with the ID immediately. Workers take jobs off the queue, generate the PDF, store it in object storage and set the status to done with a link. The client polls the job endpoint or receives a push notification, and the job is idempotent so retries after worker crashes are safe.
+
+@08.02
+## Two shapes of messaging
+- **Task queue** (RabbitMQ, SQS): a message is a unit of work. A worker takes it, processes it and acknowledges it, and then the broker deletes it. Each message goes to one worker.
+- **Event stream** (Kafka, Kinesis): a message is a fact appended to a log. Consumers read it at their own pace and track their position. Messages stay until a retention limit, regardless of who has read them.
+
+%%flow A queue hands each message to one worker and deletes it on ack; a stream keeps the log and each group tracks its own offset.
+[Task queue] Producer -> Queue -(one worker gets it)-> Worker -(ack: deleted)-> *Gone
+[Event stream] Producer -(append)-> *Log, kept 7 days -(offset 120)-> Group A -(offset 95)-> Group B
+%%
+
+## RabbitMQ's model
+The RabbitMQ tutorial series walks through the queue model step by step:
+- **Work queues**: several workers compete for messages on one queue (the competing-consumers pattern). Messages are handed out round-robin; a prefetch limit stops one worker from hoarding them; a worker acknowledges each message when done, and an unacknowledged message is redelivered if the worker dies; queues and messages can be marked durable to survive a broker restart.
+- **Publish/subscribe**: producers send to an **exchange**, not a queue. A fanout exchange copies each message to every bound queue.
+- **Routing** and **topics**: direct and topic exchanges deliver selectively by routing key or by pattern such as `orders.*.eu`.
+- **RPC** and **publisher confirms**: request/reply over queues, and the broker confirming to the producer that it stored a message.
+- RabbitMQ also now offers **streams**, a log-style structure, showing how the line between the two models has blurred.
+
+%%flow RabbitMQ publish/subscribe: producers send to an exchange, which copies or routes messages into queues.
+Producer -> *Exchange -(fanout / routing key)-> Queue per consumer -> Consumer
+%%
+
+## Kafka's model
+Hello Interview's Kafka deep dive defines the parts:
+- **Brokers** are the servers; a **topic** is a named stream; each topic is split into **partitions**, each an append-only ordered log spread across brokers.
+- Each message has an **offset**, its position in the partition. Consumers commit offsets to record progress.
+- In a **consumer group**, each partition is assigned to exactly one consumer, so the group shares the work. Different groups each get every message independently.
+- Messages are kept for a retention period (7 days by default, set by `retention.ms` or `retention.bytes`) or by log compaction.
+- Order is guaranteed only within a partition; a message's key picks its partition with `hash(key) % partitions`.
+- The article's ballpark: a single broker can store about 1 TB and handle up to about 1 million messages per second; keep messages under 1 MB.
+
+%%layers Kafka's pieces, from cluster down to a single message.
+Broker | a server; holds many partitions
+Topic | a named stream, e.g. orders
+*Partition | ordered append-only log; order guaranteed only here
+Offset | a message's position in its partition
+Consumer group | each partition read by one member
+%%
+
+## What retention buys you
+- **Replay**: reset a consumer group's offset to reprocess history, for example after fixing a bug.
+- **New consumers later**: a service added next month can read from the start of retained data.
+- **Many independent readers**: search indexing, analytics and notifications each read the same events without the producer knowing.
+- **Auditing and debugging**: you can see exactly what happened in order.
+
+The cost: consumers must track offsets themselves, and Kafka has no built-in per-message retry or dead-letter queue (SQS does), so you build those.
+
+! Example: rebuilding a search index
+! An `orders` topic retains 30 days. The team ships a search indexer with a bug that drops the currency field. After fixing it, they reset the indexer's consumer group to 30 days ago and let it reprocess, rebuilding the index. The billing and email consumers are untouched because they track their own offsets.
+
+> Takeaway: a task queue hands each message to one worker and forgets it; a stream keeps an ordered log that many consumer groups read at their own pace. Use a queue for jobs and a stream for events that several systems need or that you may want to replay.
+
+?? Keeping messages lets you replay history (reprocess after a bug fix or rebuild a derived store), add new consumers that read past events, and let several independent consumer groups read the same events at their own pace. Each consumer only tracks its offset, so one slow or broken consumer does not affect others.
+
+@08.03
+## What "event-driven" can mean
+Martin Fowler's article separates four patterns that people lump together:
+- **Event notification**: a system announces that something changed and carries little data, often just an ID and a link. Receivers call back for details. Low coupling and easy to set up, but the overall flow becomes implicit, spread across many handlers, and hard to debug. Fowler warns about the "passive-aggressive command": an event published because the sender really expects someone to do something.
+- **Event-carried state transfer**: events include the changed data, such as a customer's new address, so receivers keep their own copy and never call the source. Receivers keep working when the source is down and avoid remote calls, at the cost of duplicated data and more state to manage.
+- **Event sourcing**: every change is stored as an event, and the event log is the source of truth; current state is derived by replaying it. Version control is his analogy. You get an audit trail and can rebuild past states, but replay gets hard when events change shape or depend on external systems.
+- **CQRS**: separate models for writing and reading. Often combined with events but not the same thing, and often misused because two models mean twice the work for every change.
+
+%%flow Event notification versus event-carried state transfer: does the receiver call back for the data?
+[Notification] Customer svc -(address changed: id 42)-> Shipping svc -(GET /customers/42)-> Customer svc
+[State transfer] Customer svc -(id 42, new address)-> *Shipping svc keeps its own copy
+%%
+
+## The dual-write problem
+A product event bus usually starts with code like: save the order to the database, then publish `OrderPlaced` to Kafka. microservices.io's Transactional Outbox pattern explains why that is unsafe:
+- Publish before commit, and the transaction might roll back: consumers hear about an order that doesn't exist.
+- Publish after commit, and the service might crash in between: the order exists but no one hears about it.
+- Two-phase commit across the database and broker would fix it, but many brokers and databases don't support it, and it couples them tightly.
+
+%%seq The dual-write failure: the commit succeeds, the process dies, and the event is never published.
+Service > Database : commit order 9001
+Database -> Service : ok
+Service > Service : crash before publish
+Service -> Broker : event never sent
+%%
+
+## The outbox
+Write the event into an **outbox table** in the same local database transaction as the business change. Either both commit or neither does. A separate **message relay** then publishes outbox rows to the broker, in one of two ways:
+- **Polling publisher**: periodically query the outbox for unsent rows, publish them, mark them sent.
+- **Transaction log tailing**: read the database's change log (change data capture, for example with Debezium) and publish outbox inserts.
+
+%%flow The outbox: one local transaction writes both rows; a relay publishes afterwards.
+Service -(one transaction)-> *Orders + outbox rows -(poll or CDC)-> Relay -(publish)-> Broker -(at least once)-> Idempotent consumer
+%%
+
+The relay can crash after publishing but before marking a row sent, so it may publish duplicates. Consumers must be idempotent, for example by recording processed event IDs. The page notes ordering is preserved because outbox rows follow transaction order.
+
+! Example: order placed
+! In one transaction the order service inserts the order row and an outbox row `{event_id: e_551, type: OrderPlaced, order_id: 9001}`. Commit. The relay publishes e_551 to Kafka, crashes before marking it sent, restarts and publishes it again. The email service has already stored e_551 in its processed table, so it skips the duplicate and the customer gets one email.
+
+> Takeaway: never write to the database and the broker as two separate steps. Write the event to an outbox table in the same transaction, relay it to the broker, and make consumers idempotent because the relay can repeat.
+
+?? The two writes are not atomic. If you publish and then the database transaction fails, consumers act on something that never happened; if you commit and then crash before publishing, the event is lost forever. The fix is the transactional outbox: write the event to an outbox table in the same transaction, and have a relay publish it afterwards, with idempotent consumers to absorb duplicates.
+
+@08.04
+## What lag is
+Confluent's monitoring page defines consumer lag as the number of offsets between the latest message produced to a partition and the last offset the consumer group committed. Lag of 0 means caught up. Growing lag means messages arrive faster than they are processed. (Their broker-side emitter measures only offset lag, not time; Control Center can show latency separately.)
+
+Offset lag alone can mislead: 10,000 messages behind is fine if you process 50,000 a second, terrible at 100 a second. AWS's Builders' Library article "Avoiding insurmountable queue backlogs" says the most useful signal is **message age**: how old the oldest unprocessed message is. AWS IoT, for example, tracks "AgeOfFirstAttempt", which ignores retries so a few stuck devices don't trigger alarms.
+
+%%flow Lag is the gap between the newest offset in a partition and the group's committed offset.
+Offset 0 -> Committed 9,000 -(lag 1,000)-> *Latest 10,000 -(producers append)-> Next
+%%
+
+## Why backlogs are dangerous
+The AWS article explains that queues make systems durable, since work isn't lost during an outage, but they turn outages into latency. Queue systems are bimodal: with no backlog they are fast; once a backlog builds, latency keeps climbing and it takes a long time to get back. After a one-hour outage you need roughly double normal capacity for an hour to catch up, and downstream systems must also absorb that burst. A backlog 10 times the hourly capacity, drained by consumers only matching normal load plus a little, can take hours (the article's example: about 300 minutes).
+
+%%flow Shuffle sharding: each tenant maps to a few queues out of a pool, so one noisy tenant only clogs its own.
+[Tenant A] Tenant A -(hash)-> Queues 1 and 4 -(least loaded)-> Queue 4
+[Tenant B, noisy] Tenant B -(hash)-> *Queues 2 and 5 -> Backlog stays there
+%%
+
+## Options when lag grows
+Fix the rate first:
+- **Scale consumers**: add workers. With Kafka, parallelism is capped by the number of partitions, since each partition goes to one consumer in a group; you may need more partitions.
+- **Make processing cheaper**: batch database writes, cut slow calls, add caching.
+- **Find the slow dependency**: a backlog often means a downstream service slowed down. Concurrency limits per dependency stop it from consuming all workers.
+
+Then manage the backlog, using the strategies the AWS article lists:
+- **Prioritise fresh work**: move old messages to a separate backlog queue and process new ones first (LIFO-like), when fresh data matters more.
+- **Drop or expire**: with a TTL, discard messages that are no longer useful, such as stale state updates that a later full sync replaces.
+- **Isolate tenants**: separate queues per tenant, or shuffle sharding (each customer hashed to a few queues out of a pool), so one noisy customer's backlog doesn't delay everyone.
+- **Sideline excess**: move a tenant's over-limit messages to a spillover queue.
+- **Backpressure and rate limits**: make producers slow down or reject when the backlog is too big, where that is acceptable.
+- **Dead-letter queues**: move messages that keep failing aside instead of retrying them forever.
+- **Heartbeats**: if a job outlasts the visibility timeout it gets redelivered and runs twice; workers should extend their lease or stop.
+- **Leave headroom**: plan consumer capacity well above normal so you can drain a backlog quickly.
+
+! Example: lag growing at 1,000 a second
+! Producers send 6,000 msg/s and consumers handle 5,000 msg/s, so lag grows by 1,000 a second, 3.6 million an hour. The consumer group has 10 consumers and 10 partitions. The team finds that each message makes a synchronous call to a slow profile service; batching 100 lookups per call raises throughput to 9,000 msg/s, which drains 3.6 million in about 20 minutes. Raising partitions to 20 gives room to add consumers next time.
+
+> Takeaway: watch the age of the oldest message, not just the count. When lag grows, raise consumer throughput first, then shed, sideline or prioritise work so a backlog doesn't become hours of delay.
+
+?? First work out why: is the producer rate up, or is processing slower (often a slow dependency)? Then increase throughput: add consumers (and partitions, since Kafka parallelism is capped by partitions), batch work and remove slow calls. While draining, process fresh messages first and move old ones to a backlog queue, expire messages that are no longer useful, isolate noisy tenants, apply backpressure or rate limits, and send failing messages to a dead-letter queue. Alert on the age of the oldest message.
+
+@08.05
+## Cron, but reliable
+Google's SRE book chapter on distributed periodic scheduling starts with plain cron: a daemon on one machine reads a crontab and launches jobs. If that machine is down, nothing runs. Standard cron doesn't even record what it launched; only anacron re-runs jobs it missed.
+
+The chapter's key point is that jobs fail differently:
+- Some can safely be **skipped** (a frequent garbage collection run).
+- Some must **not be skipped** (monthly payroll).
+- Some must **never run twice** (sending a newsletter).
+
+Google's design prefers skipping a run to launching it twice, because a missed run is easier to fix than undoing a double launch, which may be impossible.
+
+## Google's distributed cron
+- Cron runs as several replicas spread across failure domains, placed by the datacenter scheduler (Borg).
+- The replicas use **Paxos** to agree on state. Only the **leader** launches jobs; followers replicate the job list and track which launches are open.
+- Before launching, the leader records "launching job X for time T" in Paxos; after, it records completion. If it loses leadership it must immediately stop talking to the scheduler, so two leaders never launch.
+- On failover, the new leader must finish all open launches within a minute. It can't know whether an in-flight launch RPC reached the scheduler, so launches must either be idempotent or their state must be checkable.
+- Google's answer: give each launch a **precomputed name that includes the scheduled time**, such as `payroll-2024-05-01T00:00`. The new leader checks whether a job with that name exists and launches only missing ones. Including the time also prevents relaunching a short job that already finished.
+- State is kept as Paxos logs plus periodic snapshots on the replicas' local disks, with snapshots backed up.
+- To avoid everyone's job firing at midnight, crontab accepts `?` in a field, and the system hashes the job's config to pick a value, spreading launches out.
+
+%%seq Google's distributed cron: record the launch in Paxos before acting, record completion after.
+Leader > Paxos log : launching payroll@2024-05-01T00:00
+Leader > Borg : start job named payroll@...T00:00
+Leader > Leader : crash
+Follower > Paxos log : take over, read open launches
+Follower > Borg : does payroll@...T00:00 exist?
+Borg -> Follower : yes, so skip
+Follower > Paxos log : record completion
+%%
+
+## The general recipe
+Hello Interview's job scheduler breakdown (the free part) frames the problem at 10,000 jobs per second and separates a **task** (the kind of work) from a **job** (an instance with a schedule and parameters). The rest is paywalled, but the usual design follows from the principles above:
+- Store schedules in a database. A scheduler, elected as leader or sharded by job ID, finds jobs due soon and pushes them to a queue (possibly a delayed queue).
+- Workers execute with a lease or visibility timeout and record the result per execution (job ID plus scheduled time).
+- Delivery is at least once, so each execution has a unique key and the job's effect is idempotent.
+
+! Example: three replicas, one run
+! The 02:00 invoice job has three scheduler replicas. Only the leader, holding a lease in etcd, enqueues `invoices@2024-05-01T02:00`. The leader crashes after enqueueing; the new leader sees that execution key already exists in the executions table and does not enqueue it again. The worker inserts the key with a unique constraint before sending invoices, so even a duplicate message is rejected.
+
+> Takeaway: make one leader responsible for launching, record each launch durably before and after, and name each run by job and scheduled time so a new leader can tell what already happened. Make the job idempotent for the cases you can't rule out.
+
+?? Elect one leader (via Paxos, Raft or a lease in etcd or ZooKeeper) so only it launches jobs. Give each run a deterministic ID made of the job and its scheduled time, and record it durably, for example with a unique constraint, before launching. A new leader checks which IDs exist and launches only missing ones, and the job itself is idempotent so a rare duplicate does no harm.
+
+@08.06
+## A queue in a table
+Crunchy Data's post "Message queuing using native PostgreSQL" builds a work queue from a plain table:
+
+```
+CREATE TABLE queue_table (
+  id int generated always as identity primary key,
+  queue_time timestamptz default now(),
+  payload text
+);
+```
+
+Enqueuing is an INSERT. A normal (logged) table keeps jobs safe across a crash.
+
+%%flow Two workers on one table: SKIP LOCKED makes the second take the next free rows instead of waiting.
+[Worker 1] Worker 1 -(FOR UPDATE SKIP LOCKED)-> *Rows 1-10 locked
+[Worker 2] Worker 2 -(rows 1-10 locked, skip)-> *Rows 11-20 locked
+%%
+
+## Why plain SELECT fails
+`SELECT * FROM queue_table LIMIT 10` lets two workers grab the same rows. Adding `FOR UPDATE` locks the rows, but now the second worker waits for the first to finish, so workers run one at a time.
+
+## SKIP LOCKED
+The PostgreSQL SELECT docs describe the locking clause options. `NOWAIT` makes the statement error if a row is locked. `SKIP LOCKED` simply skips rows that can't be locked immediately. The docs warn that this gives "an inconsistent view of the data, so this is not suitable for general purpose work, but can be used to avoid lock contention with multiple consumers accessing a queue-like table." That is exactly the use: worker 1 locks rows 1 to 10, worker 2 skips them and gets 11 to 20, with no waiting.
+
+The post's dequeue claims and deletes in one statement:
+
+```
+DELETE FROM queue_table
+USING (SELECT * FROM queue_table LIMIT 10 FOR UPDATE SKIP LOCKED) q
+WHERE q.id = queue_table.id
+RETURNING queue_table.*;
+```
+
+The worker loop is BEGIN, run the DELETE ... RETURNING, process the rows, COMMIT. Rows stay locked until commit, so others skip them. If processing fails, ROLLBACK puts the rows back. Add `ORDER BY` in the subquery if order matters (the post's query has none), and add columns such as priority or topic to filter by.
+
+%%seq A worker's batch stays locked until commit; a crash rolls it back to the queue.
+Worker > Postgres : BEGIN
+Worker > Postgres : DELETE ... SKIP LOCKED RETURNING
+Postgres -> Worker : 10 rows, now locked
+Worker > Worker : process rows
+Worker > Postgres : COMMIT (rows gone)
+%%
+
+## Limits
+- High-churn tables bloat under MVCC; autovacuum must keep up, and the post suggests monitoring bloat and sometimes rotating the table.
+- Workers poll; the post doesn't cover LISTEN/NOTIFY for wake-ups.
+- Holding a transaction open during long work holds locks and a connection; for long jobs, set a status and lease timestamp instead, and commit quickly.
+- It is great when you already run Postgres and need thousands, not millions, of jobs a second, and you want enqueuing in the same transaction as your business write, which also solves the dual-write problem from 08.03.
+
+! Example: sending receipts
+! The order service inserts the order and a `send_receipt` job in one transaction. Eight workers loop on the SKIP LOCKED query in batches of 10. Worker 3 crashes mid-batch; its transaction aborts, the 10 rows unlock and another worker takes them. No message broker was needed.
+
+> Takeaway: `FOR UPDATE SKIP LOCKED` lets many workers each lock a different set of rows from the same table without waiting, turning Postgres into a reliable job queue for moderate volumes.
+
+?? Each worker locks the rows it claims with FOR UPDATE. SKIP LOCKED tells other workers to skip rows already locked instead of waiting for them, so each grabs a different set of free rows at once. The locks last until the worker's transaction commits (deleting or completing the rows) or rolls back (releasing them for others).
+
+@08.07
+## Pipelines as graphs
+A multi-step workflow, such as extract, clean, aggregate, load and notify, is a set of tasks with dependencies. Apache Airflow's core concepts page describes the model:
+- A **DAG** (directed acyclic graph) holds everything needed to run the workflow: the tasks, their order, how many times to retry, timeouts.
+- **Tasks** are units of work run by workers. Dependencies are declared with `>>` and `<<` (upstream and downstream).
+- A DAG runs on a **schedule** (`@daily`, a cron string) or on demand. Each run is a **DAG run** with a **data interval**, the period of data it should process. Airflow can **backfill**, running the DAG once for each past interval.
+- Each task in a run is a **task instance** with a state; terminal states include `success`, `failed`, `upstream_failed` and `skipped`.
+- **Retries** are configured per task. **Trigger rules** decide whether a task runs given its upstream results: `all_success` (default), `one_failed`, `all_done`, `none_failed` and more, which lets you add cleanup or alert tasks.
+
+%%flow A five-step DAG: step 4 fails and is retried; step 5 waits under all_success.
+Extract orders -> Extract refunds -> Join -> *Load warehouse -(retry x2)-> Email finance
+%%
+
+## Durable execution
+Temporal takes a different approach. Its docs describe **workflows** written as ordinary code (loops, conditionals) and **activities**, the steps that touch the outside world (call an API, write a database, charge a card). Temporal records every step in an **event history**. If a worker crashes, another worker replays the workflow code against the history, substituting recorded results for completed activities, and continues where it stopped, with local variables intact. Because of replay, workflow code must be **deterministic**: no direct clock reads, random numbers or I/O; those go in activities. Activities get retry policies, timeouts and heartbeats from configuration.
+
+Hello Interview's Temporal deep dive says to reach for it when you find yourself building a state machine to persist completed steps, schedule the next, retry failures and recover after crashes, and when processes wait for long periods. Its limits: overkill for a single background job (use a queue), not a replacement for Kafka for high-volume streams, and activities still need to be idempotent because they can be retried.
+
+%%seq Temporal: completed activities are in the event history, so a new worker replays them instead of re-running them.
+Worker A > History : step 1 done
+Worker A > History : step 2 done
+Worker A > Worker A : crash in step 3
+Worker B > History : load history
+Worker B > Worker B : replay: reuse results of 1, 2
+Worker B > History : step 3 done
+%%
+
+## When step 4 fails
+- Retry step 4 with backoff, a bounded number of times. Steps 1 to 3 are not rerun; their outputs are recorded.
+- If it still fails, stop downstream steps (Airflow marks them `upstream_failed`), alert, and keep the run resumable: after a fix, rerun from step 4.
+- If earlier steps changed external state that must be undone, run compensating actions (a saga: refund the payment, release the reservation).
+- Make each step idempotent so a retry after a partial success doesn't double-apply.
+
+! Example: nightly revenue pipeline
+! Steps: extract orders, extract refunds, join, write to warehouse, email finance. The warehouse write fails because of a lock timeout. Airflow retries it twice, 5 minutes apart, and it succeeds; the email task, waiting under `all_success`, then runs. Had it kept failing, the email task would be `upstream_failed`, an `one_failed` alert task would page on-call, and after the fix they would clear just the failed task to rerun from there.
+
+> Takeaway: an orchestrator records each step's state so a failure is retried or resumed at that step, not from the beginning. Steps must be idempotent, and steps with side effects may need compensation.
+
+?? Retry step 4 with backoff according to its policy, without rerunning steps 1 to 3, whose results are recorded. If it keeps failing, mark downstream steps as not run, alert someone and keep the run resumable from step 4 after a fix. If earlier steps had external side effects that must not stand, run compensating actions. Every step should be idempotent so retries are safe.
+
+@08.08
+## What a rules engine is
+Martin Fowler's bliki entry defines a rules engine as a tool for the **production rule** model: a set of rules, each a condition and an action. Rules can be written in any order, and the engine decides which to evaluate, unlike ordinary code where you write the steps. Engines range from APIs to DSLs to GUIs and may use specialised algorithms such as Rete.
+
+**Chaining** is when one rule's action changes data that makes another rule's condition true. It allows complex behaviour, but Fowler warns it quickly becomes very hard to reason about and debug.
+
+%%flow Chaining: one rule's action makes another rule's condition true, which is where behaviour gets hard to follow.
+Order placed -(rule 1: total > 500)-> Tag high-value -(rule 2: tagged)-> *Hold order -(rule 3: held)-> Notify ops
+%%
+
+## Fowler's warnings
+- The pitch that business people will write rules without programmers "rarely works out in practice".
+- Each rule may make sense on its own, but their interactions, especially with chaining, can be very complex. Nobody can see the implicit flow, and a small change can have many unintended effects.
+- His heuristics: limit the number of rules (if you need clever algorithms for performance, you probably have too many to understand), avoid or limit chaining, test heavily with production data, and seek early pain when changing rules.
+- He leans towards a **limited, domain-specific** rules mechanism built for one narrow context, and suggests prototyping both a product and a hand-rolled approach.
+
+## A trigger framework that non-engineers can use
+For "when an order over $500 is placed, notify the fraud team", the narrow design:
+- **Events**: services publish product events (`OrderPlaced`) to a bus (08.03).
+- **Rules as data**: each rule is a row with an event type, a condition in a constrained form (field, operator, value, combined with AND/OR), and an action from a fixed menu (notify a channel, call a webhook, add a tag). A UI builds these; no arbitrary code.
+- **Evaluator**: a consumer reads events, loads active rules for that event type (cached), evaluates conditions and enqueues actions.
+- **Actions**: executed by workers with retries and idempotency keys (event ID plus rule ID).
+- **Guardrails**: no chaining by default (actions don't emit events that re-enter rules), validation and a test mode against recent real events, versioning and an audit log of who changed what, and rate limits on actions.
+
+%%flow A narrow trigger framework: events in, rules as data, actions out through idempotent workers.
+Services -(OrderPlaced)-> Event bus -> *Rule evaluator -(match)-> Action queue -> Workers -(notify)-> Fraud channel
+%%
+
+! Example: the fraud rule
+! An analyst creates: event `OrderPlaced`, condition `total > 500 AND country != billing_country`, action "post to #fraud-review". The UI first replays it against yesterday's events and shows it would have fired 37 times. Saved as version 1. When an order of $820 arrives, the evaluator matches it and enqueues a notification keyed `evt_773:rule_12`, so a redelivered event doesn't post twice.
+
+> Takeaway: rules engines let you express condition-action rules as data, but unconstrained rules and chaining become unmaintainable. Build a narrow, domain-specific trigger system with a fixed set of conditions and actions, testing and an audit trail.
+
+?? Publish product events such as OrderPlaced to an event bus. Store rules as data (event type, a condition built from fields, operators and values, and an action from a fixed list like "notify channel"), created in a UI with validation and a dry run against recent events. A rule-evaluator service consumes events, matches active rules and enqueues actions, which workers execute idempotently. Keep rules versioned and audited, and avoid chaining so behaviour stays understandable.
+
+@08.09
+## Two ways to fan out
+When one event must reach many recipients, you choose when to do the work:
+- **Fan-out on write (push)**: when the event happens, copy it to every recipient's inbox. Reads are cheap; writes cost one operation per recipient.
+- **Fan-out on read (pull)**: store the event once; each reader gathers what they need at read time. Writes are cheap; every read does the gathering.
+
+## Messaging fanout
+AWS's SNS-to-SQS page describes the infrastructure version: publish one message to an SNS topic, which pushes it to every subscribed SQS queue. Each queue stores its copy until its consumer polls, so each downstream service processes independently at its own pace. (The page itself is brief; it describes the push-then-poll combination and the JSON envelope an SQS subscriber receives.) A typical use: an `OrderPlaced` message fans out to separate queues for billing, shipping and analytics.
+
+%%flow SNS-to-SQS fanout: one publish, one durable queue per consumer, each read at its own pace.
+[Billing] Order svc -(publish)-> *SNS topic -(copy)-> SQS billing -(poll)-> Billing
+[Shipping] Same message -(copy)-> SQS shipping -(poll)-> Shipping
+[Analytics] Same message -(copy)-> SQS analytics -(poll, slower)-> Analytics
+%%
+
+## The news feed case
+Hello Interview's Facebook News Feed breakdown applies this to feeds, with 2 billion users, under 500 ms reads and up to 1 minute of acceptable staleness:
+- **Fan-out on read**: build the feed at request time by querying posts from everyone the user follows. Simple, but slow for users who follow many accounts.
+- **Fan-out on write**: keep a precomputed feed per user, a list of about 200 post IDs (about 2 KB per user, 4 TB for 2 billion users). When someone posts, a message goes on a queue (SQS, at-least-once), and async feed workers prepend the post ID to each follower's feed.
+- **The celebrity problem**: an account with tens of millions of followers would trigger tens of millions of writes per post. So the Follow table carries a flag marking such follows as not precomputed, and workers skip them.
+- **Hybrid read**: the feed service reads the user's precomputed feed and merges in recent posts from the few big accounts they follow, fetched at read time.
+- Pagination uses a cursor (timestamp of the oldest post seen). Viral posts are served from a replicated post cache so one hot key isn't stuck on one cache node.
+
+%%flow Push for ordinary accounts, pull for celebrities, merged when the feed is read.
+[Write path] Friend posts -(queue)-> Feed workers -(prepend id)-> *Follower feeds
+[Read path] Open app -> Precomputed feed -(merge)-> *Celebrity posts from cache -> Feed
+%%
+
+! Example: a 50 million follower post
+! A celebrity posts. Fan-out on write would mean 50 million feed writes; at 100,000 writes a second that takes over 8 minutes, and repeats for every post. Instead the post is stored once. When any of the 50 million followers opens the app, the feed service reads their precomputed feed (from normal accounts) and merges the celebrity's latest posts, which are in a hot cache.
+
+> Takeaway: fan out on write for normal accounts so reads are cheap, and fan out on read for accounts with huge followings, merging at read time. For service-to-service events, a topic that copies messages into one queue per consumer gives each consumer its own pace.
+
+?? Fan-out on read for that user. Pushing every post into 50 million feeds is millions of writes per post and minutes of delay. Store their posts once, cache them, and merge them into followers' feeds at read time, while still using fan-out on write for ordinary accounts (the hybrid approach).
+
+@08.10
+## The race on the last item
+Hello Interview's "Dealing with contention" pattern (only the problem statement is free) describes the core bug: two buyers read "1 left", both pass the check, both write "0 left", and both are charged for one item. Any read-check-write sequence without coordination will oversell under load.
+
+%%seq The race: both buyers read 1 left before either writes, so both succeed.
+Buyer A > Database : read stock = 1
+Buyer B > Database : read stock = 1
+Buyer A > Database : write stock = 0
+Buyer B > Database : write stock = 0
+Database -> Buyer B : both charged for one item
+%%
+
+## How Ticketmaster-style systems prevent it
+Hello Interview's Ticketmaster breakdown (free) handles 10 million users for one event and requires consistency for booking:
+- **Reservation with expiry**: a short transaction moves a ticket to RESERVED with an expiry of now + 10 minutes, but only if it is AVAILABLE or its earlier reservation has expired. No background job is needed to free expired holds; the condition checks expiry.
+- **Distributed lock alternative**: `SET ticket:{id} {user} NX EX 600` in Redis. NX makes it atomic, so only one user gets the key; EX frees it automatically if they abandon checkout. The database still has the final say.
+- **Double booking prevented** by a transactional database (Postgres) with row locks (`SELECT ... FOR UPDATE`) or optimistic concurrency control.
+- **Payment**: the client tokenises the card with Stripe; Stripe's webhook confirms payment, and an idempotent handler, keyed by booking ID, marks the ticket sold and the booking confirmed in one transaction.
+- **Virtual waiting queue** for huge events: users join a queue in a Redis sorted set by timestamp, hold an SSE or WebSocket connection, and are admitted in batches; the booking service rejects reservations from users not in the `admitted:{eventId}` set.
+
+%%flow A ticket's life: a reservation expires on its own unless payment confirms it.
+Available -(reserve, 10 min hold)-> *Reserved -(payment webhook)-> Booked
+%%
+
+## Flash sales
+Hello Interview's flash sale breakdown (requirements free, solutions paywalled) frames the problem: Nike releases 10,000 pairs at noon and tens of millions of users try to buy within seconds. Users reserve a unit for a limited time and then pay. The general toolkit, which follows from the techniques above:
+- **Atomic conditional decrement**: `UPDATE inventory SET stock = stock - 1 WHERE sku = ? AND stock > 0`, and check rows affected. One row, one statement, no oversell, but every buyer contends on one row.
+- **Move the counter to Redis**: `DECR` or a Lua script that checks and decrements atomically handles tens of thousands of operations per second; the database records the orders. Reconcile Redis with the database afterwards.
+- **Reserve, then pay**: a reservation with a TTL; if payment doesn't complete, the unit returns to stock.
+- **Admission control**: a waiting room or token gate so only a few thousand users reach checkout at once, and reject quickly once stock hits zero.
+- **Queue orders**: put purchase requests on a queue and let a single consumer per SKU allocate units in order.
+
+%%flow The flash sale funnel: most buyers are stopped cheaply before the database.
+100,000 buyers -(waiting room)-> 2,000 admitted -(atomic Lua decrement)-> *100 reservations -(pay in 5 min)-> Orders in DB
+%%
+
+! Example: 100 items, 100,000 buyers
+! The sale opens. A waiting room admits 2,000 users at a time. Each "Buy" runs a Redis Lua script: if `stock > 0`, decrement it and write a reservation with a 5 minute TTL, else return sold out. The first 100 succeed in about 50 ms; the other 99,900 see "sold out" without touching the database. Twelve buyers don't pay in time; their reservations expire and the units go back to the next people in line.
+
+> Takeaway: overselling comes from unsynchronised read-check-write. Make the decrement atomic and conditional, hold units with expiring reservations until payment, and put admission control in front so the hot item isn't hammered by everyone at once.
+
+?? Put a waiting room or rate limit in front so only a manageable number reach checkout. Decrement stock atomically and conditionally, for example a Redis Lua script or `UPDATE ... SET stock = stock - 1 WHERE stock > 0` and check rows affected, so the count can never go below zero. A successful decrement creates a reservation with a short TTL; payment confirms it, and an expired reservation returns the unit. Everyone after the 100th gets an immediate sold-out response.

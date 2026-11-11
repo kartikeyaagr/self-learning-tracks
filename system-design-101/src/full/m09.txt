@@ -1,0 +1,850 @@
+@09.01
+## What a search system does
+A search system takes a short, vague query and returns a ranked list of the documents most likely to satisfy it, in tens of milliseconds, over a collection that may hold billions of items. The Stanford *Introduction to Information Retrieval* book (Manning, Raghavan and Schütze) opens with the naive alternative: to find plays by Shakespeare that contain Brutus and Caesar but not Calpurnia, you could scan every play line by line, the way `grep` does. That works for a few megabytes. It fails when the collection is large, when you need flexible matching (words near each other, misspellings), and when you need ranking rather than a yes or no. The answer is to do the expensive work once, ahead of time, by building an index.
+
+So every search system has two halves that run on different schedules:
+- **Indexing** (offline, heavy, can take minutes to hours): collect documents, turn text into terms, and build data structures that make lookups fast.
+- **Querying** (online, must be fast): turn the user's query into terms, look them up, score the matching documents and return the best few.
+
+## The pipeline, stage by stage
+%%flow Indexing runs ahead of time; querying reuses the same text processing so query terms match index terms.
+[Indexing] Documents -(crawl or ingest)-> Parse and tokenize -(normalise, stem)-> *Inverted index
+[Querying] Query -(same tokenizer)-> Query terms -(look up postings)-> Candidates -(score)-> Ranked results
+%%
+
+1. **Acquire documents.** A crawler fetches web pages (lesson 09.12), or the application pushes its own records (products, posts, tickets) into the search engine, often through change data capture (lesson 09.10).
+2. **Parse and tokenize.** Strip markup, split the text into tokens, lower-case them, and optionally remove stop words (09.06) and reduce words to a stem ("running" to "run").
+3. **Build the inverted index.** For each term, record which documents contain it, and often how many times and at which positions (09.02).
+4. **Understand the query.** Apply the same tokenisation to the query, then fix spelling, expand synonyms and detect intent (09.07, 09.15).
+5. **Retrieve candidates.** Look up each query term's postings list and combine them (09.03).
+6. **Score and rank.** Compute a relevance score such as TF-IDF or BM25 (09.04, 09.05), then optionally re-rank the top results with a learned model that uses signals like popularity, freshness and clicks (09.08).
+7. **Return results** with titles and snippets that show why each matched.
+
+The crucial design rule is that steps 2 and 4 must agree. If the index stores "run" but the query is processed into "running", nothing matches.
+
+## What a production engine looks like
+Hello Interview's Elasticsearch deep dive describes the most common real implementation. Elasticsearch is a distributed layer on top of Apache Lucene, the library that does the indexing and scoring.
+
+| Concept | What it is |
+|---|---|
+| Index | A named collection of documents, roughly a table |
+| Document | A JSON object, the unit you search and return |
+| Mapping | The schema: which fields exist and how each is analysed |
+| Shard | A slice of an index; each shard is one Lucene index |
+| Replica | A copy of a shard, for fault tolerance and read throughput |
+| Segment | An immutable piece of a Lucene index; new writes create new segments |
+
+A search request arrives at a **coordinating node**, which sends it to one copy of every shard. In the **query phase**, each shard scores its own documents and returns only the IDs and scores of its top results. The coordinator merges these lists, then in the **fetch phase** asks the relevant shards for the full documents of the final top results.
+
+%%seq Elasticsearch's two-phase search: shards return only IDs and scores first, then the coordinator fetches the winning documents.
+Client > Coordinator : search "red shoes", size 10
+Coordinator > Shard 1 : query phase
+Coordinator > Shard 2 : query phase
+Shard 1 -> Coordinator : top 10 IDs + scores
+Shard 2 -> Coordinator : top 10 IDs + scores
+Coordinator > Coordinator : merge, keep global top 10
+Coordinator > Shard 1 : fetch docs 4, 9, 17
+Coordinator > Shard 2 : fetch docs 2, 8 ...
+Coordinator -> Client : 10 ranked documents
+%%
+
+Hello Interview stresses two practical points. Elasticsearch is **not a primary database**: keep the source of truth in Postgres or DynamoDB and copy changes into the search index. And it is often unnecessary for small data: below roughly 100,000 documents, the database's own text search is usually enough.
+
+! Example: search for a shop with 2 million products
+! Indexing: the product database streams every change into an Elasticsearch index with fields `title` (analysed text), `brand` (exact keyword), `price` (number). Querying: "red runing shoes" is tokenised, "runing" is corrected to "running", the engine retrieves products whose title contains the terms, scores them with BM25, filters by `in_stock = true`, and a re-ranker boosts best-sellers. The page shows 20 results with the matched words highlighted, in about 50 ms.
+
+> Takeaway: search is an offline indexing pipeline (acquire, tokenize, build the inverted index) plus an online query pipeline (understand the query, retrieve candidates, score, rank). Both must process text the same way, and the search index is a derived copy of data that lives elsewhere.
+
+?? Documents are acquired by crawling or ingestion, parsed and tokenised (lower-casing, stemming, maybe stop-word removal), and written into an inverted index mapping each term to the documents that contain it. At query time the query goes through the same text processing plus spelling correction and expansion, the postings lists for its terms are looked up and combined into candidates, the candidates are scored with BM25 or similar, the top results are optionally re-ranked using signals like popularity and clicks, and the final list is returned with snippets.
+
+@09.02
+## The idea: invert the document
+A document naturally lists its words. An inverted index flips that relationship: for every term, it lists the documents that contain it. The IR book calls the set of terms the **dictionary** (or vocabulary) and each term's list of document IDs its **postings list**. Each entry in a list is a **posting**.
+
+Using the question's three documents:
+
+| Doc ID | Text |
+|---|---|
+| 1 | cat sat |
+| 2 | cat ran |
+| 3 | dog sat |
+
+%%flow The inverted index for the three documents: each term points to the sorted list of documents that contain it.
+[cat] cat, df 2 -> *1 -> 2
+[dog] dog, df 1 -> *3
+[ran] ran, df 1 -> *2
+[sat] sat, df 2 -> *1 -> 3
+%%
+
+Now "which documents contain sat?" is one dictionary lookup instead of a scan of every document.
+
+## How the book builds it
+The IR book's construction is sort-based:
+1. Collect the documents.
+2. Tokenise each one into a list of tokens.
+3. Normalise the tokens (lower-case, stem) into indexing terms.
+4. Emit a `(term, docID)` pair for every token.
+5. **Sort** the pairs by term, then by docID.
+6. Merge duplicate pairs within a document and group by term, so each term gets one postings list. Record the **document frequency** (df), the length of each list.
+
+```
+pairs = []
+for doc_id, text in docs.items():
+    for term in text.lower().split():
+        pairs.append((term, doc_id))
+pairs.sort()                      # by term, then doc id
+index = {}
+for term, doc_id in pairs:
+    plist = index.setdefault(term, [])
+    if not plist or plist[-1] != doc_id:
+        plist.append(doc_id)      # sorted, no duplicates
+# {'cat': [1, 2], 'dog': [3], 'ran': [2], 'sat': [1, 3]}
+```
+
+## Where the pieces live
+The book separates the two parts by size. The **dictionary** is small enough to keep in memory, and each entry stores the term, its document frequency and a pointer to its postings. The **postings** are large and live on disk. Postings are kept **sorted by docID**, which is what makes intersecting two lists a fast linear merge (lesson 09.03).
+
+Postings can store more than an ID:
+- **Term frequency**: how many times the term appears in that document, needed for ranking (09.04).
+- **Positions**: where in the document each occurrence is, needed for phrase queries ("new york") and proximity queries.
+
+The book discusses the data-structure choice: linked lists make insertion cheap, while variable-length arrays avoid pointer overhead and use the CPU cache better. Because lists are sorted, systems store the **gaps** between successive IDs (1, 2, 3 instead of 1000, 1002, 1005) rather than the IDs themselves; small gaps compress well with variable-byte encoding.
+
+## At real scale
+A billion-document index cannot be built by sorting in memory. Engines like Lucene build small in-memory indexes as documents arrive, flush each as an immutable **segment** to disk, and periodically merge segments into bigger ones. Hello Interview notes that deletes are soft: a deleted document is marked in a bitmap and physically removed only when its segment is merged. This is the same idea as the LSM tree in Module 7: buffer, flush immutable files, compact in the background.
+
+%%flow Lucene-style indexing: buffer new documents in memory, flush immutable segments, merge them in the background.
+New documents -> In-memory buffer -(flush)-> Segment 1, 2, 3 -(background merge)-> *One larger segment
+%%
+
+> Takeaway: an inverted index maps each term to a sorted postings list of document IDs, built by emitting (term, docID) pairs, sorting and grouping. The dictionary stays in memory, postings live on disk, and at scale the index is built as immutable segments that are merged later.
+
+?? Tokenise the documents: doc 1 gives cat, sat; doc 2 gives cat, ran; doc 3 gives dog, sat. Emit pairs (cat,1) (sat,1) (cat,2) (ran,2) (dog,3) (sat,3), sort by term then doc, and group. The index is cat → [1, 2], dog → [3], ran → [2], sat → [1, 3], with document frequencies 2, 1, 1 and 2.
+
+@09.03
+## Boolean retrieval
+The simplest way to use an inverted index is Boolean retrieval: a query is a logical expression over terms, and a document either matches or it does not. The IR book's running example is the query `Brutus AND Caesar AND NOT Calpurnia` over Shakespeare's plays.
+
+- **AND** is the intersection of postings lists.
+- **OR** is their union.
+- **NOT** removes one list's documents from another.
+
+## Intersecting two lists
+Because postings are sorted by docID, two lists can be intersected with one pass, like the merge step of merge sort. Keep a pointer into each list. If the two IDs are equal, output the ID and advance both. Otherwise advance the pointer with the smaller ID. The book notes this takes O(x + y) time for lists of length x and y.
+
+%%flow Intersecting sorted postings for "cat AND sat": walk both lists together, advancing whichever pointer holds the smaller ID.
+[cat] 1 -> 2 -> 7 -> 9
+[sat] 1 -> 3 -> 9
+[cat AND sat] *1 -> *9
+%%
+
+```
+def intersect(p1, p2):
+    i = j = 0; out = []
+    while i < len(p1) and j < len(p2):
+        if p1[i] == p2[j]: out.append(p1[i]); i += 1; j += 1
+        elif p1[i] < p2[j]: i += 1
+        else: j += 1
+    return out
+```
+
+## Why the shortest list goes first
+For a query with several ANDed terms, the book's heuristic is to **process terms in order of increasing document frequency**, starting with the rarest. The intermediate result can never be larger than the smallest list seen so far, so every later step works on a short list. In its example, `(Calpurnia AND Brutus) AND Caesar` is evaluated by starting with Calpurnia because it appears in the fewest documents.
+
+! Example: why order matters
+! Say "the" appears in 10,000,000 documents, "quick" in 50,000 and "zebra" in 300. Starting with "the AND quick" walks 10,050,000 postings to produce up to 50,000 results, then intersects those with "zebra". Starting with "zebra AND quick" produces at most 300 results, and the final step only needs to check those 300 against "the". Skip pointers (or a binary search) let the engine jump through the long list instead of reading all of it.
+
+Long lists can carry **skip pointers**: every so often, a pointer jumps ahead several entries, so when one list is much shorter the merge can leap over runs of the longer list.
+
+## The limit of Boolean search
+Boolean retrieval has no notion of "better". A query either returns too many results to read (feast) or none at all (famine), and every match is equally good. That is fine for expert users such as librarians and lawyers writing precise queries, but most users type a few words and want the best results first. Ranking (09.04, 09.05) fixes this, and the tiered index below is one way to keep ranking fast.
+
+## Tiered indexes
+The IR book (section 7.2.1) describes **tiered indexes** as a way to avoid scoring every matching document. Split each term's postings into tiers by importance. In the book's example, tier 1 holds documents where the term appears at least 20 times, and tier 2 those where it appears at least 10 times. A query first runs on tier 1 only. If tier 1 yields at least K results (the number you want to show), stop. If not, fall back to tier 2, and so on.
+
+%%flow A tiered index: search the high-quality tier first and only fall back when it can't fill the page.
+Query -> *Tier 1: tf at least 20 -(fewer than K results)-> Tier 2: tf at least 10 -(still fewer)-> Tier 3: the rest
+%%
+
+The book's related tricks, all trading a little accuracy for speed:
+- **Index elimination**: only consider terms whose idf is above a threshold (rare, informative terms), or only documents containing many of the query terms.
+- **Champion lists**: covered in 09.06.
+
+Real web engines apply the same idea with quality rather than term frequency: a small tier of high-quality, popular pages is searched first.
+
+> Takeaway: Boolean queries are evaluated by merging sorted postings lists in linear time, starting with the rarest term so intermediate results stay small. Boolean search doesn't rank, so tiered indexes put the best postings in a first tier and only fall back to lower tiers when the first can't supply enough results.
+
+?? The intersection of several lists can never be longer than the shortest one. Starting with the rarest term makes the intermediate result small from the first step, so every later intersection only checks a few candidates against the longer lists, which can be skipped through with skip pointers or binary search. Starting with a common term would walk millions of postings only to throw most of them away.
+
+@09.04
+## From matching to ranking
+Boolean search says whether a document matches; ranked search says how well. The IR book (chapter 6) builds the standard answer from two observations.
+
+1. **A term that appears often in a document is probably central to it.** This is **term frequency**, tf(t, d): the number of times term t occurs in document d.
+2. **A term that appears in many documents tells you little.** A query for "the auto insurance" should be driven by "insurance", not "the". This is captured by **document frequency**, df(t): the number of documents containing t.
+
+## Inverse document frequency
+The book defines
+
+`idf(t) = log(N / df(t))`
+
+where N is the number of documents. A term in every document gets log(1) = 0. A term in one document of a million gets log(1,000,000), about 6 (base 10). The logarithm dampens the effect so a term that is 1,000 times rarer is not 1,000 times more important.
+
+The book explains why df is used rather than **collection frequency** (cf, total occurrences across all documents) with numbers from the Reuters collection (N = 806,791):
+
+| Term | cf | df |
+|---|---|---|
+| try | 10,422 | 8,760 |
+| insurance | 10,440 | 3,997 |
+
+Both words occur about 10,400 times in total, but "insurance" is concentrated in fewer documents: when an article is about insurance, it says "insurance" many times. Document frequency captures that "insurance" is the better discriminator; collection frequency would treat them as equal.
+
+## Combining them
+The book's weight is the product:
+
+`tf-idf(t, d) = tf(t, d) × idf(t)`
+
+It is highest when a term occurs many times in a few documents, lower when it occurs few times in a document or in many documents, and lowest (zero) when it occurs in virtually every document. The simplest score of a document for a query adds up the weights of the query terms:
+
+`Score(q, d) = Σ over t in q of tf-idf(t, d)`
+
+%%flow tf-idf for one term in one document: the count in the document times the term's rarity across the collection.
+tf: 3 times in the doc -(times)-> idf: log10 of 1,000,000 / 1,000 = 3 -> *Weight 9
+%%
+
+! Example: scoring two documents for "the insurance"
+! N = 1,000,000. "the" is in 1,000,000 documents, so idf = log10(1) = 0. "insurance" is in 1,000 documents, so idf = log10(1000) = 3. Document A says "the" 40 times and "insurance" once: score = 40 × 0 + 1 × 3 = 3. Document B says "the" 5 times and "insurance" 6 times: score = 0 + 6 × 3 = 18. B wins, and the 40 uses of "the" in A count for nothing.
+
+## The vector space model
+The book then treats each document and the query as vectors with one dimension per term, the value being the tf-idf weight. Similarity is the **cosine** of the angle between the query vector and a document vector. Dividing by vector length normalises for document length, so a long document doesn't win just because it repeats everything more. The book also suggests sublinear tf, using 1 + log(tf) instead of raw tf, because 20 occurrences are not 20 times as significant as one.
+
+Plain tf-idf has two weaknesses that BM25 (next lesson) fixes: raw tf grows without limit, so stuffing a keyword keeps raising the score, and its length handling is crude.
+
+> Takeaway: tf-idf rewards a term that appears often in a document (tf) but discounts terms that appear in many documents (idf = log(N/df)). A document's score is the sum of tf-idf over the query terms, and cosine similarity normalises for document length.
+
+?? IDF is log(N / df). A word like "the" appears in nearly every document, so df is close to N and the ratio is close to 1, whose logarithm is about 0. Its weight in every document is therefore near zero however many times it appears, so it barely contributes to any score, while rare terms that actually distinguish documents get large weights.
+
+@09.05
+## What BM25 is
+BM25 ("Best Match 25") is the default similarity function in Lucene, and therefore in Elasticsearch and OpenSearch. It keeps tf-idf's two ideas but changes how term frequency and document length are counted. Elastic's *Practical BM25, part 2* walks through the formula:
+
+`score(D, Q) = Σ IDF(qᵢ) × f(qᵢ, D) × (k1 + 1) / ( f(qᵢ, D) + k1 × (1 − b + b × |D| / avgdl) )`
+
+- `f(qᵢ, D)`: how many times query term qᵢ appears in document D (the term frequency).
+- `|D|`: the length of the document in terms; `avgdl`: the average length across the index.
+- `k1` and `b`: two tuning knobs, explained below.
+- `IDF(qᵢ)`: Lucene uses `ln(1 + (N − n + 0.5) / (n + 0.5))`, where n is the number of documents containing the term. As with tf-idf, terms that appear in many documents get penalised.
+
+## k1: term frequency saturation
+In plain tf-idf, a document that mentions "shoes" 100 times scores 100 times higher on that term than one that mentions it once. That rewards keyword stuffing. BM25's term-frequency part rises quickly for the first few occurrences and then flattens toward an asymptote of (k1 + 1). Elastic's blog describes k1 as controlling how fast the curve saturates. The default is **k1 = 1.2**. A higher k1 lets extra occurrences keep counting for longer; k1 = 0 ignores term frequency entirely (only presence matters).
+
+%%flow BM25's term-frequency curve with k1 = 1.2: each extra occurrence adds less, approaching 2.2.
+tf = 1: 1.0 -> tf = 2: 1.38 -> tf = 5: 1.77 -> tf = 20: 2.08 -> *Limit: 2.2
+%%
+
+(These values ignore length normalisation, that is b = 0: tf × 2.2 / (tf + 1.2).)
+
+## b: length normalisation
+A match in a 50-word product title means more than the same match in a 10,000-word manual that mentions everything. BM25 compares each document's length with the average: the term `(1 − b + b × |D|/avgdl)` is above 1 for longer-than-average documents, which shrinks their term-frequency score, and below 1 for shorter ones. The default is **b = 0.75**. Elastic's blog notes that b = 0 turns length normalisation off entirely and b = 1 applies it fully.
+
+| Knob | Default | Raise it when | Lower it when |
+|---|---|---|---|
+| k1 | 1.2 | Repetition genuinely signals relevance (long articles) | Fields are short and repetition is noise (titles, tags) |
+| b | 0.75 | Long documents ramble and should be penalised | Long documents are long because they have more to say |
+
+! Example: two documents for "shoes"
+! avgdl = 100, k1 = 1.2, b = 0.75. Doc A: 50 words, "shoes" twice. Length factor = 1 − 0.75 + 0.75 × 0.5 = 0.625, so tf part = 2 × 2.2 / (2 + 1.2 × 0.625) = 4.4 / 2.75 = 1.6. Doc B: 400 words, "shoes" 6 times. Length factor = 0.25 + 0.75 × 4 = 3.25, so tf part = 6 × 2.2 / (6 + 3.9) = 13.2 / 9.9 = 1.33. Doc A wins despite fewer mentions, because it is short and focused.
+
+## Where BM25 sits in a real system
+BM25 is cheap, needs no training data and is hard to beat as a first-stage scorer. Production systems usually use it to pick the top few hundred or thousand candidates from the inverted index, then re-rank those with a learned model that adds popularity, freshness, personalisation and click signals (09.08), and often combine it with vector search (09.13).
+
+%%flow Two-stage ranking: BM25 cheaply narrows millions of matches to a short list; an expensive model orders that list.
+Millions of matches -(BM25)-> *Top 1,000 candidates -(learned re-ranker)-> Top 10 shown
+%%
+
+> Takeaway: BM25 is tf-idf with saturation (k1, default 1.2, so repeated words stop adding much) and length normalisation relative to the average document (b, default 0.75). It is the default first-stage ranker in Lucene-based engines.
+
+?? In tf-idf the score grows linearly with term frequency, so a document that repeats a word 50 times scores 50 times higher on it, which rewards keyword stuffing and over-weights long repetitive documents. BM25's k1 makes the contribution saturate: the first few occurrences raise the score a lot, and later ones add less and less, approaching a fixed ceiling of k1 + 1.
+
+@09.06
+## Stop words
+Stop words are extremely common words, such as "the", "a", "of" and "to", that carry little meaning on their own. The IR book (section 2.2.2) describes how a stop list is built: sort terms by **collection frequency** and take the most frequent ones, often checking them by hand for meaning in the domain. Dropping them shrinks the index a lot, because their postings lists are the longest of all.
+
+The book also lists what goes wrong:
+- **Phrase queries break.** "To be or not to be" consists entirely of common stop words. "President of the United States" loses meaning without "of the".
+- **Meaning changes.** "Flights to London" and "flights from London" become the same query.
+- Song and film titles ("The Who", "Let It Be") vanish.
+
+The trend the book reports is that stop lists have shrunk over time: from large lists of 200 to 300 terms, to very small lists of 7 to 12 terms, to none at all. Web search engines generally do not use stop lists. Three techniques removed the need:
+- **Compression** makes long postings lists cheap to store.
+- **IDF weighting** already gives common words almost no weight in ranking (09.04).
+- **Impact-sorted indexes** let query processing stop reading a common term's list early.
+
+%%flow Why modern engines keep stop words: compression and IDF remove the cost while keeping phrases intact.
+"to be or not to be" -(stop list)-> Empty query
+"to be or not to be" -(keep, idf near 0)-> *Phrase match still works
+%%
+
+## Champion lists
+Even with an inverted index, a query term like "insurance" may match hundreds of thousands of documents, and scoring all of them is slow. The IR book (section 7.1.3) describes **champion lists** (also called fancy lists or top docs): at indexing time, for each term t, precompute the r documents with the highest weight for t (for example the highest tf). At query time, take the union of the champion lists of the query terms and compute full scores only for those documents.
+
+%%flow Champion lists: precompute each term's best r documents at index time, then score only their union at query time.
+[Index time] Term "insurance" -(keep top r by weight)-> *Champion list: r docs
+[Query time] Query terms -(union of champion lists)-> Small candidate set -(full score)-> Top K
+%%
+
+The trade-off, as the book states it:
+- The query is fast because it scores perhaps a few thousand documents instead of a few million.
+- The result may be **wrong**: a document that is good overall but not in any single term's top r is never considered.
+- If r is smaller than K (the number of results you need), you may not be able to fill the page.
+- r is chosen at index time, before the query is known. The book notes r can vary by term, for example larger for rarer terms.
+
+The book adds **static quality scores**: if each document has a query-independent quality g(d) (PageRank, reviews, popularity), champion lists can be built from tf-idf plus g(d), and postings can be ordered by g(d) so the best documents are read first.
+
+! Example: champion lists for "cheap flights"
+! r = 500. "cheap" has 2,000,000 documents and "flights" has 300,000. Without champion lists you might score hundreds of thousands of documents. With them, you take the 500 best for "cheap" and the 500 best for "flights", a union of at most 1,000, and score those fully. If the ideal result is a page ranked 600th for each word individually but excellent for both together, it will be missed; that is the accuracy you gave up.
+
+> Takeaway: stop lists shrink the index but break phrases and meaning, so modern engines keep stop words and rely on compression and IDF. Champion lists precompute each term's top r documents so queries only score a small candidate set, trading exactness for speed.
+
+?? They give up exactness. Only documents in at least one query term's precomputed top r list are scored, so a document that is a strong match for the whole query but not in the top r for any single term is never seen. The choice of r is made at index time without knowing the query, and if r is smaller than the number of results needed, the page may not fill.
+
+@09.07
+## Why query understanding comes first
+Daniel Tunkelang's *Query Understanding* series defines query understanding as what happens **before** ranking: working out what the searcher means from what they typed. He frames search as a communication channel: the searcher has an intent, encodes it in a few words, and the engine must decode it. Ranking can only order documents that retrieval found, and retrieval can only find what the interpreted query asks for. A bad interpretation can't be rescued later.
+
+## The stack, from characters to meaning
+Tunkelang organises the topics as layers, each building on the one below.
+
+%%layers Tunkelang's query understanding stack, from raw characters up to the searcher's intent.
+Characters | normalisation (case, accents, Unicode), tokenisation
+Words | stemming and lemmatisation, spelling correction
+Phrases | segmentation ("new york" is one unit), entity recognition
+*Meaning | synonyms, taxonomies, classification of intent
+Rewriting | relaxation, expansion, field restriction
+Interaction | autocomplete, context, personalisation, conversation
+%%
+
+1. **Character filtering and normalisation**: lower-case, strip accents ("café" and "cafe"), unify Unicode forms and punctuation.
+2. **Tokenisation**: split into tokens. Harder than splitting on spaces: "wi-fi", "C++", "AT&T", and languages like Chinese and Japanese that don't use spaces.
+3. **Stemming and lemmatisation**: map "running", "runs" and "ran" to a common form so they match. Stemming chops suffixes by rules; lemmatisation uses a dictionary.
+4. **Spelling correction** (09.15).
+5. **Query segmentation**: decide which words belong together. "new york times square" is "new york" + "times square", not "new" + "york times" + "square".
+6. **Entity recognition**: tag parts of the query as brands, places, people or categories ("nike" is a brand, "under 50" is a price).
+7. **Query classification**: map the query to a category or intent (navigational, product, question).
+8. **Synonyms and taxonomies**: know that "sofa" and "couch" mean the same, and that "sneakers" is a kind of "shoes".
+9. **Query rewriting**: change the query to retrieve better results. This includes **relaxation** (drop a term when nothing matches all of them), **expansion** (add synonyms, 09.16), and **field restriction** (search "nike" only in the brand field).
+10. **Autocomplete, context, personalisation and conversation**: guide the user while typing (09.14), use their session and history, and clarify through facets or follow-up questions.
+
+## A worked pass
+! Example: "Nike runing shoes under $100"
+! Normalise: "nike runing shoes under $100". Tokenise: nike, runing, shoes, under, $100. Spell-correct: runing → running. Stem: running → run, shoes → shoe. Recognise entities: nike = brand, "under $100" = price filter, "running shoes" = category. Rewrite: `brand:nike AND category:running-shoes AND price < 100`, with "trainers" added as a synonym. Only now does the engine look up postings and rank.
+
+%%flow One query moving through the stack before it ever touches the index.
+"Nike runing shoes under $100" -(normalise, tokenise)-> nike runing shoes -(spell, stem)-> nike run shoe -(entities)-> brand nike, price under 100 -> *Structured query to index
+%%
+
+## How to judge it
+Tunkelang's measure of success is **query performance**: whether queries lead to successful outcomes, such as clicks or purchases. Each step above should be evaluated by whether it improves that, not by whether it is linguistically correct.
+
+> Takeaway: before retrieval, a query is normalised, tokenised, stemmed, spell-checked, segmented into phrases, tagged with entities and intent, and rewritten (relaxed, expanded, restricted to fields). Retrieval and ranking can only work with the interpretation this produces.
+
+?? Normalise characters (case, accents, punctuation), tokenise, apply stemming or lemmatisation, correct spelling, segment the query into phrases, recognise entities and classify intent, then rewrite it: expand synonyms, restrict parts to fields such as brand or price, and relax it if it would match nothing. The resulting structured query is what is looked up in the index.
+
+@09.08
+## What feedback is
+A search engine can learn from how people react to its results. Tunkelang's *relevance feedback* post separates two kinds:
+- **Explicit feedback**: the user says which results were good, for example by marking them. It is accurate but rare, because few users bother.
+- **Implicit feedback**: the engine infers relevance from behaviour. A click suggests a result looked relevant; a result that was skipped while a lower one was clicked suggests it wasn't.
+
+The classic technique is **Rocchio's algorithm** from the 1960s SMART system: move the query vector toward the documents marked relevant and away from those marked non-relevant, then search again. Tunkelang points to Lucene's **MoreLikeThis** as a modern relative: take a document the user liked and build a query from its most distinctive terms. Today the main use of feedback is not re-querying in the moment but as **training data for ranking models**.
+
+## Learning to rank
+Elastic's *Learning To Rank* (LTR) documentation describes the standard setup. BM25 or another first-stage query retrieves candidates, and a trained model **re-scores the top results** (it runs as a rescorer, not over the whole index, because it is expensive).
+
+%%flow Learning to rank: logs and judgments train a model offline; the model re-ranks the first stage's top results online.
+[Offline] Judgment list -(features per query and document)-> Train model, e.g. LambdaMART -> *Model uploaded
+[Online] Query -(BM25)-> Top N candidates -(rescore with model)-> Final order
+%%
+
+The pieces Elastic names:
+- **Judgment list**: a set of queries, each with documents and a relevance grade. Grades come from human raters or are derived from user behaviour such as clicks.
+- **Features**, of three kinds:
+  - **Document features**, independent of the query: popularity, price, recency, rating.
+  - **Query features**, independent of the document: query length, detected category.
+  - **Query-document features**: how well this document matches this query, such as the BM25 score of the title field.
+- **Model**: Elastic's examples use gradient-boosted decision trees with the LambdaMART objective, trained with XGBoost outside Elasticsearch and then uploaded.
+
+## Why clicks are biased
+The question asks about bias in clicks. Neither of the two assigned pages discusses this in detail (Tunkelang's post does not mention position bias or dwell time), so the following is general knowledge from the IR field rather than from those sources.
+
+| Bias | What happens | Common correction |
+|---|---|---|
+| **Position bias** | Users click the top result far more often regardless of quality, simply because they read top-down | Estimate the examination probability per position and reweight clicks; randomise the order slightly for a small share of traffic |
+| **Presentation bias** | Results with images, ratings or bold snippets attract clicks | Include presentation as a feature so the model can separate it |
+| **Selection bias** | You only get feedback on results you showed; anything never shown gets no clicks | Occasional exploration: show new items in some slots |
+| **Click is not satisfaction** | Misleading titles get clicks followed by a quick return | Use dwell time, purchases or "no return to results" as stronger signals |
+
+The danger of ignoring this is a feedback loop: the model learns that whatever was on top is good, ranks it on top again, and it collects more clicks.
+
+%%flow The position-bias loop: training on raw clicks teaches the model to keep whatever it already ranked first.
+Result shown first -(gets most clicks)-> Clicks used as labels -(model learns)-> *Ranked first again
+%%
+
+! Example: reading a click log
+! For "wireless earbuds", result 1 gets 40% of clicks and result 3 gets 12%. If studies of your page show that position 1 is examined by 95% of users and position 3 by 30%, then the click rate among users who looked is about 42% for result 1 and 40% for result 3. They are nearly equally attractive; the raw numbers mostly measured position.
+
+> Takeaway: feedback can be explicit (rare, accurate) or implicit (clicks, skips, purchases). Today it mostly trains learning-to-rank models that re-score BM25's top results using document, query and query-document features. Raw clicks are biased, above all by position, and must be corrected before being used as labels.
+
+?? Clicks depend on where and how a result was shown, not only on relevance. The main example is position bias: people click higher results much more often simply because they look at them first, so a mediocre top result can collect more clicks than an excellent one at position 5. Training on raw clicks would teach the model to keep ranking whatever was already on top. (This answer goes beyond the assigned pages, which do not discuss click bias.)
+
+@09.09
+## Why accuracy is the wrong measure
+The IR book's evaluation chapter (chapter 8) starts with a test collection: documents, a set of queries, and human judgments of which documents are relevant to each query. The obvious measure, accuracy (fraction of documents classified correctly as relevant or not), is useless: for a typical query, over 99.9% of documents are irrelevant, so a system that returns **nothing** is 99.9% accurate. Search needs measures that look only at the relevant documents and at what was retrieved.
+
+## Precision and recall
+For one query, split all documents by whether they were retrieved and whether they are relevant.
+
+| | Relevant | Not relevant |
+|---|---|---|
+| Retrieved | true positives (tp) | false positives (fp) |
+| Not retrieved | false negatives (fn) | true negatives (tn) |
+
+- **Precision** = tp / (tp + fp): of what I returned, how much was relevant?
+- **Recall** = tp / (tp + fn): of everything relevant, how much did I return?
+
+%%flow Precision and recall answer different questions about the same result set.
+[Precision] Retrieved 20 -(12 are relevant)-> *Precision 12 / 20 = 60%
+[Recall] Relevant 30 in collection -(12 were retrieved)-> *Recall 12 / 30 = 40%
+%%
+
+They pull against each other. The book points out that recall **never decreases** as you return more documents: returning the whole collection gives 100% recall and terrible precision. Returning one sure-fire result can give 100% precision and terrible recall.
+
+## Which matters when
+The book gives examples on each side:
+- **Precision** matters for web search: users look at the first page and don't care whether the 5,000th relevant page was found.
+- **Recall** matters to professional searchers such as **paralegals** doing legal discovery and **intelligence analysts**, who must find every relevant document and will read many results to do so. Missing one relevant contract or message can be costly; reading a few extra irrelevant ones is not. Other recall-first cases are patent prior-art search, medical literature reviews, and the candidate-retrieval stage of any two-stage ranker (anything missed there can never be re-ranked up).
+
+## The F measure
+To compare systems with one number, the book uses the F measure, a weighted harmonic mean of precision and recall. The balanced version is
+
+`F1 = 2PR / (P + R)`
+
+The harmonic mean punishes imbalance: P = 1.0 and R = 0.02 gives F1 of about 0.04, while the arithmetic mean would say 0.51. A weight β > 1 favours recall and β < 1 favours precision.
+
+## Measures for ranked results
+Precision and recall treat results as a set, but users see a ranked list. The chapter's later sections, which I summarise from general knowledge rather than from what I re-read for this lesson, cover measures that respect order:
+- **Precision at k** (P@10): precision among the top 10 only, matching what a user sees.
+- **Mean average precision (MAP)**: for each query, average the precision at each rank where a relevant document appears, then average over queries. It rewards putting relevant results early.
+- **NDCG** (normalised discounted cumulative gain): supports graded relevance (perfect, good, fair) and discounts gains logarithmically by position, normalised by the ideal ordering so scores lie between 0 and 1.
+
+%%flow DCG discounts each result's gain by its rank, so a great result at rank 1 counts more than at rank 5.
+Rank 1: gain 3 / 1 -> Rank 2: gain 2 / 1.58 -> Rank 3: gain 0 -> Rank 4: gain 3 / 2.32 -> *DCG = 5.56
+%%
+
+Offline metrics need judgments; online, teams also run A/B tests and track click-through rate, time to first click, and the rate of searches abandoned or immediately reformulated.
+
+! Example: two systems for one query
+! There are 10 relevant documents. System A returns 5 results, 4 relevant: P = 0.8, R = 0.4, F1 = 0.53. System B returns 20 results, 8 relevant: P = 0.4, R = 0.8, F1 = 0.53. Same F1, different products: A suits a shopper, B suits a paralegal.
+
+> Takeaway: precision is the share of returned results that are relevant; recall is the share of relevant documents that were returned. F1 combines them, and ranked measures (P@k, MAP, NDCG) reward putting relevant results first. Choose the measure that matches the user's cost of missing something.
+
+?? Recall matters more when missing a relevant document is costly and reading extra results is cheap: legal discovery (paralegals must find every relevant document), intelligence analysis, patent prior-art and medical literature searches, and the first candidate-generation stage of a ranking pipeline, where anything not retrieved can never be ranked later. Web and shopping search usually favour precision because users only look at the first few results.
+
+@09.10
+## The search index is a copy
+Hello Interview's Elasticsearch deep dive is explicit: Elasticsearch should not be the primary store. The source of truth is a database such as Postgres or DynamoDB, and the index is a **derived copy** optimised for search. That raises the question of how changes reach the copy.
+
+## Why dual writes go wrong
+The tempting approach is for the application to write to both: update the database, then update the index. The free part of Hello Interview's CDC page explains the problem with this **dual-write** pattern. The two writes are not atomic.
+
+%%seq A dual write that fails halfway: the database has the new price, the index still shows the old one, and nothing will fix it.
+App > Database : UPDATE price = 80
+Database -> App : committed
+App > Search index : update price = 80
+Search index -> App : timeout (write lost)
+App > App : crash before retry
+%%
+
+The failure cases:
+- **Partial failure**: one write succeeds and the other fails (timeout, crash, deploy). The index is now permanently wrong until something rewrites that document.
+- **Race conditions**: two requests update the same row. They commit to the database in order A then B, but reach the index in order B then A, leaving the index with A's stale value.
+- **Every writer must remember**: any code path, script or admin tool that changes the database without also updating the index silently creates drift.
+- Wrapping both in a transaction is not possible, because the search engine doesn't take part in the database's transactions.
+
+## Change data capture
+The safer pattern is to write **only** to the database and let a separate process read the database's own change log and apply each change to the index. This is **change data capture** (CDC). Debezium is the common open-source tool; its features page lists what log-based CDC gives you:
+- It captures **all** changes, including deletes, because it reads the write-ahead log (Postgres) or binlog (MySQL) rather than polling tables.
+- **Low delay** (milliseconds) and low overhead, compared with polling queries that add load.
+- **No change to the data model**: no "last updated" column needed.
+- Each event can include the **old state** of the record and metadata such as the transaction and source position.
+- Initial **snapshots** (including incremental ones) to load existing data before streaming.
+- Filters, masking of sensitive columns, monitoring, and single message transformations (SMTs).
+
+%%flow CDC: the application writes once; the database's log becomes the ordered stream that keeps the index in sync.
+App -(single write)-> Database -(WAL / binlog)-> *Debezium -(change events)-> Kafka -(consumer)-> Search index
+%%
+
+Because events come from the log, they arrive in **commit order** per row, so the race above disappears. If the indexer crashes, it restarts from its last offset in Kafka, so nothing is lost. A brand-new index can be built by replaying a snapshot plus the stream.
+
+## What you still have to handle
+- **Lag**: the index is eventually consistent, typically behind by well under a second, but a user who saves a document and immediately searches may not see it. Common fixes are reading the item from the database on its own page, or showing the user's own recent edits directly.
+- **Idempotent writes**: replays can deliver an event twice, so the indexer should upsert by document ID (and ideally check a version number) so applying an event twice is harmless.
+- **Denormalisation**: a search document often joins several tables (product plus brand plus stock). The indexer must react to changes in any of them.
+- **Reindexing**: when the mapping changes, build a new index from a snapshot plus the stream, then switch an alias to it.
+
+! Example: a price change
+! A merchant sets a shoe's price to 80. The app commits one UPDATE to Postgres. Debezium reads the WAL entry and publishes `{op: "u", before: {price: 95}, after: {price: 80}, lsn: 4411}` to Kafka. The indexer consumes it and upserts document 123 with price 80 and version 4411. If the indexer crashed after reading but before writing, it rereads the event on restart; the second upsert is harmless.
+
+> Takeaway: dual writes to a database and a search index drift apart on partial failures and races. Write only to the database and let change data capture (such as Debezium reading the WAL or binlog) stream ordered changes, including deletes, to an idempotent indexer.
+
+?? The two writes are not atomic: if the database write succeeds and the index write fails or the app crashes, the index is permanently wrong, and concurrent updates can reach the index in a different order than they committed, leaving stale data. The safer pattern is change data capture: the app writes only to the database, a tool such as Debezium reads the database's log and publishes ordered change events, including deletes, and an idempotent consumer applies them to the index, resuming from its offset after failures.
+
+@09.11
+## Two ways to split an index
+When an index no longer fits on one machine, or one machine can't serve the query rate, it must be split. The IR book (section 20.3) describes two options.
+
+**Term partitioning** (global index): each machine holds the complete postings lists for a subset of terms. Machine 1 has every document's postings for terms starting a to f, and so on.
+
+**Document partitioning** (local index): each machine holds a complete index, but only for a subset of the documents.
+
+%%flow The two ways to split an index: by term, a query visits only the machines owning its terms; by document, it visits every shard.
+[By term] Query "cat sat" -(cat)-> Node 1: all postings for a-f -(sat)-> *Node 3: all postings for s-z
+[By document] Query "cat sat" -(scatter to all)-> Shards 1, 2, 3: local top K -(gather)-> *Merge to global top K
+%%
+
+| | Term-partitioned | Document-partitioned |
+|---|---|---|
+| Machines per query | Only those holding the query's terms | All shards |
+| Multi-term queries | Long postings lists must be shipped between machines to intersect | Each shard intersects locally |
+| Load balance | Hot terms make hot machines | Even, if documents are spread evenly |
+| Adding documents | Touches many machines (every term in the doc) | Touches one shard |
+| Scoring | Natural global statistics | Needs global idf |
+
+## Why document partitioning wins
+The book states that document partitioning is the more common approach. The reasons follow from the table: each shard can answer a query on its own, a new document is written to one place, load spreads evenly, and losing a machine removes some documents rather than whole terms. Term partitioning's apparent advantage (fewer machines per query) is undone by the cost of moving long postings lists across the network to intersect them and by hot spots on popular terms.
+
+The main drawback the book identifies is that **idf must be global**: each shard sees only its own documents, so a term rare in one shard but common overall would be over-weighted. The book's solution is to compute collection statistics with background processes and distribute them to the shards periodically. Elasticsearch takes a lighter approach by default, using each shard's local statistics, which works when documents are spread randomly and shards are large.
+
+## Sizing shards in Elasticsearch
+Elastic's *Size your shards* guide gives practical rules for the document-partitioned design:
+- Aim for shards between **10 GB and 50 GB**, and fewer than about **200 million documents** per shard. Very large shards are slow to recover and move; very small ones waste overhead.
+- **Each shard is searched by one thread per search**, so more shards per query can mean more parallelism, but each shard adds fixed overhead in memory and coordination.
+- Keep the shard count per node bounded: the guide gives about **1,000 shards per non-frozen data node**, and fewer than 3,000 indices per GB of heap on master-eligible nodes.
+- For time-based data (logs), use **rollover** with index lifecycle management, for example rolling over when a primary shard reaches 50 GB, and delete whole old indices rather than individual documents, since deletes are only cleaned up when segments merge.
+- Shard count is fixed at index creation; to change it, use the split or shrink APIs, or reindex into a new index.
+
+%%flow Time-based indices with rollover: write to the newest index, and drop whole old indices instead of deleting documents.
+Writes -> *logs-000042 -(rollover at 50 GB primary shard)-> logs-000043 -(after 30 days)-> Delete old index
+%%
+
+! Example: sizing a product search index
+! 300 million products at about 2 KB each is 600 GB. At about 30 GB per shard, that's 20 primary shards; with one replica each, 40 shards. Spread across 8 data nodes, that's 5 shards per node. A query fans out to 20 shards (one copy of each) in parallel, each returns its local top 10, and the coordinator merges 200 hits into the final 10.
+
+> Takeaway: indexes can be split by term or by document. Document partitioning is more common because each shard answers queries locally, writes touch one shard and load is even; its cost is a scatter-gather to every shard and the need for global statistics. In Elasticsearch, keep shards around 10 to 50 GB.
+
+?? Document partitioning is more common. Each shard holds a full index of its own documents, so it can intersect and score locally, a new document touches only one shard, and load spreads evenly. Term partitioning has to ship long postings lists between machines to answer multi-term queries and concentrates load on machines holding popular terms. The price of document partitioning is that every query goes to every shard and idf has to be kept global.
+
+@09.12
+## What a crawler does
+A web crawler starts from a set of seed URLs, downloads each page, extracts its links, and adds new links to a queue, repeating until it has covered as much of the web as it should. The IR book (chapter 20) lists what a crawler must do and should do:
+- **Must**: be **robust** (survive spider traps, such as sites that generate infinite URLs) and **polite** (respect site rules and not overload servers).
+- **Should**: be distributed, scalable, efficient, focus on high-quality pages first, keep pages **fresh** by revisiting them, and be extensible to new formats.
+
+The ByteByteGo chapter on designing a web crawler requires a paid login, so this lesson is built from the IR book.
+
+## The modules
+The book's architecture, based on the Mercator crawler:
+
+%%flow The crawl loop: take a URL from the frontier, fetch, parse, drop duplicates, and feed new links back.
+*URL frontier -(next URL)-> DNS resolve -> Fetch page -> Parse -(content seen?)-> Store for indexing
+%%
+
+%%flow Extracted links pass through filters before entering the frontier.
+Extracted links -(URL filter and robots.txt)-> Normalise -(duplicate URL elimination)-> *Back into frontier
+%%
+
+1. **URL frontier**: the queue of URLs to fetch next (detailed below).
+2. **DNS resolution**: turning hostnames into IP addresses. The book notes DNS is a common bottleneck because lookups can take seconds and standard libraries block, so crawlers cache results and use asynchronous resolvers.
+3. **Fetch**: download the page over HTTP.
+4. **Parse**: extract text and links.
+5. **Content seen?**: skip pages whose content was already seen at another URL. Exact duplicates are found with a **fingerprint** (checksum) of the content; near-duplicates with **shingles** (overlapping word sequences compared between pages).
+6. **URL filter**: drop URLs outside the crawl's scope, by domain or file type.
+7. **robots.txt**: a site's rules on which paths crawlers may fetch. The book notes it should be checked **just before fetching** (because rules change) and cached, since every URL on a host needs it.
+8. **Normalisation**: turn relative links into absolute URLs and canonicalise them.
+9. **Duplicate URL elimination**: don't enqueue a URL already in the frontier or already crawled.
+10. **Checkpointing**: periodically save the frontier and state so a crash doesn't restart the crawl.
+
+## The URL frontier: priority and politeness
+The question asks how a crawler avoids hammering a site. The Mercator frontier answers it with two sets of queues.
+
+%%flow The Mercator frontier: front queues decide what is important; back queues, one host each, decide when a host may be contacted again.
+Prioritiser -(by importance)-> Front queues 1..F -(biased random pick)-> Back queue router -(one host per queue)-> *Back queues 1..B -(heap of next allowed times)-> Fetcher thread
+%%
+
+- **Front queues (F of them) handle priority.** A prioritiser assigns each URL a priority (based on page quality and how often it changes) and puts it in the matching front queue. Higher-priority queues are picked more often.
+- **Back queues (B of them) handle politeness.** Each back queue holds URLs from **exactly one host**, and each host maps to only one back queue. So a host can never be fetched by two threads at once.
+- **A heap** holds one entry per back queue: the earliest time that queue's host may be contacted again. A fetcher thread takes the heap's top, waits until that time, fetches one URL from the queue, then puts the queue back into the heap with a new time.
+- The **gap** between requests to the same host is set relative to how long the last fetch took. The book suggests a gap of about **10 times** the last fetch time, so a slow server (which may be struggling) is automatically visited less often.
+- Mercator's recommendation is about **three times as many back queues as fetcher threads**, so threads always have a host they are allowed to hit.
+
+! Example: two hosts, one slow
+! Host A's last page took 0.2 s, so its next allowed time is now + 2 s. Host B's took 3 s, so B waits 30 s. A fetcher pops the heap, gets A's queue (earliest time), fetches one page, and reinserts A at now + 2 s. B's 50 queued URLs sit untouched until its 30 seconds are up; a struggling site is never hit by two threads in parallel.
+
+## Scaling out
+The book distributes the crawler by **host**: each crawler node owns a set of hosts (for example by hashing the hostname), so politeness for a host is enforced on one node. When a node extracts a link to a host it doesn't own, it sends the URL to the owning node. Content fingerprints and seen-URL sets are also partitioned, and seen-URL checks are batched because the set is too large for memory.
+
+> Takeaway: a crawler loops frontier → DNS → fetch → parse → dedupe → filter → frontier. Politeness comes from the Mercator frontier: back queues hold one host each, a heap enforces the earliest next contact time per host, and the gap scales with the host's response time (about 10× the last fetch).
+
+?? It never lets two fetches to the same host happen at once and spaces requests out per host. In the Mercator frontier, each back queue holds URLs for one host only, and a heap records the earliest time each host may be contacted again; a thread fetches one URL, then the host must wait a gap of roughly ten times the last fetch duration, so slow servers are hit less. It also obeys robots.txt, checked just before fetching and cached per host.
+
+@09.13
+## Why vectors
+Keyword search matches words. A query for "cheap flights to the coast" won't find a page that only says "budget airfare to the seaside", because no terms overlap. **Vector search** represents both queries and documents as **embeddings**: arrays of numbers produced by a model so that similar meanings land close together. Hello Interview's vector database deep dive says typical embeddings have 128 to 1,536 dimensions (OpenAI's text-embedding-3-large has 3,072). Search becomes: find the stored vectors nearest to the query vector.
+
+Distance measures from the same page:
+- **Euclidean (L2)**: straight-line distance; considers direction and magnitude.
+- **Cosine similarity**: the angle between vectors, ignoring length; 1 means same direction. Good for normalised text embeddings.
+- **Dot product**: like cosine without normalising; slightly cheaper.
+- **Hamming**: count of differing bits between binary vectors; extremely fast.
+
+## Approximate nearest neighbours
+Comparing the query with every vector (exact search) is too slow for millions of vectors, so systems use **approximate nearest neighbour** (ANN) indexes that check a small fraction and usually find the true nearest ones. How often they do is measured as **recall**.
+
+| Index | Idea | Trade-off (Hello Interview) |
+|---|---|---|
+| **HNSW** | Multi-layer graph; sparse top layers act as express lanes | 95%+ recall at low latency; about 2× the memory of the raw vectors; slow to build; inserts are costly |
+| **IVF** | k-means clusters; search only the `nprobe` nearest clusters | Faster to build, lighter on memory, handles inserts better; lower recall at the same latency |
+| **LSH** | Hash functions that make similar vectors collide | Simple and fast to build, good for streams; usually lower recall than HNSW |
+| **Annoy** | Forest of random-projection trees, memory-mapped | Loads instantly and can be shared between processes; immutable, must rebuild to change |
+
+## How HNSW works
+Pinecone's HNSW article builds it from two ideas. A **skip list** (Pugh, 1990) is a sorted list with extra sparse layers on top so a search can take long jumps and then descend. A **navigable small world** (NSW) graph links each vector to some neighbours so greedy routing (always step to the neighbour closest to the target) reaches the destination in few hops. HNSW stacks NSW graphs into layers like a skip list.
+
+%%flow HNSW search: start at the sparse top layer, greedily move toward the query, then drop a layer and repeat.
+Entry point, layer 2 -(greedy hops)-> Closest in layer 2 -(descend)-> Layer 1 -(greedy hops)-> Layer 0, all vectors -> *Nearest neighbours
+%%
+
+- Each new vector gets a random top layer; the probability of reaching higher layers falls off exponentially, controlled by a level multiplier mL = 1/ln(M). So most vectors live only in layer 0 and a few in the top layers.
+- **M** is the number of neighbours each node links to. Pinecone's Sift1M tests show memory rising from about 0.5 GB at M = 2 to about 5 GB at M = 512.
+- **efConstruction** controls how thoroughly neighbours are searched when inserting (better graph, slower build).
+- **efSearch** controls how many candidates are explored per query. Pinecone's charts show recall rising from around 80% at about 1 ms per query to near 100% at about 50 ms as these settings increase.
+
+Hello Interview adds operational points: updates are delete plus insert, deletes are soft until a rebuild, and building HNSW over millions of vectors can take hours, so teams use a small **hot index** for recent inserts beside a large **cold index**, and rebuild in the background and swap.
+
+## Filtering
+Real queries add filters ("shoes under $100 in stock"). Hello Interview describes the options:
+- **Post-filter**: get the top N vectors (N much bigger than K) then drop those failing the filter. Risk: a strict filter leaves fewer than K.
+- **Pre-filter**: filter first, then search only matching vectors. Risk: the ANN index can't be used efficiently on an arbitrary subset.
+- **Filter during traversal**: Elasticsearch's kNN filter and Pinecone apply the filter while walking the index, using metadata indexes alongside the vectors.
+
+## Hybrid retrieval and reciprocal rank fusion
+Neither method wins everywhere. BM25 is precise for exact terms: product codes, names, rare jargon, error messages ("ERR_SSL_PROTOCOL_ERROR"), where embeddings blur near-matches together. Vector search handles paraphrase, synonyms and natural-language questions, where keyword search finds nothing. **Hybrid search** runs both and merges them.
+
+The scores can't simply be added: BM25 scores are unbounded and depend on the query, while cosine similarity is between −1 and 1. Elastic's **reciprocal rank fusion** (RRF) uses only ranks:
+
+`RRF score(d) = Σ over result lists of 1 / (k + rank of d in that list)`
+
+Elastic's default `rank_constant` k is **60**, and `rank_window_size` (how many results from each list are considered) defaults to the requested size. Elastic notes RRF needs no tuning and no score normalisation.
+
+%%flow Hybrid search with RRF: run keyword and vector retrieval in parallel, then merge by rank alone.
+[Keyword] Query -(BM25)-> Ranked list A -(1 / (60 + rank))-> *RRF sum per document
+[Vector] Query -(embed, kNN)-> Ranked list B -(1 / (60 + rank))-> *RRF sum per document
+[Merge] *RRF sum per document -(sort by sum)-> Final ranking
+%%
+
+! Example: fusing two lists with k = 60
+! Doc A is 1st in BM25 and 5th in kNN: 1/61 + 1/65 = 0.0164 + 0.0154 = 0.0318. Doc B is 2nd in BM25 and absent from kNN: 1/62 = 0.0161. Doc C is 1st in kNN only: 1/61 = 0.0164. Order: A, C, B. A document both methods like beats one that only one method ranks first.
+
+> Takeaway: vector search finds meaning through nearest neighbours in embedding space, using ANN indexes such as HNSW (high recall, memory-hungry) or IVF (lighter, lower recall). BM25 catches exact terms that embeddings blur. Hybrid search runs both and merges with reciprocal rank fusion, which uses ranks (1/(60 + rank)) so incompatible scores don't need normalising.
+
+?? They fail in different places. BM25 is precise for exact tokens such as product codes, names and rare terms, but misses documents that say the same thing in different words. Vector search catches synonyms and paraphrases but can blur exact identifiers and rank near-misses highly. Running both and merging with reciprocal rank fusion, which only uses each document's rank in each list, gets the strengths of both without having to make their scores comparable.
+
+@09.14
+## What autocomplete is for
+Tunkelang's *Autocomplete* post argues it is not just about saving keystrokes: it **guides searchers to queries that work**. Users now expect it, and for many of them the suggestion list is the whole search experience. The ByteByteGo chapter on designing an autocomplete system requires a paid login, so the system design part below combines Tunkelang's modelling with the standard trie design, which I describe from general knowledge.
+
+## Modelling: which completions to offer
+Tunkelang models autocomplete as conditional probability: given the typed prefix, offer the most probable full queries. From a query log:
+- If 1,000 of 1,000,000 logged queries are "pants", P(pants) = 0.001.
+- If 50,000 queries start with "pa", then P(pants | pa) = 1,000 / 50,000 = 0.02.
+- P(pants | pat) would be 0 by prefix matching, unless "pat" is a typo, which is why autocomplete must work with spelling correction.
+
+He lists complications: frequency ignores **recency and seasonality**; **context** (location, session) can improve estimates but risks overfitting; the typed text may not be a prefix ("pa" should be able to suggest "mens pants"); and you should exclude queries that came from clicking a suggestion when counting, to avoid a **feedback loop** where suggestions become popular because they were suggested.
+
+He then argues popularity is not enough; **query performance** matters. Choose suggestions by the probability of a successful search (click or purchase), which is P(query | prefix) × P(click | query). In his example, "pants" has P = 0.02 given "pa" and click-through 0.1, giving 0.002; "pant cuffs" is ten times rarer but has click-through 0.5, giving 0.001. Ranking purely by click probability still favours the popular, weaker query, so he suggests at least a **minimum performance threshold** for any suggestion.
+
+## The data structure: a trie with cached top-k
+The standard design stores queries in a **trie** (prefix tree): each node is a prefix, each edge adds one character, and a path from the root spells a query.
+
+%%flow A trie for "tree", "trie", "try" and "toy": each node caches its top completions so a lookup is one walk.
+root -> t: tree, try, trie -> *tr: tree, try, trie -> tre: tree
+root -> t -> to: toy
+%%
+
+Naively answering "top 5 completions for prefix p" means walking to p's node (O(length of p)), then visiting **every** node below it to collect candidates and sort them by frequency. For a short prefix like "s" that subtree holds millions of queries, which is far too slow for a response needed in well under 100 ms while the user types.
+
+The fix is to **cache the top k completions at every node**. Then a lookup is just a walk down the prefix and a read of the stored list: effectively constant time for the bounded prefix lengths people type. The costs:
+- **Memory**: every node stores k entries. Acceptable because suggestions are limited to popular queries, prefixes are short, and k is small (5 to 10).
+- **Updates are expensive**: a change in one query's count can change the top-k lists of every ancestor. So the trie is usually **rebuilt offline** (daily or hourly) from aggregated logs rather than updated per keystroke.
+
+## The surrounding system
+%%flow Autocomplete splits into a slow offline path that builds the trie and a fast read path that serves it.
+[Offline] Query logs -(aggregate weekly or daily counts)-> *Trie builder -(snapshot)-> Trie store
+[Online] Keystroke -(debounced request)-> Suggestion service -(in-memory trie, cached top 5)-> Suggestions
+%%
+
+- **Data collection**: log queries, aggregate counts per period, and drop rare or unsafe queries (a block list for offensive or harmful completions).
+- **Serving**: the trie lives in memory in a suggestion service, sharded by prefix (first character or two) if it is too large, and replicated for read throughput.
+- **Client**: debounce keystrokes (send a request after a short pause), cache recent responses in the browser, and cache popular prefixes at the CDN, since "a", "b"... are requested constantly.
+- **Freshness**: a trending topic may need a small separate real-time index merged with the main trie.
+
+! Example: prefix "be"
+! The node for "be" stores [best buy, bed bath, bestbuy hours, beats headphones, bee movie] with counts. Typing "e" sends `GET /suggest?q=be`, the service walks b → e and returns the five cached entries in under a millisecond of server time. The full subtree below "be" (perhaps 400,000 queries) is never visited at query time; that work was done when the trie was built.
+
+> Takeaway: autocomplete predicts likely full queries from a prefix, ideally weighting by how well each query performs, not only popularity. A trie with the top k completions cached at each node turns lookups into a short walk, at the cost of memory and offline rebuilds.
+
+?? Without the cache, answering a prefix means traversing the whole subtree below its node and sorting every completion by frequency, which for a short prefix like "s" means millions of nodes on every keystroke. Caching the top 5 at each node makes a lookup a walk down the prefix plus one read, fast enough for typing speed. The cost is extra memory and that updating counts means updating ancestors' lists, so the trie is rebuilt periodically offline.
+
+@09.15
+## The model behind spelling correction
+Peter Norvig's essay *How to Write a Spelling Corrector* builds a working corrector in about 20 lines of Python, and its reasoning answers the question directly. Given a typed word w, choose the candidate correction c that is most probable:
+
+`correction(w) = argmax over c of P(c) × P(w | c)`
+
+- **P(c)**, the **language model**: how common the word c is. Norvig estimates it by counting words in a text file, big.txt, of about a million words; "the" makes up about 7% of words.
+- **P(w | c)**, the **error model**: how likely it is that someone meaning c typed w. Norvig approximates it with edit distance.
+- The candidates come from words reachable by small edits.
+
+## Generating candidates
+An edit is a deletion, transposition (swapping two adjacent letters), replacement, or insertion. For a word of length n, Norvig counts n deletions, n − 1 transpositions, 26n replacements and 26(n + 1) insertions: **54n + 25** strings at edit distance 1, most of them not real words. Applying edits twice gives edit distance 2, a much larger set, but filtering to known words leaves few.
+
+%%flow Norvig's candidate order: prefer the word itself if known, then known words one edit away, then two, then give up.
+"speling" -(known word?)-> No -(edit distance 1)-> spelling, spewing, ... -(pick most frequent)-> *spelling
+%%
+
+His simplified error model is a priority order rather than real probabilities:
+1. The original word, if it is a known word.
+2. Otherwise, known words at edit distance 1.
+3. Otherwise, known words at edit distance 2.
+4. Otherwise, the original word unchanged.
+
+Within the chosen set, pick the word with the highest P(c).
+
+## Why you need both parts
+Edit distance alone gives ties: "speling" is one edit from "spelling" (insert l) and from "spewing" (replace l with w), among others. Frequency breaks the tie: "spelling" is far more common. Frequency alone would be absurd: "the" is the most common word, but it isn't a plausible correction of "speling". The IR book's section 3.3 states the same two principles: choose the **nearest** correction, and when several are equally near, choose the **most common** one. Its example: "grnt" could be "grant" or "grunt", and the more frequent one should win.
+
+## How well it works
+Norvig measured his corrector on two test sets: **75% of 270** words correct at 41 words per second on the development set, and **68% of 400** at 35 words per second on the final test set. His list of improvements is a guide to real systems:
+- A better **language model**, with more and more representative text, and context (bigram probabilities so "their" vs "there" depends on neighbouring words).
+- A real **error model** learned from typo data: some mistakes (adjacent keys, doubled letters, vowel swaps) are much more likely than others.
+- Allowing edit distance 3 for some cases, and handling words that should be split or joined.
+
+## Spelling correction in search
+The IR book adds search-specific points:
+- Correct against the **vocabulary of the index** or against **query logs**, not a dictionary: product names and slang aren't in dictionaries, and the right correction is what other searchers typed.
+- To avoid comparing against every term, use a **k-gram index**: break the misspelled word into character bigrams or trigrams, find vocabulary terms sharing many of them, and compute edit distance only for those.
+- **Context-sensitive correction**: "flew form Heathrow" has no misspelled words; only phrase context reveals "form" should be "from".
+- **How to show it**: correct silently, run both and show "Did you mean carrot?" or show results for the correction with a link back. The book's choices depend on how confident the correction is and whether the original query returned results.
+
+%%flow A k-gram index narrows candidates before computing edit distance.
+"bord" -(bigrams: bo, or, rd)-> *Terms sharing most bigrams: board, border, lord -(edit distance)-> board
+%%
+
+! Example: "acress"
+! Candidates at distance 1 include "actress" (insert t), "across" (replace e with o), "access" (replace r with c), "caress" (transpose). A pure frequency choice picks "across", the most common. A real error model might say inserting a missing "t" is a more likely typo than swapping e and o. Context ("a famous acress") would settle it. This is why production systems learn both models from data.
+
+> Takeaway: pick the correction c that maximises P(c) × P(w|c): edit distance generates and orders candidates (the error model), and word frequency chooses among them (the language model). Search engines correct against their own vocabulary and query logs and use k-gram indexes to find candidates fast.
+
+?? Edit distance alone finds several words one edit from "speling" and can't say which the user meant, while frequency alone would pick common words like "the" that look nothing like it. Edit distance limits the candidates to plausible typos and frequency picks the likeliest among them, so "spelling" wins because it is both one edit away and much more common than other candidates.
+
+@09.16
+## What related searches are
+"Related searches" are the suggestions at the bottom or side of a results page: other queries the user might want next. They help when the first query was too broad ("jaguar" to "jaguar car price"), too narrow, or when the user wants to explore. The assigned source, Tunkelang's *Query Understanding* series, covers the closely related problem of **query expansion**; the mining of related searches from logs that follows is standard practice I describe from general knowledge, since no assigned page covers it end to end.
+
+## Query expansion
+Tunkelang describes expansion as adding terms so a query matches documents that use different words for the same thing. His example: "vp marketing" becomes `(vp OR "vice president") marketing`. Sources of expansions:
+- **Synonyms** ("couch" for "sofa") and **abbreviations** ("vp", "nyc").
+- **Stemming done as expansion**: instead of stemming the index, expand "shoe" to "shoe OR shoes".
+
+He frames it as a precision-versus-recall trade-off: expansion increases recall (more matches) but risks precision if the added term changes meaning. Options for weighting expanded terms: treat them equally, **discount** them relative to the original terms, or feed them to the ranking model as features.
+
+Related searches use the same raw material, synonyms and reformulations, but instead of silently changing the query, they **show** the alternatives and let the user choose.
+
+## Mining related searches from query logs
+The strongest signal is what other users did next. Three common sources:
+
+1. **Session co-occurrence**: queries issued by the same user within a short window (say, 30 minutes) are likely related. Count how often query B follows query A across many sessions.
+2. **Reformulations**: when a user searches A, clicks nothing, and quickly searches B, B is probably a better version of A. Reformulations that lead to clicks are especially valuable.
+3. **Click graph**: build a bipartite graph of queries and the documents clicked for them. Two queries that lead to clicks on the same documents are related even if they share no words ("cheap flights" and "budget airfare").
+
+%%flow Mining related searches: sessions and the click graph give candidate pairs; scoring and filtering turn them into suggestions.
+Query logs -(split into sessions)-> Pairs A then B -(count, normalise by popularity)-> *Candidate related queries -(filter unsafe, dedupe)-> Top 8 per query
+%%
+
+%%flow The click graph connects queries that share no words but lead to the same documents.
+"cheap flights" -(clicks)-> *skyscanner.com, kayak.com -(clicks)-> "budget airfare"
+%%
+
+## Scoring and cleaning
+Raw counts favour queries that are popular everywhere ("facebook" follows everything). Normalise: compare how often B follows A with how often B occurs overall, using pointwise mutual information or a lift ratio, so B is suggested for A only if it is unusually likely after A. Then:
+- Remove near-duplicates of the original ("jaguar cars" vs "jaguar car") so suggestions are actually different.
+- Apply **query performance** (Tunkelang's recurring theme): only suggest queries that lead to successful searches.
+- Filter offensive or sensitive suggestions and require a minimum count so a single user's queries can never be shown to others (a privacy requirement).
+- For rare queries with no log data, fall back to content: queries whose results overlap, or the embedding nearest neighbours of the query (09.13).
+
+The pairs are computed offline in a batch job (daily) and stored as a simple key-value table: query to list of related queries, served from a cache at query time.
+
+! Example: "jaguar"
+! Sessions show "jaguar" followed by "jaguar f-type" (12,000 times), "jaguar animal facts" (4,000), "jacksonville jaguars" (3,500) and "weather" (20,000). "weather" is common after everything, so its lift is low and it is dropped. The page shows car, animal and football suggestions, which also helps disambiguate an ambiguous query.
+
+> Takeaway: related searches show alternative queries rather than silently rewriting. They are mined offline from query logs (what users searched next in a session, reformulations that led to clicks, and queries sharing clicked documents), normalised so globally popular queries don't dominate, filtered for quality and privacy, and served from a key-value lookup.
+
+?? Split the logs into sessions and count pairs where query B follows query A, giving extra weight to reformulations where A got no clicks and B did. Add pairs of queries that lead to clicks on the same documents (the click graph). Normalise by overall popularity so generic queries don't dominate, drop near-duplicates, unsafe suggestions and pairs seen from too few users, keep queries that perform well, and store the top few per query in a key-value table rebuilt daily.
+
+@09.17
+## What the feature needs
+"Recent searches" shows a user their last few queries when they focus the search box. The requirements are small but specific: per user, ordered newest first, a fixed maximum (say 10), duplicates moved to the top rather than repeated, fast reads (shown before the user types anything), and the ability to delete one entry or clear all of them.
+
+## Redis lists fit exactly
+The Redis docs on lists describe the operations needed. A Redis list is a linked list of strings (implemented internally as a quicklist of compact listpacks), so adding or removing at either end is **O(1)**, while access by index is O(N). A list can hold up to 2³² − 1 elements, far more than needed.
+
+The docs describe the **capped list** pattern: push to the head, then trim to a fixed length.
+
+```
+LREM   recent:u42 0 "running shoes"   # remove an older copy, if any
+LPUSH  recent:u42 "running shoes"     # newest at the head, O(1)
+LTRIM  recent:u42 0 9                 # keep only the 10 newest
+EXPIRE recent:u42 7776000             # whole list expires after 90 days idle
+LRANGE recent:u42 0 9                 # read newest to oldest
+```
+
+%%flow Recording a search: remove the older copy, push to the head, trim to 10, and refresh the expiry.
+New search -(LREM duplicate)-> LPUSH to head -(LTRIM 0 9)-> *10 newest kept -(EXPIRE)-> Idle lists vanish
+%%
+
+- `LTRIM 0 9` is cheap: the docs give its cost as O(N) in the number of elements **removed**, which here is at most one per push. Eviction is by **recency**: the oldest entry falls off the end, which is exactly the desired behaviour.
+- `LRANGE 0 9` reads the list; its cost is proportional to the offset plus the number returned, tiny for 10 elements.
+- `LREM key 0 value` removes all copies of a value (O(N) in the list length, so trivial at 10). It provides de-duplication; it also implements "delete this one entry".
+- Wrap the push sequence in `MULTI`/`EXEC` (or a Lua script) so two concurrent searches can't interleave between steps.
+
+## Where it lives
+%%flow Recent searches: Redis serves reads instantly; an optional durable copy survives cache loss.
+Search box focus -(LRANGE recent:u42)-> *Redis list per user -(on new search, async)-> Optional durable store
+%%
+
+Memory is small: 10 entries of about 30 bytes plus overhead is under 1 KB per user, so 10 million active users is roughly 10 GB, comfortable for a Redis cluster sharded by user key. If losing the history on a cache failure is acceptable (it usually is, since it's a convenience feature), Redis alone is enough, with persistence enabled. If the history must sync across devices or survive permanently, write it to a durable key-value store (for example DynamoDB keyed by user) as well, and treat Redis as the cache. Logged-out users can keep recent searches in the browser's local storage instead, which never leaves the device.
+
+## Privacy
+The Redis docs say nothing about privacy; this part is general practice. Search history is personal data and can reveal health, finances, politics or relationships.
+- **User control**: a visible "clear history" (delete the key) and per-item remove (`LREM`); a setting to turn history off.
+- **Retention limits**: the `EXPIRE` above deletes idle history automatically; keep only what the feature needs.
+- **Separation from analytics**: aggregate query logs used for autocomplete or related searches (09.14, 09.16) should be anonymised and thresholded, and must never surface one user's searches to another.
+- **Account deletion and legal requests**: deleting a user must delete this key and any durable copy; under laws such as GDPR, users can request their data or its erasure.
+- **Shared devices**: show history only to the signed-in user, and consider not recording searches made in private or incognito modes.
+
+! Example: one user's day
+! u42 searches "running shoes", "trail shoes", then "running shoes" again. After the third search: LREM removes the old "running shoes", LPUSH adds it at the head, LTRIM keeps 10. The list reads ["running shoes", "trail shoes", ...]. The user taps the "x" on "trail shoes": `LREM recent:u42 0 "trail shoes"`. They don't search for 90 days: the key expires and the history is gone.
+
+> Takeaway: store recent searches in a per-user Redis list: LREM the duplicate, LPUSH the new query, LTRIM to the newest 10, and set an expiry. Eviction is by recency and all operations are effectively constant time at this size. Treat the history as personal data: user-controlled deletion, retention limits and no leakage into shared suggestions.
+
+?? Use a Redis list per user (key recent:{user_id}). On each search, LREM any older copy of the query, LPUSH it to the head and LTRIM the list to indexes 0 to 9, in a transaction; read with LRANGE 0 9. Eviction is by recency, since the oldest entry falls off when an eleventh is pushed. Add a durable copy only if history must sync across devices. For privacy, let users delete single entries or clear all, set an expiry such as 90 days, delete it with the account, and never feed individual histories into suggestions shown to others.

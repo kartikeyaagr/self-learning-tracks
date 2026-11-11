@@ -1,0 +1,417 @@
+@12.01
+## The query
+"Restaurants within 2 km of me" or "drivers near this rider". Each place has a latitude and longitude. The naive query is a bounding box:
+
+`SELECT * FROM places WHERE lat BETWEEN 40.70 AND 40.74 AND lng BETWEEN -74.02 AND -73.98`
+
+then compute the real distance for each row and keep those within 2 km. Hello Interview's *Yelp* breakdown sets the scale for such a system at **100 million daily users** and **10 million businesses** (its deep dives are paywalled). Its free *Proximity search* deep dive explains why the obvious indexes don't work.
+
+## Why two separate indexes fail
+A B-tree index sorts by **one** value. Hello Interview's description:
+- An index on latitude gives you a **horizontal strip** around the whole planet: every place between 40.70 and 40.74 degrees north, from New York to Madrid to Beijing.
+- An index on longitude gives a **vertical strip** from pole to pole.
+- The database can use one index and filter the other condition row by row, or intersect the two strips, but either way it touches **millions of rows** to return the few hundred in the small square where the strips cross.
+- A **composite index** (lat, lng) doesn't help: a B-tree sorts by the first column and only uses the second to break ties, so it is still effectively one-dimensional.
+
+The underlying reason, in its words: a one-dimensional sort order cannot preserve two-dimensional closeness.
+
+%%flow Two one-dimensional indexes return two huge strips; only their small intersection is wanted.
+[Latitude index] lat 40.70 to 40.74 -> *Strip around the globe: millions of rows
+[Longitude index] lng -74.02 to -73.98 -> *Strip pole to pole: millions of rows
+[Wanted] Intersection -> A few hundred places in a 4 km square
+%%
+
+## The fixes: make space searchable
+Hello Interview groups the solutions into two families.
+
+**1. Spatial trees** that understand two dimensions directly:
+- **Quadtrees**: split the map into four quadrants, and keep splitting any quadrant that holds too many points. Dense areas (Manhattan) become deep trees; empty areas (a lake) stay one coarse cell, so the tree adapts to density.
+- **R-trees**: PostGIS (on Postgres's GiST framework) wraps each object in its smallest bounding rectangle and groups nearby rectangles into larger ones up to a root, balanced like a B-tree with nodes sized to disk pages. Rectangles may overlap, so a query may descend several branches; PostGIS uses the R*-tree variant, which keeps overlap low.
+- **BKD trees**: Elasticsearch's geo fields use block k-d trees, packed into disk-page-sized blocks and built in batches (essentially write-once per segment).
+
+**2. Encoded cells** that turn a 2D position into a 1D key a normal index can handle:
+- **Geohash** (12.02): interleave latitude and longitude bits; nearby points usually share a prefix, so a B-tree prefix scan finds them.
+- **S2** and **H3** (12.03): Google's and Uber's cell systems.
+- **Redis GEO** (12.04) stores a 52-bit geohash as a sorted-set score.
+
+%%flow Encoded cells: convert the point to a cell key, scan nearby keys with an ordinary index, then filter by exact distance.
+Rider at 40.72, -73.99 -(encode)-> *Cell dr5ru -(prefix scan, plus neighbour cells)-> Candidates -(exact distance under 2 km)-> Results
+%%
+
+## Choosing
+Hello Interview's guidance:
+- **Spatial trees** (PostGIS, Elasticsearch) when data is **geometric**: polygons, roads, delivery zones, containment and intersection questions. Writes are pricier (rebalancing rectangles; BKD is batch-built), so they suit relatively static data such as business listings.
+- **Encoded cells** (geohash, S2, H3) when data is mostly **points that move constantly**: drivers, devices, live locations. Writes are cheap (recompute a key), candidate lookup is fast, and you query a ring of neighbouring cells to deal with boundaries.
+
+For Yelp-like search (static businesses, filtered by category and text, sorted by distance and rating), a search engine with geo support or PostGIS is typical. For Uber-like driver tracking (12.04), an in-memory cell index.
+
+! Example: what the bad query costs
+! 10 million businesses spread around the world. A 0.04-degree latitude band (about 4.4 km) contains maybe 100,000 businesses worldwide; a 0.04-degree longitude band maybe 50,000. Using either index reads tens of thousands of rows to find the 300 in the box. With a spatial index, the query descends to the few leaf nodes or cells covering the box and reads about 300 entries plus a few hundred nearby ones that the exact-distance filter removes.
+
+> Takeaway: a B-tree orders one dimension, so separate or composite lat/lng indexes return huge strips, not small neighbourhoods. Use a spatial tree (quadtree, R-tree, BKD) for shapes and mostly static data, or encode positions into cells (geohash, S2, H3) for moving points, then filter candidates by exact distance.
+
+?? A B-tree sorts on one value, so a latitude index returns a band around the whole globe and a longitude index a band from pole to pole; even a composite index only orders by the second column within equal first values. Either way the database reads millions of rows to find the few in the small area where the two ranges intersect. Spatial indexes (R-trees, quadtrees) or cell encodings such as geohash keep nearby points together so only a small region is read.
+
+@12.02
+## How a geohash is built
+Wikipedia credits Gustavo Niemeyer with inventing geohash in 2008 (G. M. Morton described the underlying idea, a Z-order curve, in 1966). The idea is to repeatedly halve the world and write down which half you're in:
+1. Longitude range −180 to 180: is the point in the left half (0) or right half (1)? Halve that range and repeat.
+2. Do the same for latitude, −90 to 90.
+3. **Interleave** the bits: longitude, latitude, longitude, latitude...
+4. Group the bits into 5s and write each group as one **base-32** character (digits and letters, without a, i, l and o).
+
+Each extra character adds 5 bits and shrinks the cell. Hello Interview's description: the first character splits the world into 32 cells, each further character splits a cell into 32 smaller ones. Wikipedia's example `ezs42` decodes to about 42.605° N, 5.603° W.
+
+| Length | Approximate error (Wikipedia) |
+|---|---|
+| 1 | ±2,500 km |
+| 3 | ±78 km |
+| 5 | ±2.4 km |
+| 6 | ±610 m |
+| 7 | ±76 m |
+| 8 | ±19 m |
+
+%%flow Geohash as nested cells: each character zooms into one of 32 sub-cells.
+d: eastern North America -> dr: about 630 km -> dr5: about 78 km -> dr5r: about 20 km -> *dr5ru: about 2.4 km, Manhattan
+%%
+
+## Why prefixes mean nearness
+Points in the same cell share all the characters that identified that cell. So `dr5ru…` points are all inside one roughly 5 km cell, and "everything in this cell" is a **prefix query** that an ordinary B-tree can answer: `WHERE geohash LIKE 'dr5ru%'`, or a range scan between `dr5ru` and `dr5rv`. Redis stores the same bits as a number and range-scans a sorted set. That's the whole trick: a 2D neighbourhood becomes a 1D range.
+
+## When nearby points have different geohashes
+Wikipedia is precise about the asymmetry: points sharing a long prefix are close, but **close points need not share a prefix**. It happens at cell boundaries:
+- Two points either side of **any cell edge**: Hello Interview's example is a rider on the edge of cell `dr5ru` whose nearest driver, 10 m away, is in `dr5rg`.
+- At the **equator** and **prime meridian**, the very first bits differ, so points a metre apart can share no prefix at all.
+- Across the **180° meridian** and near the **poles**.
+- Distortion: a degree of longitude shrinks toward the poles, so cells get narrower and "same length" doesn't mean "same size".
+
+%%flow The boundary problem: two points 10 m apart sit in different cells, so a single-prefix query misses one.
+Rider in dr5ru, at the edge -(10 m away)-> *Driver in dr5rg -(query dr5ru% only)-> Driver missed
+%%
+
+## The fix: query the neighbours too
+The standard solution, which Hello Interview calls the **3×3 trick**:
+1. Compute the query point's cell at a precision whose cell size is at least the search radius.
+2. Compute the **8 neighbouring cells** (libraries provide this).
+3. Query all **9 cells**.
+4. **Post-filter** by exact distance (haversine), since the 9 cells cover more area than the circle.
+
+%%flow The 3x3 neighbour search: the query cell plus its eight neighbours always covers the circle, then exact distance trims.
+Query point -(cell at 2.4 km precision)-> dr5ru -(add 8 neighbours)-> *9 prefix scans -(haversine under 2 km)-> Results
+%%
+
+Wikipedia notes Solr uses this kind of list-of-neighbour-prefixes filter. Choosing precision matters: cells much smaller than the radius mean many cells to query; cells much bigger mean many candidates to filter.
+
+! Example: choosing precision for "within 1 km"
+! Precision 6 cells are about 1.2 km × 0.6 km near the equator, smaller than the circle, so 9 of them may not cover a 1 km radius. Precision 5 cells (about 4.9 km × 4.9 km) do. So: compute the point's precision-5 cell and its 8 neighbours, scan 9 prefixes, and filter by distance. In a dense city that may be 20,000 candidates for 400 results; then you'd use precision 6 and more cells (a 5×5 block) instead.
+
+> Takeaway: a geohash interleaves longitude and latitude bits and writes them in base 32, so points in the same cell share a prefix and a 2D area becomes a 1D range scan. Points near a cell edge (or the equator, prime meridian, poles) can have different prefixes, so always query the cell plus its 8 neighbours and then filter by exact distance.
+
+?? Whenever two points lie on opposite sides of a cell boundary: they can be a metre apart but differ in early characters, and at the equator or prime meridian they may share no prefix at all, since the first bits differ. Handle it by searching the query point's cell plus its eight neighbouring cells at a precision where cells are at least as large as the search radius, then filtering the candidates by exact distance.
+
+@12.03
+## Why another grid?
+Geohash works, but its cells are rectangles in latitude and longitude, which distort badly away from the equator and break at the poles and the 180° meridian. Two production systems fix this differently: Google's **S2** and Uber's **H3**.
+
+## S2: cells on a sphere
+The S2 Geometry site describes a library that models the Earth as a **sphere** rather than a flat map, giving a worldwide index with **no seams or singularities**, a single coordinate system and low distortion. It can approximate any region as a set of discrete **S2 cells** (the "region coverer"), which suits large distributed indexes, and supports fast in-memory indexing of points, lines and polygons, robust boolean operations, nearby searches and distance measurement.
+
+The S2 home page doesn't describe the cell construction; Hello Interview's proximity deep dive does: S2 wraps the globe in a **cube**, projects it onto the six faces, and subdivides each face so cells are roughly equal in area everywhere. Each cell has a **64-bit hierarchical ID**; truncating it gives the parent cell, and cells are numbered along a space-filling curve so nearby cells usually have nearby IDs (the Hilbert-curve detail is general knowledge). It is the cell system under MongoDB's `2dsphere` index and handles polygons crossing the antimeridian, which flat grids mangle.
+
+## H3: hexagons
+Uber's blog post explains why it built **H3**: to optimise **dynamic pricing** (supply and demand measured per hexagon in each city) and **dispatch**, and to analyse and visualise geographic data city-wide.
+
+How it is built:
+- The Earth is projected onto an **icosahedron** (20 faces) and tiled with hexagons; **122 base cells**.
+- A sphere can't be tiled with hexagons alone, so there are exactly **12 pentagons**, one at each icosahedron vertex. Uber orients the icosahedron (following Buckminster Fuller) so all 12 land in the ocean.
+- **16 resolutions** (0 to 15); each finer resolution has cells of **one seventh** the area.
+- A hexagon can't be split exactly into 7 smaller hexagons, so children are only **approximately** contained in their parent. Indexing at a single resolution is exact; truncating to a parent introduces a bounded distortion.
+- Each cell is a **64-bit** index. `kRing(origin, k)` returns all cells within grid distance k, approximating a circle.
+- Compaction: a region can be stored as a mix of resolutions; the post's example compacts 10,633 resolution-6 hexagons to 901 cells.
+
+## Why hexagons
+The question. Uber's answer: a hexagon has **one** distance from its centre to every neighbour's centre. A square has **two** (its 4 edge neighbours at distance d, its 4 corner neighbours at d√2 ≈ 1.41d), and a triangle has **three**.
+
+%%flow Neighbour distances: every hexagon neighbour is the same distance away; a square's corner neighbours are 41% further.
+[Hexagon] Centre -(6 neighbours, all at d)-> *One distance
+[Square] Centre -(4 edge neighbours at d)-> Edge ring -(4 corner neighbours at 1.41 d)-> *Two distances
+%%
+
+Why it matters:
+- **Rings approximate circles**: "everything within 2 rings" is a near-circular area, so radius queries and smoothing ("blend surge with neighbouring cells") treat all directions equally. With squares, "neighbours" either excludes corners (a cross shape) or includes them (diagonal neighbours count as close as edge ones while being 41% further).
+- **Movement**: Uber notes hexagons **minimise quantisation error** as people move through a city: no ambiguous corner-touching cells.
+- **Simpler maths**: analyses like gradients and flows need a single set of coefficients rather than separate ones for edge and corner neighbours.
+
+The trade-off: H3 cells aren't laid along a space-filling curve, so (as Hello Interview notes) close IDs are not reliably close on the map. Instead of a range scan you compute the exact ring of cell IDs and query `WHERE h3_cell IN (…)`.
+
+## Comparison
+| | Geohash | S2 | H3 |
+|---|---|---|---|
+| Shape | Rectangles in lat/lng | Quadrilaterals on cube faces | Hexagons (+12 pentagons) |
+| Distortion | High toward poles; seams | Low; no seams | Low |
+| Hierarchy | Exact (prefix) | Exact (ID truncation) | Approximate (aperture 7) |
+| Nearby lookup | Prefix range scan + neighbours | ID ranges along curve | Compute k-ring, look up IDs |
+| Good for | Simple point search in a database | Region covering, polygons, global indexes | Aggregation, pricing, movement analysis |
+
+! Example: surge pricing in H3
+! Uber buckets ride requests and available drivers by resolution-8 hexagon (about 0.7 km² cells). For each hexagon, it compares demand and supply, then smooths the result with its kRing(1) neighbours, all 6 of which are equally far away. A square grid would have to decide whether diagonal cells count, and weight them differently.
+
+> Takeaway: S2 projects a cube onto the sphere for low-distortion, seamless cells with exact hierarchical 64-bit IDs; H3 tiles an icosahedron with hexagons in 16 resolutions. Hexagons have a single centre-to-neighbour distance (squares have two, triangles three), so rings approximate circles and movement and smoothing behave the same in every direction.
+
+?? A hexagon's six neighbours all share an edge with it, so every neighbour's centre is the same distance away. A square has four edge neighbours at distance d and four corner neighbours at about 1.41d, so "the neighbours" are at two different distances (triangles have three). With hexagons, rings of cells approximate circles, smoothing and movement treat all directions alike, and the maths needs one set of coefficients.
+
+@12.04
+## The workload
+A ride-hailing app tracks drivers who send their position **every 4 seconds**. With 1 million active drivers, that's **250,000 location writes per second**, each overwriting the previous position. Riders query "drivers within 3 km" thousands of times per second. The data has unusual properties:
+- **Write-heavy and overwrite-only**: only the latest position matters; history (if needed) goes elsewhere.
+- **Short-lived**: a position older than about 30 seconds is useless.
+- **Loss-tolerant**: if the store is lost, it refills itself within 4 seconds as drivers send new updates.
+
+## Redis GEO
+The Redis docs describe its geospatial index:
+- `GEOADD key lng lat member` adds or **updates** a member's position, in **O(log N)**.
+- `GEOSEARCH key FROMLONLAT lng lat BYRADIUS 3 km WITHDIST` returns members inside a circle (or a box with BYBOX), with distances; options sort by distance and limit the count. Its cost is O(N + log M), where N is the number of elements in the grid-aligned bounding box around the shape.
+
+Hello Interview's proximity deep dive explains the implementation: `GEOADD` interleaves latitude and longitude into a **52-bit geohash integer** and stores it as the **score in a sorted set**, so a nearby query is a set of score-range scans over the neighbouring cells (12.02), done in memory.
+
+```
+GEOADD drivers:nyc -73.9857 40.7484 driver:812     # every 4 s per driver
+GEOSEARCH drivers:nyc FROMLONLAT -73.99 40.75 BYRADIUS 3 km ASC COUNT 20 WITHDIST
+```
+
+%%flow The hot path: drivers overwrite their position in Redis every 4 seconds; rider queries read the same in-memory index.
+Driver app -(every 4 s)-> Location service -(GEOADD, overwrite)-> *Redis GEO, sharded by city -(GEOSEARCH 3 km)-> Matching service
+%%
+
+## Why not Postgres for this?
+PostGIS can index points and answer radius queries well. The problem is the **write pattern**:
+- Every update in Postgres is a new row version (MVCC), a write-ahead log record, index updates (a GiST/R-tree index, whose rebalancing is relatively expensive, as 12.01 noted), and later vacuuming of dead versions. 250,000 updates per second of the same rows creates enormous churn for data that is worthless 30 seconds later.
+- Durability is wasted: you pay to fsync positions you would never restore.
+- Replication ships all that churn to replicas.
+
+Redis keeps everything in memory, updates a sorted-set score in O(log N), and has no per-write disk cost on the hot path (persistence can be off or relaxed). The result is far higher throughput per node and sub-millisecond queries.
+
+%%flow Separate the hot ephemeral path from the durable path.
+[Hot path] Location every 4 s -> *Redis GEO: latest position only
+[Durable path] Trips, sampled positions -(batched)-> Postgres or data lake: history, billing, analytics
+%%
+
+## Operating it
+- **Shard by region** (city, or a coarse cell): a key per city keeps each sorted set manageable and queries local. Drivers near a city boundary may need two keys queried.
+- **Stale drivers**: sorted-set members don't expire individually. Keep a separate "last seen" timestamp (another sorted set scored by time) and periodically remove drivers not seen for 30 seconds, or filter by last-seen at query time.
+- **Availability state**: drivers on a trip shouldn't be matched; keep separate keys for available drivers, or filter after the search.
+- **History**: if you need the trace for a trip, sample positions (say every 30 seconds) into a durable store asynchronously.
+- **Failure**: a lost Redis shard is rebuilt by the next round of updates within seconds; that's why giving up durability here is acceptable.
+
+! Example: the numbers
+! 1 million drivers × 1 update per 4 s = 250,000 GEOADDs per second. Spread over 20 Redis shards by city, 12,500 per shard: comfortable for in-memory sorted-set updates. The same load on Postgres would be 250,000 row updates per second with WAL, index maintenance and vacuum, for data with a 30-second shelf life.
+
+> Takeaway: frequent driver location updates are write-heavy, overwrite-only, short-lived and self-healing. Redis GEO stores them in memory as 52-bit geohash scores in a sorted set (GEOADD O(log N), GEOSEARCH by radius), avoiding the per-write WAL, MVCC and index costs Postgres would pay. Keep history and trips in a durable store separately.
+
+?? Location updates are hundreds of thousands of overwrites per second of data that is useless after about 30 seconds and refills itself if lost. Postgres would pay for each update with a new row version, WAL writes, spatial index maintenance, vacuum and replication. Redis keeps the positions in memory as geohash scores in a sorted set, so GEOADD is an O(log N) in-memory update and GEOSEARCH answers radius queries quickly; durability isn't needed because the next update arrives within 4 seconds. Trips and history go to a durable database separately.
+
+@12.05
+## The problem
+A **geofence** is a polygon: an airport pickup zone, a delivery area, a city's surge region, a no-fly zone. For each location update, you need "which geofences contain this point?" With 100,000 geofences and 250,000 updates per second, testing every polygon would be 25 billion point-in-polygon tests per second. Each test is itself proportional to the polygon's number of edges (12.06).
+
+## Filter, then refine
+The standard approach has two stages, which PostGIS's `ST_Contains` documentation describes directly: the function **automatically performs a bounding-box comparison that uses any available spatial index** before running the exact geometric test. (An internal variant `_ST_Contains` skips the index.)
+
+1. **Filter**: find the few geofences whose **bounding boxes** contain the point, using a spatial index (an R-tree in PostGIS). Bounding-box checks are four comparisons, and the index avoids even looking at most boxes.
+2. **Refine**: run the exact point-in-polygon test (ray casting, 12.06) only on those candidates.
+
+%%flow Filter then refine: the spatial index narrows 100,000 fences to a few bounding boxes; exact tests run only on those.
+Location update -(R-tree on bounding boxes)-> *3 candidate fences -(exact point-in-polygon)-> 1 fence contains the point
+%%
+
+```
+CREATE INDEX fences_geom_idx ON geofences USING GIST (geom);
+SELECT id FROM geofences
+WHERE ST_Contains(geom, ST_SetSRID(ST_MakePoint(-73.78, 40.64), 4326));
+```
+
+## Semantics: contains vs covers
+PostGIS defines `ST_Contains(A, B)` as true when no point of B is in A's **exterior** and at least one point of B's **interior** is in A's interior. A consequence: a polygon does **not** contain points exactly on its boundary. If a point on the fence line should count as inside, use **`ST_Covers`**, which is more inclusive. For moving vehicles this rarely matters numerically, but it matters for correctness tests and for adjacent fences that share an edge.
+
+## Alternative: precompute cells
+For very high update rates, do the expensive work once per geofence instead of per update. Point-in-polygon (Wikipedia) notes that when one polygon is tested against many points, general point-location preprocessing applies. A practical form of this:
+1. **Cover each geofence with grid cells** (H3, S2 or geohash, 12.02 and 12.03) at a chosen resolution.
+2. Build a map: **cell ID → geofences whose cover includes this cell**. Mark cells that are **fully inside** a fence versus cells that only touch its boundary.
+3. For each location update, compute its cell ID (cheap arithmetic), look up the map:
+   - Fully-inside cell: the answer is known, no polygon test.
+   - Boundary cell: run the exact test against the few fences listed.
+   - Empty cell: no fences, done.
+
+%%flow Precomputed cell covering: most updates are answered by one hash lookup; only boundary cells need exact tests.
+Location update -(compute H3 cell)-> *Cell to fences map -(interior cell)-> Answer directly -(boundary cell)-> Exact test on 1 or 2 fences
+%%
+
+This is the cell-encoding idea from 12.01 applied to shapes: S2's region coverer exists precisely to approximate regions as sets of cells.
+
+## Further optimisations
+- **Only check on change**: a vehicle that stays in the same cell can't have crossed into a different fence unless that cell is a boundary cell; cache the last result per vehicle.
+- **Enter/exit events**: most products care about crossings ("driver entered the airport zone"), so compare with the previous result and emit only changes.
+- **Simplify polygons**: fewer vertices make exact tests faster; buffer slightly if the product tolerates it.
+- **Shard by region**: keep each city's fences on the servers that handle its vehicles.
+
+! Example: an airport zone
+! 100,000 fences worldwide. A car at JFK sends an update. The R-tree finds 3 bounding boxes containing the point: the JFK pickup zone, Queens surge zone, and the New York state tax region. Exact tests: the car is inside all three polygons. With the cell approach, its resolution-9 H3 cell is fully inside the tax region and the surge zone (no test needed) and on the boundary of the pickup zone (one exact test).
+
+> Takeaway: never test every polygon. Filter with a spatial index on bounding boxes (PostGIS ST_Contains does this automatically) and run exact point-in-polygon tests only on the few candidates, or precompute a cell-to-fences map so most updates resolve with a lookup and only boundary cells need exact tests. Mind boundary semantics: ST_Contains excludes the boundary, ST_Covers includes it.
+
+?? Use a two-stage filter-and-refine. Index the geofences' bounding boxes in a spatial index (an R-tree, as PostGIS does automatically for ST_Contains) so each update finds only the handful of fences whose boxes contain the point, then run the exact point-in-polygon test on those. For very high rates, precompute a covering of each fence with grid cells (H3, S2, geohash) into a cell-to-fences map: a point in an interior cell is answered by lookup, and only boundary cells need exact tests against one or two polygons.
+
+@12.06
+## The algorithm
+Wikipedia's *Point in polygon* describes **ray casting**: from the point, draw a ray in any fixed direction (usually to the right, horizontally) and count how many times it crosses the polygon's edges.
+- **Odd** number of crossings: the point is **inside**.
+- **Even** (including zero): **outside**.
+
+It is also called the **even-odd rule** or crossing number algorithm.
+
+%%flow Ray casting from two points: a ray from an inside point crosses the boundary an odd number of times.
+[Inside] Point P -(ray to the right)-> Crosses edge 1 -> *1 crossing: odd, inside
+[Outside] Point Q -(ray to the right)-> Crosses edge 3 -> Crosses edge 5 -> *2 crossings: even, outside
+%%
+
+## Why odd means inside
+Wikipedia grounds it in the **Jordan curve theorem**: a simple closed curve (the polygon's boundary) divides the plane into exactly two regions, inside and outside. Then:
+1. Far enough along the ray, past every edge, you are certainly **outside** (the polygon is bounded).
+2. Each time the ray crosses the boundary, it moves from inside to outside or from outside to inside. Crossing is the only way to switch.
+3. Walk **backwards** from the far end (outside) to the point. Each crossing flips the state. After an even number of flips you're back to outside; after an odd number, inside.
+
+So the parity of crossings tells you which region the starting point is in. A concave polygon may make the ray cross many times (in, out, in, out, in), but the parity still works.
+
+## Implementing it
+For each edge from (x1, y1) to (x2, y2), with the point at (px, py) and the ray going right:
+1. The edge can only cross the ray if it **straddles** the horizontal line y = py: one endpoint above, one below.
+2. Compute where the edge meets that line: `x = x1 + (py − y1) × (x2 − x1) / (y2 − y1)`.
+3. If that x is to the **right** of px, it's a crossing: flip `inside`.
+
+```
+def inside(px, py, poly):
+    n = len(poly); c = False
+    for i in range(n):
+        x1, y1 = poly[i]; x2, y2 = poly[(i + 1) % n]
+        if (y1 > py) != (y2 > py):            # straddles the ray's line
+            x = x1 + (py - y1) * (x2 - x1) / (y2 - y1)
+            if x > px:
+                c = not c
+    return c
+```
+
+The cost is **O(n)** in the number of edges, with a few arithmetic operations each.
+
+## Edge cases
+Wikipedia lists the traps:
+- **The ray passes through a vertex.** It touches two edges at once and could be counted twice (wrongly flipping parity) or as a tangent touch that shouldn't count. The fix: count an edge's crossing only if the edge's other endpoint is **strictly below** the ray, which is equivalent to treating vertices on the ray as lying slightly above it. The `(y1 > py) != (y2 > py)` test above does exactly this: it uses a half-open rule so a shared vertex is counted for exactly one of its two edges.
+- **Horizontal edges** on the ray need the same consistent treatment; the straddle test skips them automatically.
+- **Points on the boundary**: the result depends on implementation details; if boundary points matter, test for them explicitly.
+- **Floating point**: near the boundary, rounding can give the wrong answer. Robust code compares y-coordinates before computing intersections, and strict applications use a tolerance and report "on the boundary" when very close.
+
+## The alternative: winding number
+The **winding number** counts how many times the boundary winds around the point (the nonzero rule). For simple polygons it agrees with ray casting. Dan Sunday's 2001 version is as fast as crossing counting and needs no trigonometry. It differs for **self-intersecting** polygons: a pentagram's centre is "outside" under even-odd (crossed twice) but "inside" under nonzero (the boundary winds around it twice). Wikipedia notes SVG's `fill-rule` exposes both rules.
+
+! Example: a square and a point
+! Square (0,0), (4,0), (4,4), (0,4). Point (2, 1), ray to the right. Edge (4,0)→(4,4) straddles y = 1 and meets it at x = 4 > 2: one crossing. Edge (0,4)→(0,0) meets it at x = 0, left of the point: not counted. The two horizontal edges don't straddle. One crossing: inside. Point (5, 1): edge x = 4 is to the left, so zero crossings: outside.
+
+> Takeaway: cast a ray from the point and count edge crossings; odd means inside. By the Jordan curve theorem, the boundary splits the plane into inside and outside and every crossing flips between them, while the far end of the ray is outside. Handle vertices on the ray with a half-open rule, and use the winding number for self-intersecting polygons.
+
+?? The polygon's boundary divides the plane into an inside and an outside (the Jordan curve theorem), and the only way to move from one to the other is to cross the boundary. The far end of the ray is definitely outside, so walking back along the ray, each crossing flips between outside and inside: an even number of flips returns to outside, an odd number leaves you inside.
+
+@12.07
+## The requirement
+A dating app shows profiles one at a time. A user who swiped on a profile must **never** see it again. Over months, an active user may have seen 20,000 profiles; with 50 million users, that's a lot of "seen" pairs. For each candidate list, the system must filter out seen profiles quickly.
+
+## Option 1: an exact set
+Store every seen profile ID per user: a Redis set, a table keyed by (user_id, seen_id), or a sorted set by time. A lookup is exact.
+- **Cost**: 20,000 IDs × 8 bytes = 160 KB raw per heavy user, more with overhead. Times millions of users is terabytes in memory, or lots of database reads per recommendation request (hundreds of candidates to check).
+
+## Option 2: a Bloom filter
+The *Bloom filters by example* tutorial explains the structure:
+- A **bit array of m bits**, all 0, and **k hash functions**.
+- **Add** an element: hash it k times and set those k bits to 1.
+- **Test** an element: hash it k times. If **any** of those bits is 0, the element is **definitely not** in the set. If all are 1, it **may be** in the set: the bits could have been set by other elements.
+
+%%flow A Bloom filter test: any zero bit proves "never added"; all ones only means "probably added".
+Profile 4471 -(k = 7 hashes)-> Bits 12, 88, 301 ... -(any bit 0)-> *Definitely not seen: show it -(all bits 1)-> Probably seen: skip
+%%
+
+The tutorial gives the false positive rate, approximately **(1 − e^(−kn/m))^k** for n elements, the optimal number of hashes **k = (m/n) ln 2**, and a sizing loop: estimate n, pick m, compute k, check the error rate, enlarge m if needed. It recommends fast non-cryptographic hashes (murmur, xxHash, FNV). Bloom filters **can't delete** elements (standard ones; counting variants can), and they can't list their contents.
+
+**Sizing for this case**: n = 20,000 seen profiles, target false positive rate 1%: m = −n ln(0.01) / (ln 2)² ≈ 191,700 bits ≈ **24 KB**, with k = 7. Compare roughly 160 KB+ for the exact set. At 0.1%, about 36 KB.
+
+## The asymmetry decides the answer
+A Bloom filter's errors are **one-sided**:
+- **False negatives never happen**: if a profile was added, its bits are set and the test says "may be in the set". So a seen profile is **never shown again**: the hard requirement is met.
+- **False positives** happen at the designed rate: an **unseen** profile tests as "seen" and is **skipped**. The user never sees that profile, which is a small loss (a missed potential match) but does not break the requirement.
+
+So **a Bloom filter works** here, as long as its false positive rate is low and controlled. The consequence of a false positive is that about 1 in 100 fresh candidates is wrongly hidden. In a large pool, users won't notice; in a small pool (a small town, narrow filters), it can matter, and those users can fall back to the exact set.
+
+%%flow Recommendation filtering with a per-user Bloom filter: seen profiles are always removed; about 1% of unseen ones are wrongly removed too.
+Candidate generator: 500 profiles -(Bloom filter test)-> *Drop all seen + about 5 false positives -> 300 fresh profiles to rank
+%%
+
+## Practical design
+- **Per-user filter** in Redis (RedisBloom) or loaded into the recommendation service's memory, keyed by user.
+- **Growth**: as n exceeds the design size, the false-positive rate climbs. Use a **scalable Bloom filter** (chains filters of growing size) or rebuild periodically from the durable log of swipes.
+- **Source of truth**: keep the exact swipe log in a durable database (it's also needed for matching and analytics). The Bloom filter is a fast pre-filter rebuilt from it, so it can be lost and rebuilt.
+- **Belt and braces**: if a profile somehow gets past the filter, the swipe log check at the moment of display can confirm, since that's one point lookup rather than hundreds.
+
+! Example: one request
+! User u9 has swiped 12,400 profiles; their filter is sized for 20,000 at 1% (24 KB). Candidate generation returns 500 profiles near them. 178 test as seen (all 175 genuinely seen ones plus about 3 that weren't), leaving 322. The 3 false positives are simply never shown to u9. Exact sets would have avoided that loss but cost about 7 times the memory.
+
+> Takeaway: a Bloom filter answers "definitely not seen" or "maybe seen" with no false negatives, so seen profiles are never shown again; false positives only hide some unseen profiles, a small, tunable loss. Size it with k = (m/n) ln 2 (about 24 KB for 20,000 items at 1%), keep the exact swipe log as the source of truth, and rebuild or scale the filter as it fills.
+
+?? A Bloom filter fits, because its errors go only one way: it never says "not seen" for a profile that was added, so a swiped profile is never shown again. A false positive means an unseen profile is judged "seen" and silently skipped, a small loss of a potential match at the designed rate (for example 1%), not a violation of the rule. Size the filter for the expected number of swipes, keep the exact swipe log as the durable source, and rebuild or grow the filter as users swipe more; very small candidate pools can use an exact set instead.
+
+@12.08
+## The problem
+A catalogue of millions or billions of items (videos, products, profiles), a user, and a few milliseconds to choose the 10 to show. The most accurate models (deep networks with hundreds of features about the user, item and context) are far too slow to run on every item for every request.
+
+## The multi-stage funnel
+Google's *Recommendation systems* course describes three stages:
+1. **Candidate generation**: narrow a huge corpus to a manageable set. On YouTube, from **billions** of videos to **hundreds or thousands**. Because the corpus is huge, this must be fast. Several generators may run in parallel, each nominating a different subset (e.g. "similar to what you watched", "popular near you", "from creators you follow").
+2. **Scoring**: a more precise model scores the candidates and picks the top, around **10**. It can afford to be precise because it sees a small set.
+3. **Re-ranking**: apply further constraints: remove items the user disliked, boost fresh content, enforce **diversity** (not ten videos from one channel) and **fairness**.
+
+%%flow The funnel: cheap retrieval cuts millions to hundreds; an expensive ranker orders them; re-ranking applies business rules.
+Millions of items -(candidate generators, ANN)-> *Hundreds of candidates -(ranking model, rich features)-> Top 50 scored -(re-rank: diversity, freshness)-> 10 shown
+%%
+
+## Eugene Yan's 2×2
+Eugene Yan's *System design for recommendations and search* frames the same architecture along two axes: **offline vs online**, and **candidate retrieval vs ranking**.
+
+| | Candidate retrieval | Ranking |
+|---|---|---|
+| **Offline** | Learn item embeddings; build ANN indexes, item-to-item similarity maps, knowledge graphs | Train ranking models; load user and item features into a feature store |
+| **Online** | Embed the request (user, query, recent items); fetch nearest neighbours or graph neighbours | Join candidates with features from the store; score with the model; return the order |
+
+His characterisation: retrieval is **fast but coarse**, cutting millions of items to hundreds, a **99.99% reduction** that trades precision for efficiency. Ranking is **slower but more precise**: with hundreds rather than millions of items, it can add item, user and context features and use bigger models. Using one feature store for both training and serving reduces **train-serve skew**.
+
+Examples from his post:
+- **Alibaba**: builds a weighted item graph from session behaviour, generates walks, learns item embeddings (word2vec-style), stores nearest neighbours in an item-to-item map for retrieval, then ranks with a deep network.
+- **Facebook search**: a **two-tower** model (query encoder and document encoder) whose document embeddings are quantised into a **Faiss** ANN index; queries are embedded online, candidates retrieved by ANN plus Boolean filters, then ranked.
+- **LinkedIn talent search**: a first-level XGBoost model retrieves and scores, the top **1,000** candidates get extra features and a second-level model, and **125** results are shown.
+- **DoorDash**: retrieval through Elasticsearch plus a knowledge graph for query expansion ("KFC" expands to fried chicken and wings, retrieving Popeyes and Bonchon).
+
+%%flow A two-tower retrieval model: user and item are embedded into the same space; nearby items become candidates.
+[Offline] Item tower -(embed all items)-> *ANN index
+[Online] User tower -(embed user and context)-> Query vector -(nearest neighbours in ANN index)-> Candidates
+%%
+
+## Why split the stages: the cost arithmetic
+Say the ranking model costs 1 ms of compute per item. Scoring 10 million items per request would be 10,000 CPU-seconds per request, impossible. ANN retrieval over 10 million embeddings takes a few milliseconds (Module 9's HNSW). Ranking 500 candidates at 1 ms each, batched on a GPU, takes milliseconds. Each stage spends compute where it matters:
+- **Retrieval** optimises **recall**: don't miss good items; precision doesn't matter yet.
+- **Ranking** optimises **precision** at the top: order the shortlist exactly.
+- Different stages can also use different data: retrieval uses embeddings precomputed offline; ranking uses fresh, request-time features (time of day, what the user did 30 seconds ago).
+
+## Matching is two-sided
+For dating or job matching, both sides must want each other. Candidate generation filters by hard constraints (location, age range, availability, the "seen" filter from 12.07), and ranking predicts mutual interest (the probability that A likes B times the probability that B likes A), often with re-ranking to spread attention so popular profiles aren't shown to everyone.
+
+! Example: a video home page
+! Offline: nightly jobs train a two-tower model, embed 50 million videos into an HNSW index, and refresh the feature store. Online, one request: three generators return 300 (two-tower ANN), 200 (subscriptions) and 100 (trending) candidates; dedupe to 520; filter watched ones; the ranking model scores 480 with 200 features each in 15 ms on a GPU; re-ranking caps three per channel and inserts one fresh upload; 10 videos are returned in about 60 ms.
+
+> Takeaway: recommendation is a funnel. Candidate generation (fast, recall-oriented, often ANN over embeddings) cuts millions of items to hundreds; ranking (slow, precise, rich features) orders them; re-ranking enforces diversity, freshness and rules. The split exists because the precise model is far too expensive to run on the whole catalogue.
+
+?? The precise ranking model, with rich user, item and context features, costs too much to run on millions of items per request. Candidate generation uses cheap methods such as ANN search over embeddings, co-visitation or follow graphs to cut the catalogue to a few hundred items with high recall, which the expensive ranker can then order precisely within the latency budget. The split also lets each stage optimise its own goal (recall versus top-of-list precision) and lets several retrieval sources feed one ranker.

@@ -1,0 +1,487 @@
+@11.01
+## Two hops
+Hello Interview's *Real-time updates* pattern (only its introduction is free; the rest is paywalled) frames any real-time feature as two separate hops:
+1. **Server to client**: how an update gets from a server down to a user's device (polling, SSE, WebSockets; lesson 11.02).
+2. **Source to server**: how the update gets from wherever it was created to **the particular server holding that user's connection**.
+
+The second hop is the scaling problem. A WebSocket is a long-lived TCP connection to one specific server. With 100 servers and millions of connected users, a message created on server 2 (because the sender's request landed there) must find the one server, say server 7, that holds the recipient's socket.
+
+## Option 1: pub/sub through a broker
+Every connection server subscribes to topics for the users or channels it currently holds. Senders publish to the topic; the broker delivers to whichever servers subscribed.
+
+%%seq Pub/sub routing: server 7 subscribed on behalf of its connected user, so the broker delivers server 2's publish to it.
+Bob > Server 7 : WebSocket connect
+Server 7 > Broker : SUBSCRIBE user:bob
+Alice > Server 2 : send "hi" to Bob
+Server 2 > Broker : PUBLISH user:bob "hi"
+Broker -> Server 7 : "hi"
+Server 7 -> Bob : push over socket
+%%
+
+Redis pub/sub is a common choice: fast and simple, but fire-and-forget (a server that is briefly disconnected misses messages), so the durable copy of each message lives in a database and clients re-sync on reconnect.
+
+## Option 2: consistent hashing of users or channels to servers
+Instead of a broker, route by hash: each user (or channel) belongs to a known server on a consistent hash ring, and connections are placed accordingly. A sender's server computes hash(recipient) and forwards directly. This avoids the broker hop but makes connection placement depend on the ring, and when servers join or leave, affected connections must move.
+
+## How Slack does it
+Slack's engineering post *Real-time messaging* combines both ideas. Its components:
+- **Channel Servers (CS)**: stateful, in-memory, each owning a subset of channels by **consistent hashing** of the channel ID. At peak, about **16 million channels per host**. Every kind of entity (user, team, file, huddle, channel) has a channel ID.
+- **Gateway Servers (GS)**: stateful servers holding users' WebSocket connections and their channel subscriptions, deployed in **multiple regions** so clients connect nearby.
+- **Admin Servers (AS)**: stateless, between the web app backend and channel servers.
+- **Presence Servers**: track who's online (the green dots); users are hashed to them.
+- **Envoy**: the edge proxy and load balancer, terminating TLS.
+
+%%flow A Slack message: the web app hands it to an admin server, which finds the channel's owner by consistent hashing; that channel server fans out to every subscribed gateway.
+Sender -(API)-> Webapp -> Admin server -(hash channel id)-> *Channel server -(to every subscribed gateway, all regions)-> Gateway servers -> Members' sockets
+%%
+
+When a client connects, the gateway fetches the user's channels from the web app and **subscribes to the channel servers** owning those channels. A message then flows: client → web app → admin server → (hash) channel server → every gateway subscribed to that channel → every connected client in that channel. Slack reports **tens of millions of connected clients** and delivery across the world within **500 ms**. Consistent hash ring managers replace an unhealthy channel server in **under 20 seconds**, during which delivery for its channels is slower.
+
+## Things every design needs
+- **Connection registry or subscriptions**: something must know which server holds whom.
+- **Reconnect and catch-up**: connections drop (mobile networks, deploys). The client reconnects, probably to a different server, and asks for everything since its last seen message ID. Real-time delivery is an optimisation on top of a durable store.
+- **Heartbeats**: to detect dead connections and keep idle ones from being closed by proxies.
+- **Load balancing**: WebSockets are long-lived, so connections don't rebalance by themselves after a deploy; servers drain connections gradually and clients reconnect with backoff.
+
+! Example: a direct message
+! Bob is connected to gateway server 7, which subscribed to `user:bob` (or to the DM channel's channel server). Alice sends "hi" through server 2's API. Server 2 writes the message to the database, then publishes it. The broker or channel server pushes it to server 7, which writes it to Bob's socket. If Bob was offline, nothing is pushed; when he reconnects he fetches messages newer than his last seen ID from the database.
+
+> Takeaway: real-time delivery has two hops; the hard one is getting a message from the server where it was created to the server holding the recipient's socket. Use pub/sub (servers subscribe for their connected users or channels) or consistent hashing of channels to owner servers, as Slack does, and always back it with a durable store and catch-up on reconnect.
+
+?? Server 7 registers interest when the user connects: it subscribes to a pub/sub topic for that user or for their channels (or the user's channels are owned by servers found through consistent hashing, as with Slack's channel servers). Server 2 writes the message to the database and publishes it to the recipient's topic or to the channel's owner. The broker or owner forwards it to every server subscribed, including server 7, which pushes it down the open socket. If the user is offline, the message waits in the database and is fetched on reconnect.
+
+@11.02
+## The options
+Plain HTTP is request-response: the server can't speak first. Four ways around that:
+
+| Technique | How it works | Direction | Cost |
+|---|---|---|---|
+| **Short polling** | Client asks "anything new?" every few seconds | Client pulls | Many empty requests; latency up to the interval |
+| **Long polling** | Client asks; server holds the request open until there's data or a timeout, then the client asks again | Server push, emulated | One request per message; reconnect gaps |
+| **Server-Sent Events** | One HTTP response that never ends; server writes events into it | Server to client only | Light; plain HTTP |
+| **WebSockets** | HTTP connection upgraded to a two-way message channel | Both directions | A persistent stateful connection per client |
+
+%%flow Long polling: the request waits at the server until there is news, then the client immediately asks again.
+Client asks -(server holds up to 30 s)-> Event happens -(respond)-> *Client handles it -(new request)-> Client asks
+%%
+
+## Server-Sent Events (MDN)
+MDN describes SSE as a **one-way** channel: the server pushes events; the client cannot send events back over it (it uses ordinary HTTP requests for that). The browser API is `EventSource`, and the server responds with `Content-Type: text/event-stream`. The format is plain text lines:
+- `data:` the payload (several `data:` lines join with newlines)
+- `event:` a named event type
+- `id:` sets the last event ID
+- `retry:` reconnection delay in milliseconds
+- Lines starting with `:` are comments, useful as **keep-alive** pings.
+
+The browser **reconnects automatically** if the connection drops, and the event ID lets the server resume from where the client left off. MDN's main warning: over **HTTP/1.x**, browsers allow only about **6 connections per browser and domain**, across all tabs; over **HTTP/2** the limit is negotiated (default 100 streams), so serve SSE over HTTP/2. Proxies that buffer responses must be told not to (MDN's example sends `X-Accel-Buffering: no`).
+
+## WebSockets (MDN)
+MDN describes WebSockets as a **two-way interactive session**: either side can send messages at any time without polling. The connection starts as HTTP and is upgraded through a handshake (`Sec-WebSocket-Key` and `Sec-WebSocket-Accept` headers). MDN notes a limitation: the `WebSocket` API has **no backpressure**, so if messages arrive faster than the page can process them, memory or CPU can be exhausted; it points to WebTransport where that matters. It also notes an open WebSocket may stop a page entering the back/forward cache, so close it when done.
+
+## Choosing
+%%flow A quick decision: who sends, how often, and does it need to be instant?
+Does the client send frequent real-time messages? -(yes: chat, games, collaboration)-> *WebSockets -(no: server pushes updates)-> SSE -(updates rare, simplicity first)-> Polling
+%%
+
+For **live sports scores**, choose **SSE**:
+- Data flows one way: the server pushes score changes; the user doesn't send anything in real time.
+- It is plain HTTP, so it passes through existing load balancers, CDNs and proxies, and works with HTTP/2 multiplexing.
+- Automatic reconnection with event IDs comes free, which matters on mobile networks.
+- Updates are infrequent (a few per minute), so long polling would also work; WebSockets' bidirectional channel and custom protocol would be complexity without benefit.
+
+WebSockets win when the client also sends frequently and with low latency: chat with typing indicators, multiplayer games, collaborative editing, trading terminals.
+
+! Example: one SSE stream for a match
+! The client runs `new EventSource("/matches/42/stream")`. The server sends `id: 118` / `event: goal` / `data: {"home":2,"away":1,"min":67}`, then a `:` comment every 15 seconds to keep proxies from timing out. The phone switches from Wi-Fi to 4G, the connection drops, and the browser reconnects with the last event ID 118, so the server sends anything after 118.
+
+> Takeaway: polling is simplest and wasteful; long polling emulates push one message at a time; SSE is a one-way push stream over plain HTTP with built-in reconnection; WebSockets are a full two-way channel. Use SSE when the server pushes and the client mostly listens, and WebSockets when both sides talk often.
+
+?? SSE. Scores flow one way, from server to fans, and only a few times a minute, so a two-way channel is unnecessary. SSE runs over ordinary HTTP (friendly to load balancers, proxies and HTTP/2), and EventSource reconnects automatically and resumes using the last event ID. WebSockets would add a custom protocol and stateful two-way connections for no benefit; they suit cases where clients also send frequent real-time messages.
+
+@11.03
+## What has to be fast
+A social graph is a set of directed edges: "A follows B". Two queries must both be fast:
+- **Who do I follow?** (outgoing edges of A) Needed to build A's feed when reading.
+- **Who follows me?** (incoming edges of B) Needed to deliver B's posts to followers (fan-out), to show follower counts and lists.
+
+The System Design Primer's Twitter solution shows how much these queries are used. Its assumptions: **100 million active users**, **500 million tweets per day**, an average of **10 fan-out deliveries per tweet** (5 billion per day), and **250 billion reads per month**, about **100,000 reads per second** and **60,000 fan-out deliveries per second**. Every tweet triggers a "who follows the author?" lookup, and timelines need "who does this user follow?".
+
+## A relational model
+```
+CREATE TABLE follows (
+  follower_id  BIGINT NOT NULL,
+  followee_id  BIGINT NOT NULL,
+  created_at   TIMESTAMP NOT NULL,
+  PRIMARY KEY (follower_id, followee_id)
+);
+CREATE INDEX follows_by_followee ON follows (followee_id, follower_id);
+```
+
+- The **primary key** (follower, followee) makes "who does A follow?" an index range scan on follower_id, and prevents duplicate follows.
+- The **second index** (followee, follower) makes "who follows B?" a range scan on followee_id.
+- Adding created_at to the indexes allows "most recent followers first" ordering.
+
+%%flow One edge, two access paths: the primary key serves "following", the reverse index serves "followers".
+[Who A follows] follower_id = A -(primary key scan)-> *B, C, D
+[Who follows B] followee_id = B -(reverse index scan)-> *A, E, F
+%%
+
+## When it no longer fits on one machine
+Sharding breaks the neat picture. If you shard the table by follower_id, "who A follows" lives on A's shard, but "who follows B" is spread over every shard. If you shard by followee_id, the reverse happens. The standard fix is to **store each edge twice**, once in a "following" table sharded by follower and once in a "followers" table sharded by followee, so each query hits one shard (lesson 11.04 covers Twitter's FlockDB, which does exactly this).
+
+Hello Interview's news feed breakdown expresses the same idea in DynamoDB: a Follow table with partition key `userFollowing` and sort key `userFollowed`, plus a **global secondary index** with the keys swapped. The GSI is DynamoDB maintaining the second copy for you, asynchronously.
+
+## Counts and hot users
+- **Follower counts** shouldn't be computed with COUNT(*) over millions of rows on every profile view. Keep a counter per user, updated with each follow and unfollow, and accept that it may be briefly off.
+- **Celebrities** have huge follower lists. Their incoming-edge list may be hundreds of millions of rows: page through it, never load it all, and treat them specially in fan-out (11.05).
+- The Primer's design keeps follower lists in a memory cache for the fan-out service and only keeps timelines for users active in the last 30 days.
+
+! Example: A follows B
+! Single database: insert (A, B, now) into follows; both indexes update in the same transaction. Sharded: write (A → B) into following on A's shard and (B ← A) into followers on B's shard, plus increment A's following count and B's follower count. Use a queue or outbox so a failure between the two writes is retried until both exist.
+
+> Takeaway: store follows as edges with a composite primary key (follower, followee) and a reverse index (followee, follower), so both directions are index range scans. Once sharded, store each edge twice, partitioned by each end, and keep counts as separate counters.
+
+?? Use an edges table keyed by (follower_id, followee_id), which answers "who do I follow" as a range scan and prevents duplicates, plus an index or second table keyed by (followee_id, follower_id) for "who follows me". When sharded, keep two copies of each edge, one partitioned by follower and one by followee, written together through a reliable queue, so each query touches a single shard. Store follower and following counts as counters rather than counting rows.
+
+@11.04
+## What FlockDB was
+FlockDB is the distributed graph database Twitter built to store its social graph: who follows whom, who blocks whom, and secondary indexes. Its README (the project is now archived and unmaintained) describes it as storing **adjacency lists** for high-throughput, low-latency online use. As of April 2010, Twitter's cluster held **over 13 billion edges** and sustained peaks of **20,000 writes per second** and **100,000 reads per second**.
+
+## Goals and non-goals
+The README is explicit about scope:
+- **Goals**: a high rate of add, update and remove operations; potentially complex **set arithmetic** queries; **paging** through result sets with millions of entries; archiving edges and restoring them later; horizontal scaling including replication; online data migration.
+- **Non-goals**: **multi-hop graph traversal** ("friends of friends of friends") and automatic shard migration.
+
+It calls itself "much simpler than other graph databases such as neo4j" because it solves fewer problems. Twitter's graph queries are almost all one hop: "who follows X?", "does A follow B?", "whom do A and B both follow?".
+
+## The edge model
+Each edge has:
+- a 64-bit **source ID** and 64-bit **destination ID**;
+- a **state**: normal, removed, or archived (archived edges go into "cold sleep" and can be restored, for example when an account is suspended and later reinstated);
+- a 32-bit **position** used for sorting. In the README's example ("Nick follows Robey"), the position is the time the follow happened, so follower lists come back newest first.
+
+The (source, destination) pair is unique; state and position can change.
+
+## Stored twice, forward and backward
+The README states that edges are stored **in both directions**, so they can be queried by source or by destination. Its example: node 134 points to node 90, producing a forward row (134 → 90) and a backward row (90 ← 134).
+
+%%flow FlockDB writes each edge twice so both directions are a single-shard lookup.
+"134 follows 90" -(forward row, stored with 134)-> *134: 90, ... -(backward row, stored with 90)-> *90: 134, ...
+%%
+
+The README doesn't describe its sharding (that was done by Twitter's Gizzard framework, not covered on the page), so the reasoning below is general:
+- At billions of edges, the graph is split across many databases. A row lives with its **first ID**: the forward copy of (134 → 90) sits on 134's shard, the backward copy on 90's shard.
+- "Whom does 134 follow?" reads only 134's forward rows on one shard.
+- "Who follows 90?" reads only 90's backward rows on one shard.
+- With a single copy, one of those queries would have to visit **every** shard. For someone with 50 million followers, scanning every shard for each tweet's fan-out would be impossible at 100,000 reads per second.
+
+The cost is double the storage and two writes per change, which must be kept consistent; since follows change far less often than they are read, the trade is clearly worth it.
+
+## Set operations and paging
+Because each node's adjacency list is stored sorted, one-hop set queries are merges of sorted lists, the same trick as intersecting postings lists in search (09.03):
+- **Intersection**: "people A follows who also follow B" (for "followed by people you know").
+- **Difference**: "people who follow me whom I don't follow back".
+- **Paging**: return 100 edges at a time ordered by position, with a cursor, so a 50-million-follower list is never loaded at once.
+
+%%flow One-hop set arithmetic on sorted adjacency lists: shared follows is an intersection.
+A follows: 3, 9, 14, 22 -(intersect)-> *Both follow 9, 22 -(with)-> B follows: 9, 17, 22
+%%
+
+! Example: blocking
+! A blocks B: write edge (A → B) in the "blocks" graph, forward copy on A's shard and backward copy on B's shard. When B loads A's profile, the service checks the backward rows for B ("who blocks B?") or the forward rows for A, each a one-shard lookup. When A unblocks, the edge's state becomes removed rather than being deleted, so the change can propagate and be audited.
+
+> Takeaway: FlockDB stored a huge, one-hop social graph as sorted adjacency lists, each edge written twice (forward under the source, backward under the destination) so "who does X follow" and "who follows X" each hit one shard. It deliberately skipped multi-hop traversal in exchange for very high write and read throughput.
+
+?? Because the graph was split across many shards, each lookup needs all the relevant rows on one shard. Storing the forward edge with the source and the backward edge with the destination makes both "whom does X follow" and "who follows X" single-shard, sorted, pageable reads. With a single copy, one of those two common queries, including the follower lookup needed to fan out every tweet, would have to scatter to every shard. The cost is double storage and two writes per change, cheap because follows are written far less often than they are read.
+
+@11.05
+## The core trade-off
+A news feed is the newest posts from everyone you follow. There are two times to do the work:
+- **Fan-out on read (pull)**: when a user opens the feed, look up whom they follow, fetch each one's recent posts, merge and sort.
+- **Fan-out on write (push)**: when someone posts, insert the post ID into each follower's precomputed feed; reading a feed is one lookup.
+
+Hello Interview's *FB News Feed* breakdown (the ByteByteGo chapter is behind a login) walks through both for a system with **2 billion users**, unlimited follows, feeds under **500 ms**, and up to **1 minute of staleness** acceptable.
+
+## Pull
+Its data model: a Follow table (partition key `userFollowing`, sort key `userFollowed`, with a GSI the other way) and a Post table with a GSI on (`creatorID`, `createdAt`). Building a feed: get the user's followees, query each one's recent posts via the GSI, merge by time. The problems it lists: users may follow many accounts, each with many posts, so one feed read becomes **tens to hundreds of requests** and a large merge, on every read.
+
+## Push
+The fix is a **PrecomputedFeed** table: key `userId`, value a list of the newest post IDs (say 200). When a post is created, a message goes on a queue (SQS with at-least-once delivery), and **feed workers** look up the author's followers and prepend the post ID to each follower's feed. Reading is one key lookup plus fetching the posts. Storage check: 200 IDs × 10 bytes = **2 KB per user**, **4 TB** for 2 billion users.
+
+%%flow Fan-out on write: the post is copied into each follower's precomputed feed by async workers; reading is one lookup.
+New post -> Queue -(feed workers)-> Look up followers -(prepend post id)-> *Feed of each follower -(read: one key)-> Viewer
+%%
+
+The System Design Primer's Twitter design is the same: a fan-out service inserts each tweet into followers' home timelines held in **Redis lists** (entries of tweet ID, user ID and a meta byte), and only users active in the last 30 days keep cached timelines; others are rebuilt from storage.
+
+## The celebrity problem
+Push breaks for accounts with huge followings. One post by an account with 100 million followers means 100 million feed writes; the Primer notes fan-out for such accounts can take **minutes**, and posts arrive out of order relative to replies.
+
+## Hybrid: push for most, pull for celebrities
+Hello Interview's hybrid:
+- Mark follows of high-follower accounts with a flag meaning "not precomputed". The **threshold** (follower count) is tuned.
+- Feed workers **skip** fan-out for those accounts.
+- At read time, the feed service takes the user's precomputed feed and **merges** in recent posts from the few celebrity accounts they follow, fetched directly (those posts are heavily cached because everyone reads them).
+
+%%flow Hybrid feed: ordinary authors push into feeds at write time; celebrity posts are pulled and merged at read time.
+[Write] Ordinary author posts -(fan-out workers)-> *Followers' precomputed feeds
+[Read] Viewer opens feed -(one lookup)-> Precomputed feed -(merge recent posts of followed celebrities)-> *Final feed
+%%
+
+So: **ordinary users' posts are pushed** (cheap: a few hundred followers each), and **celebrities' posts are pulled** (a handful per reader, all served from cache). Some designs also skip pushing to **inactive** followers, rebuilding their feeds on their next visit.
+
+## Remaining details
+- **Hot posts**: a viral post is read by millions in its first hours, overloading one cache shard. Hello Interview's best answer is a **replicated post cache**: several identical cache instances, any of which can serve any post, so the load spreads.
+- **Pagination**: use a cursor, the timestamp (or ID) of the oldest post already shown, and fetch older posts after it.
+- **Ranking**: real feeds re-rank the candidate posts by predicted engagement; the precomputed list becomes a candidate set rather than the final order.
+
+! Example: the numbers behind the threshold
+! A user with 300 followers posts: 300 feed prepends, done in under a second by workers. An account with 80 million followers posts: 80 million writes would take minutes and burn capacity. With a threshold of, say, 100,000 followers, that account is marked pull. A reader following 400 accounts, 3 of them celebrities, gets one feed lookup plus 3 cached "recent posts" lookups, merged by time.
+
+> Takeaway: pull computes feeds at read time (cheap writes, slow reads); push precomputes them at write time (fast reads, expensive writes for big accounts). The hybrid pushes posts from ordinary accounts into followers' feeds and pulls posts from accounts above a follower threshold at read time, merging the two.
+
+?? Accounts with ordinary follower counts get push: when they post, async workers prepend the post ID to every follower's precomputed feed, so reads are a single lookup. Accounts above a tuned follower threshold (celebrities) get pull: their posts are not fanned out, and when a user opens the feed, the service merges their precomputed feed with the recent, heavily cached posts of the few celebrities they follow. This avoids millions of writes per celebrity post while keeping reads fast.
+
+@11.06
+## The feature
+Chat apps bold a channel's name when it has messages you haven't read, and show a badge for mentions. The question proposes the standard model: store, per user per channel, the **ID of the last message the user has read**. Then:
+
+`has unread = channel.last_message_id > read_state.last_read_message_id`
+
+If message IDs increase over time (Snowflake-style IDs, lesson 04.10, or per-channel sequence numbers), this is a single integer comparison. No message is scanned, and no per-message "read" flag is stored.
+
+%%flow Unread is one comparison: the channel's newest message ID against the user's last-read ID.
+Channel last_message_id = 1,057 -(compare)-> *User last_read = 1,049 -> 1,057 > 1,049, so bold
+%%
+
+## Why it's cheap, and what makes it expensive
+- **Per channel**: store `last_message_id` on the channel (updated on every new message). Reading it is a key lookup, usually cached.
+- **Per user per channel**: a **read state** `{last_read_id, mention_count}`. When the user opens the channel or scrolls to the bottom, set `last_read_id` to the newest visible ID and reset `mention_count` to 0.
+- **On connect**: to draw the channel list, the client needs, for each of the user's channels, both numbers. With hundreds of channels, this must be a batch lookup from memory, not hundreds of database queries.
+- **Mentions**: a mention increments the mentioned user's `mention_count` for that channel, a write fan-out but only to the people mentioned (or to everyone for @everyone, which is why that's restricted).
+- **Exact unread count** ("12 new messages") is more expensive than "has unread": it needs counting messages with ID > last_read_id, which is a range count in an index; many apps cap the display at 99+ or show just a dot.
+
+The design detail comes from general practice; the assigned source explains what it costs to run at Discord's scale.
+
+## Discord's Read States service
+Discord's post *Why Discord is switching from Go to Rust* is about this exact service. **Read States** tracks which channels and messages users have read. Its numbers:
+- One read state **per user per channel**, holding counters (such as the number of @mentions) that are updated atomically and often reset to 0.
+- **Billions** of read states in total.
+- It is on the hot path: accessed **every time a user connects, every time a message is sent, and every time a message is read**.
+- Each instance holds an **LRU cache** of read states, with millions of users and tens of millions of read states per cache.
+- **Hundreds of thousands of cache updates per second** and **tens of thousands of database writes per second**.
+- Persistence: **Cassandra**. A read state is written to the database when evicted from the cache, and a write is scheduled **30 seconds** after each update, batching many updates into one write.
+
+%%flow Discord's Read States: updates hit an in-memory LRU cache; Cassandra receives at most one write per read state per 30 seconds and on eviction.
+Message sent or read -(update)-> *LRU cache of read states -(30 s after update, or on eviction)-> Cassandra
+%%
+
+## The Go-to-Rust lesson
+The Go version suffered **latency and CPU spikes about every 2 minutes**. Go's garbage collector forces a collection at least every 2 minutes, and each collection had to scan the huge LRU cache to find what was still referenced. The Rust rewrite has no garbage collector: memory is freed as soon as a read state is evicted. Discord reports the Rust version beat Go on latency, CPU and memory, with averages in **microseconds**, and it used a `BTreeMap` in the LRU for memory efficiency. The general lesson: very large, long-lived in-memory caches and tracing garbage collectors are an awkward combination.
+
+! Example: opening the app
+! A user in 300 channels connects. The gateway asks Read States for the user's 300 read states (one cache lookup per instance owning the user) and gets the channels' `last_message_id` values from the channel cache. 41 channels have last_message_id greater than last_read_id and are drawn in bold; 3 have mention_count > 0 and show a badge. The user opens one: one update sets its last_read_id to 1,057 and mention_count to 0, and Cassandra receives the write within 30 seconds.
+
+> Takeaway: store one read state per user per channel (last read message ID plus a mention counter). With increasing message IDs, "has unread" is just channel.last_message_id > last_read_id. At Discord's scale, these read states are on every hot path and live in an in-memory LRU cache with batched writes to Cassandra.
+
+?? Keep the newest message ID on each channel and, per user per channel, the last read message ID. Because message IDs increase over time, "has unread" is a single comparison: channel.last_message_id > last_read_id, with no messages scanned. Serve both values from memory (a cache of read states and of channel heads), batch-load them for all of a user's channels on connect, and persist read states lazily, as Discord does with an LRU cache flushed to Cassandra.
+
+@11.07
+## The feature
+Posts contain hashtags ("Great run today #marathon #nyc"). The system must extract them when a post is saved and answer "all posts with #x", newest first, often paginated, plus counts and trending tags.
+
+**Extraction** is a small parsing step at write time: a regex such as `#(\w+)` with Unicode word characters, lower-cased and normalised (strip accents, maybe fold variants), deduplicated within the post, and capped (ignore the 31st tag) to block spam. Store the normalised tag for lookup and the original text for display.
+
+## Option 1: an array column with a GIN index
+In PostgreSQL, store the tags in the post row: `tags text[]`. A normal B-tree index can't answer "rows whose array contains 'marathon'". The PostgreSQL docs describe **GIN** (Generalized Inverted Index) for exactly this: it is designed for composite values (arrays, jsonb, full-text documents) and indexes the **elements** inside them. Its built-in `array_ops` supports `&&` (overlap), `@>` (contains), `<@` (is contained by) and `=`.
+
+```
+CREATE INDEX posts_tags_gin ON posts USING GIN (tags);
+SELECT id FROM posts WHERE tags @> ARRAY['marathon'];
+```
+
+Internally, the docs explain, a GIN index is a B-tree over **keys** (tag values), and each key points to a **posting list** of matching rows, or to a posting tree when the list is large: the inverted index from Module 9 inside your database.
+
+%%flow A GIN index over the tags array is an inverted index: each tag points to the rows that contain it.
+Post 7 tags: marathon, nyc -(index each element)-> *GIN key "marathon" -(posting list)-> Posts 7, 19, 42
+%%
+
+The docs note the trade-off: GIN favours **search speed over write speed**, since one row can generate many index entries. The **fastupdate** option buffers new entries in an unsorted **pending list** that is merged later (on VACUUM, or when it exceeds `gin_pending_list_limit`); searches must also scan the pending list, so a big backlog slows reads.
+
+## Option 2: a separate tag table
+```
+CREATE TABLE post_tags (
+  tag        TEXT NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  post_id    BIGINT NOT NULL,
+  PRIMARY KEY (tag, created_at, post_id)
+);
+```
+One row per (post, tag). "All posts with #marathon, newest first" is a range scan on the primary key, already in time order, so pagination with a cursor `(created_at, post_id) < (last_seen)` is efficient (keyset pagination, 04.12).
+
+## Trade-offs
+| | Array column + GIN | Separate tag table |
+|---|---|---|
+| Write | One row; GIN index updates (or pending list) | One extra row per tag |
+| "Posts with #x" | Index finds matches, but no ordering by time; a popular tag needs a sort of many rows | Range scan already ordered by time; cheap pagination |
+| Multiple tags (#a AND #b) | Natural: `tags @> ARRAY['a','b']` | Intersect two lists or self-join |
+| Per-tag counts and trending | Hard; must count matches | Easy to count, or keep a tag_counts table |
+| Sharding | Tags live with posts; query fans out to every shard | Table can be sharded **by tag**, so one tag's posts are on one shard |
+| Simplicity | Simplest at small scale | More moving parts |
+
+The decisive question is "all posts with #x" for a popular tag. With GIN, `#nyc` might match 40 million rows that must be sorted to get the newest 20 (unless combined with other filters). The tag table, keyed by (tag, created_at), reads exactly 20 rows. At scale, the tag table, effectively a hand-built inverted index sorted by time, usually wins; the array column is fine for small datasets and multi-tag filters.
+
+%%flow At scale, tags become their own index: extracted on write, stored by tag and time, read with a cursor.
+Post saved -(extract, normalise)-> Tags marathon, nyc -(one row each)-> *post_tags keyed by tag, time -(range scan, cursor)-> Newest posts for #nyc
+%%
+
+Very large systems move tag search into the search engine (Module 9) or a wide-column store keyed by tag and time bucket, so a hot tag's rows are split across partitions.
+
+! Example: the two queries side by side
+! GIN: `SELECT id FROM posts WHERE tags @> '{nyc}' ORDER BY created_at DESC LIMIT 20` finds all 40M matching rows through the index, then must order them. Tag table: `SELECT post_id FROM post_tags WHERE tag='nyc' AND (created_at, post_id) < ($t, $id) ORDER BY created_at DESC, post_id DESC LIMIT 20` reads 20 index entries.
+
+> Takeaway: extract and normalise tags at write time. An array column with a GIN index (an inverted index on array elements) is simple and handles multi-tag filters, but can't return a popular tag's newest posts without sorting many rows. A separate (tag, created_at, post_id) table gives time-ordered, paginated reads, counts and sharding by tag at the cost of extra writes.
+
+?? An array column with a GIN index keeps one row per post, is simple, and handles multi-tag queries with @> or &&, but GIN only finds matching rows; for a popular tag, getting the newest 20 means sorting millions of matches, it can't be sharded by tag, and GIN writes are relatively costly. A separate tag table keyed by (tag, created_at, post_id) costs an extra row per tag, but "all posts with #x, newest first" becomes a short range scan with cursor pagination, counts are easy, and it can be partitioned by tag.
+
+@11.08
+## Two different questions
+Every post shows reaction counts ("❤ 1.2K 😂 340") and whether **you** reacted (your heart is filled in). Those are two different access patterns:
+- **Counts**: read on every view of the post, by everyone; must be fast and can be slightly stale.
+- **My reaction**: per viewer, per post; must be correct for that viewer (if I tap heart, it must stay filled).
+
+The assigned source, Hello Interview's *Scaling writes* pattern, is paywalled beyond its headings, so this lesson is built from general practice and from the counting techniques of Module 10.
+
+## The data model
+1. **Reactions table** (the source of truth): one row per (post_id, user_id) with the reaction type and time. The primary key (post_id, user_id) means a user has at most one reaction per post, and changing it is an update.
+2. **Counts**, stored separately: `post_reaction_counts(post_id, type, count)` or a counters map on the post. Never compute counts with `COUNT(*)` over millions of reaction rows on each view.
+
+%%flow A reaction updates the source-of-truth row, then the denormalised counter; views read the counter plus a point lookup for "did I react".
+User taps heart -(upsert post 9, user 4)-> *Reactions table -(increment, async or same transaction)-> Counts per type -> Post view
+%%
+
+## Reading "did I react?"
+For a feed of 20 posts, the viewer's reactions are a **batch point lookup**: `SELECT post_id, type FROM reactions WHERE user_id = ? AND post_id IN (…20 ids…)`. For that to be one fast query, index or partition by (user_id, post_id), which is the reverse of the primary key (post_id, user_id), the same two-direction problem as follows in 11.03. Options: a secondary index, a second table keyed by user, or a cache of "posts this user reacted to recently".
+
+For very large systems, a per-user **Bloom filter** of reacted post IDs can answer "definitely not reacted" without a lookup, falling back to the store only when the filter says "maybe".
+
+## Writing at scale: hot posts
+A viral post may get tens of thousands of reactions per second. The reactions rows are spread out (each user's row is separate), but the **counter** is a single hot row: the problem of lesson 10.01. The same fixes apply:
+- **Batch increments**: push reaction events onto a queue partitioned by post ID; a consumer sums them for a second or two and applies `count += n`.
+- **Sharded counters**: split the post's count into N sub-counters with random suffixes, summed on read and cached.
+- **Hierarchical aggregation**: servers count locally and forward partial sums, as in live reactions (10.13).
+
+%%flow Hot-post counting: reaction events are summed per post for a couple of seconds, so the counter sees one write per interval.
+Reactions, 20k per s -(partition by post)-> Queue -> *Aggregator sums per 2 s -(count += 40,000)-> Counter row -> Cache
+%%
+
+## Keeping them consistent
+- **Idempotency**: a double tap or retry must not double-count. Because the reactions table enforces one row per user per post, increment the counter **only when the upsert actually inserted or changed** a row (for example, using the `RETURNING` result, or emitting the event from change data capture on the reactions table).
+- **Changing a reaction** (heart to laugh) is decrement heart, increment laugh.
+- **Drift**: counters maintained by events can drift after bugs. A periodic job recounts from the reactions table for recently active posts and fixes discrepancies.
+- **Read-your-own-write**: the client shows the user's own reaction (and adds one to the displayed count) immediately, even before the aggregated counter catches up.
+
+! Example: rendering a feed
+! The feed service has 20 post IDs. It fetches counts for all 20 from the counts cache (one multi-get), and the viewer's reactions with one query on the (user_id, post_id) index, returning 3 rows. Each post renders its counts, and 3 of them show the viewer's filled-in reaction. The viewer taps heart on post 9: the upsert inserts a row, an event increments post 9's heart count within a couple of seconds, and the client already shows 1,201 instead of 1,200.
+
+> Takeaway: keep one reaction row per (post, user) as the source of truth and maintain per-type counts separately. Read counts from a cache and the viewer's own reactions by a batch lookup on a (user, post) index. For hot posts, batch or shard the counter increments, increment only when a row actually changed, and periodically reconcile counts.
+
+?? Store each reaction as a row keyed by (post_id, user_id), which guarantees one reaction per user per post, and keep per-post counts per reaction type in a separate counter, cached and updated by batched increments (sharded for viral posts) only when a reaction row actually changes. To render a page, read counts with a multi-get from the cache and the viewer's own reactions with one batch query on a (user_id, post_id) index. Reconcile counters against the rows periodically.
+
+@11.09
+## The problem
+Photo tagging stores "Alice is at this point (or box) in photo 123". The same photo is shown at many sizes: a 4000 × 3000 original, a 1080-pixel version on phones, a 320-pixel thumbnail in the feed, a 2× retina version, a cropped square preview. The tag marker must land on Alice's face in all of them.
+
+## Coordinates are relative to an origin
+MDN's *Coordinate systems* page explains that a position on the web is an offset from an **origin**, by default the **top-left corner**, with x increasing to the right and y **downward** (unlike school graphs, where y goes up). The same click has different coordinates depending on the reference:
+- `offsetX/offsetY`: relative to the element that received the event (the image's padding edge).
+- `clientX/clientY`: relative to the viewport; changes when you scroll.
+- `pageX/pageY`: relative to the whole document.
+- `screenX/screenY`: relative to the physical screen.
+
+For tagging, you want coordinates relative to the **image itself**, so `offsetX/offsetY` on the image, or `clientX` minus the image's bounding box. MDN's page doesn't cover the next step, so the rest of this lesson is standard practice.
+
+## Pixels break across sizes
+Suppose a user clicks Alice's face at (540, 300) on an image displayed 1080 pixels wide. If you store (540, 300):
+- On a 320-pixel-wide thumbnail, (540, 300) is **off the image**.
+- On the 4000-pixel original, it is in the top-left area, nowhere near Alice.
+- On a high-density screen, CSS pixels and device pixels differ, so even "the same" display size can disagree on raw pixel numbers.
+
+## Fractions are size-independent
+Store the position as a **fraction** of the image's width and height, in the range 0 to 1:
+
+`x = 540 / 1080 = 0.5`, `y = 300 / 810 = 0.37`
+
+To draw the tag on any rendition, multiply by that rendition's displayed size: on the 320 × 240 thumbnail the marker goes at (160, 89); on the 4000 × 3000 original at (2000, 1111). A box tag stores (x, y, width, height) as fractions too.
+
+%%flow One tag, many sizes: store fractions once, multiply by whatever size the photo is displayed at.
+Click at 540, 300 on 1080 x 810 -(divide by size)-> *Stored: x 0.50, y 0.37 -(times 320 x 240)-> Thumbnail: 160, 89
+%%
+
+%%flow The same stored fractions on the full-size original.
+*Stored: x 0.50, y 0.37 -(times 4000 x 3000)-> Original: 2000, 1111
+%%
+
+Why this is the right representation:
+- **Resolution independence**: any rendition with the same aspect ratio maps correctly, including ones created later.
+- **Responsive layouts**: the client only needs the rendered size, not the original.
+- **Re-encoding and resizing**: regenerating thumbnails or serving new formats changes nothing.
+- **Simple validation**: anything outside 0 to 1 is invalid.
+
+## What fractions don't fix
+- **Crops** (a square feed preview of a landscape photo) change the visible region. Store the crop rectangle as fractions too, then map: `x_in_crop = (x − crop.x) / crop.width`; tags outside the crop are hidden.
+- **Rotation**: if the original has an EXIF orientation flag, normalise the image (or the coordinates) to its displayed orientation before saving tags.
+- **Aspect ratio** must be preserved by renditions (letterboxing or `object-fit: contain` add borders that must be accounted for).
+- **Precision**: a float or a fixed-point integer (fraction × 10,000) is plenty; 0.0001 of a 4000-pixel image is 0.4 pixels.
+
+! Example: a tag stored and drawn
+! Stored row: `{photo_id: 123, user_id: alice, x: 0.5000, y: 0.3704, w: 0.08, h: 0.11}`. Feed card renders the photo at 375 × 281: box at (187.5, 104.1), 30 × 31 pixels. Desktop lightbox at 1600 × 1200: box at (800, 444.5), 128 × 132. One row serves every client and every future rendition.
+
+> Takeaway: browser coordinates are offsets from a top-left origin and depend on the reference element and display size. Store tag positions (and crop boxes) as fractions 0 to 1 of the image's width and height, then multiply by each rendition's displayed size, handling crops and rotation explicitly.
+
+?? The same photo is displayed at many sizes (thumbnails, phone, desktop, retina, the original), so a pixel position is only correct for the exact size it was captured at, and lands in the wrong place or off the image elsewhere. Fractions of width and height are independent of resolution: one stored value maps to any rendition by multiplying by its displayed width and height, including renditions created later, and invalid values are easy to detect.
+
+@11.10
+## The challenge
+A World Cup final: hundreds of millions of viewers, and fans posting comments far faster than anyone can read. Everything in lesson 10.13 applies, but comments, unlike reactions, are **distinct messages** that can't simply be summed. Hello Interview's *FB Live Comments* breakdown is the reference design.
+
+## The base design
+Its requirements: millions of concurrent live videos, **thousands of comments per second per video**, availability over consistency, and **under 200 ms** delivery. The building blocks:
+- Comments are posted over normal HTTP and **persisted** to a database (so late joiners can load recent history).
+- Viewers receive new comments over **SSE**, since reads vastly outnumber writes.
+- **Realtime messaging servers** hold viewer connections.
+- **Pub/sub** carries new comments from the comment service to the realtime servers.
+
+## Sharding pub/sub by event
+A naive pub/sub where every realtime server receives every comment for every video doesn't scale: each server would process the world's comments to deliver a tiny fraction. Hello Interview shards it:
+- Comments for a video are published to channel `hash(liveVideoId) % N`. A realtime server subscribes only to the channels for videos its viewers are watching.
+- An **L7 load balancer** routes viewers by **consistent hashing on liveVideoId**, so viewers of the same video land on the same realtime servers. Then each server subscribes to few channels, and each comment is delivered to as few servers as possible.
+- Redis pub/sub is used for low latency and dynamic subscriptions; its fire-and-forget delivery is acceptable because comments are persisted and clients re-sync after disconnects.
+
+%%flow Comments sharded by event: a video's comments go to one channel, and only the servers holding that video's viewers subscribe.
+Comment on final -(persist)-> Comments DB -(publish to hash of video id mod N)-> *Channel 17 -(subscribed servers only)-> Realtime servers for the final -(SSE)-> Viewers
+%%
+
+## When one event is the whole load
+Sharding by event spreads **different** events. The World Cup final is a single event, so a single channel and the servers co-located on it get everything. Hash-based placement alone puts the final on one shard, which can't hold 200 million connections. What changes:
+1. **Spread one event's viewers across many servers.** Instead of hashing the video to one server, hash to a group: the final gets, say, 2,000 realtime servers, each subscribing to the event's channel. The comment is published once and the pub/sub layer fans it out to 2,000 subscribers, each pushing to its 100,000 viewers.
+2. **Tiered fan-out.** A single Redis channel feeding 2,000 subscribers at thousands of messages per second is itself a hotspot. Add a relay tier: the publisher sends to, say, 40 relays, each feeding 50 realtime servers. Each hop multiplies; no node fans out to everything.
+3. **Sample the comments.** No human can read 10,000 comments per second. Hello Interview's answer for mega-streams is **sampling**, lowering the share of comments delivered from 50% down to 1 to 2% as comment velocity rises (always including the viewer's own comments and perhaps comments from friends or verified accounts). All comments are still stored.
+4. **Batch per tick.** Send comments in small batches (for example every 250 ms) rather than one message each, cutting per-message overhead on every hop.
+5. **Snapshots via CDN.** Hello Interview also suggests delivering periodic snapshots through a CDN for the largest streams: viewers fetch "the latest 50 comments" every second or two from an edge cache, which absorbs almost unlimited read load.
+
+%%flow Mega-event fan-out: sample and batch first, then fan out through a relay tier to thousands of realtime servers.
+Comments, 50k per s -(sample to 1%, batch per 250 ms)-> *Event publisher -(40 relays)-> Relay tier -(50 servers each)-> 2,000 realtime servers -> 200M viewers
+%%
+
+## Other parts that need sharding
+- **Write path**: 50,000 comments per second into one event. Partition the comment store by (event, time bucket) or a random suffix so writes spread; moderation and spam filtering run on a stream before publishing.
+- **History for late joiners**: serve "last 50 comments" from a cache refreshed every second, not from the database per viewer.
+- **Reactions**: aggregate as counts (10.13), not messages.
+
+! Example: sizing the final
+! 200 million viewers at 100,000 SSE connections per server = 2,000 realtime servers. Raw comments: 50,000 per second. Sampled to 1%: 500 per second, batched every 250 ms into 4 messages per second of about 125 comments each. The publisher sends 4 messages per second to 40 relays; each relay forwards to 50 servers; each server writes 4 frames per second to each of its 100,000 viewers. Every node's fan-out is bounded.
+
+> Takeaway: shard live-comment pub/sub by event (channel = hash(event) mod N) and co-locate an event's viewers on the same servers with consistent hashing at the L7 load balancer. A single huge event outgrows one shard, so spread its viewers over many servers, fan out through relay tiers, sample and batch comments, and serve snapshots from a CDN.
+
+?? Partition pub/sub by event: each event's comments go to a channel chosen by hash(eventId) mod N, and an L7 load balancer uses consistent hashing on the event ID so its viewers sit on the same realtime servers, which subscribe only to that channel. For the World Cup final, one event must span thousands of servers: publish each comment once into the event's channel, fan it out through a relay tier to all servers holding its viewers, sample comments down to a readable rate (1 to 2%), send them in batches every few hundred milliseconds, and serve recent-comment snapshots from a cache or CDN.

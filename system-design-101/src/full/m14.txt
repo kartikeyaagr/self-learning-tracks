@@ -1,0 +1,815 @@
+@14.01
+## What observability means
+The OpenTelemetry primer defines observability as being able to understand a system **from the outside**: you can ask new questions about it without knowing its internals in advance. Its test for good instrumentation is practical. When something new breaks (an "unknown unknown"), can engineers find the cause using the signals the system already emits, without shipping new logging first? If they have to add instrumentation to debug, the system was not observable enough.
+
+The data a system emits about itself is **telemetry**, and it comes in three signals: metrics, logs and traces. Each answers a different kind of question, and a slow checkout needs all three.
+
+## Metrics: is something wrong, and how much?
+A metric is a number aggregated over time: request rate, error rate, CPU, queue depth, latency percentiles. Metrics are cheap to store because they summarise; a million requests become one counter. That makes them the right signal for dashboards and alerts. Their weakness is that they lose detail. A latency graph tells you checkout p99 went from 300 ms to 2 s; it cannot tell you which request, which user, or which downstream call.
+
+The Google SRE chapter on monitoring gives the **four golden signals**, the four things to measure if you can only measure four:
+- **Latency**: time to serve a request. Track successful and failed requests separately. A fast HTTP 500 drags the average down and hides the problem, and a slow error is worse than a fast one.
+- **Traffic**: demand in the system's own unit: HTTP requests per second for a web service, concurrent sessions for streaming, reads and writes per second for a key-value store.
+- **Errors**: failed requests. These can be explicit (HTTP 500), implicit (HTTP 200 with the wrong content), or by policy (anything slower than a promised 1 s counts as failed). Load balancer counts catch outright failures; only end-to-end probes catch wrong content.
+- **Saturation**: how full the most constrained resource is. Many systems degrade before 100%, so you need a target utilisation. Rising latency is often the first sign of saturation, and predictions count too ("the disk fills in 4 hours").
+
+%%layers The four golden signals, from what users feel to what predicts trouble.
+Latency | how long requests take; split success and failure *
+Traffic | how much demand: requests/s, sessions, transactions
+Errors | explicit 500s, wrong 200s, too-slow-counts-as-failed
+Saturation | how full the tightest resource is; predicts the next outage
+%%
+
+## Why averages lie
+The SRE book's example: a service handling 1,000 requests per second with a 100 ms **average** can still have 1% of requests (10 every second) taking 5 seconds. Averages hide the tail, and the tail is what users complain about. Worse, if one page fans out to several such services, one backend's 99th percentile becomes the frontend's typical case.
+
+The fix is to record **histograms**: count requests into latency buckets (0 to 10 ms, 10 to 30, 30 to 100, 100 to 300 and so on, roughly ×3 each step) instead of keeping raw values or a single mean. From buckets you can read any percentile and see the shape of the distribution.
+
+Resolution should match the goal. Minute-averaged CPU hides one-second spikes that cause tail latency. The book's trick: sample CPU every second into a histogram with 5% buckets, and ship the histogram once a minute. You keep the spikes without paying for per-second storage.
+
+## Logs: what exactly happened?
+A log is a timestamped record of an event. Logs carry detail metrics throw away: the user ID, the error message, the SQL that timed out. The primer's warning is that logs **lack context**. A log line says "payment call failed" but not which incoming request triggered it or what else that request did. Two changes make logs useful in distributed systems:
+- Make them **structured** (JSON fields, not free text), so you can filter by `order_id` or `status`.
+- Put a **request or trace ID** in every line, so you can pull every log line for one request across every service.
+
+## Traces: where did the time go?
+A **span** is one unit of work: an HTTP handler, a database query, a call to another service. Per the primer, a span has a name, a start time and duration, **attributes** (key-value metadata such as `http.request.method = GET`, `http.route = /webshop/articles/:article_id`, `http.response.status_code = 200`), and span events (structured log messages inside it).
+
+A **trace** is the tree of spans for one request. The root span covers the request from start to finish; child spans cover the steps inside it. For this to work across services, each service must pass the trace ID and parent span ID along with its outgoing calls (in HTTP headers). This is **context propagation**. Tools draw a trace as a **waterfall**: one bar per span, nested under its parent, so the slow bar is obvious.
+
+%%flow One checkout trace: every hop is a span, and the trace ID travels in the request headers.
+[Request] Browser -(trace-id abc)-> API gateway -(trace-id abc)-> Checkout service -(trace-id abc)-> *Payment service
+[Spans] gateway span 1900 ms -(contains)-> checkout span 1850 ms -(contains)-> *payment span 1700 ms
+%%
+
+! Example: debugging a slow checkout
+! 1. **Metrics** fire the alert: checkout p99 rose from 300 ms to 2 s at 14:05, while error rate is flat.
+! 2. **Traces**: pick a few slow checkout traces from after 14:05. The waterfall shows the `payment.authorize` span taking 1.7 s of the 1.9 s; inventory and pricing spans are normal.
+! 3. **Logs**: filter payment-service logs by those trace IDs. They show retries against the card processor with "connection pool exhausted".
+! 4. Back to **metrics** to confirm the cause: payment service pool saturation is at 100% since a 14:00 deploy that halved the pool size.
+
+## Alerting on symptoms, not causes
+The SRE chapter separates **what is broken** (the symptom: errors, slow responses) from **why** (the cause: database refusing connections, CPU overloaded, a bad cable). Page people on symptoms users feel. Use cause metrics for debugging, and page on a cause only when it is definite and imminent (a disk about to fill, a service down to zero redundancy).
+
+Its rules for pages:
+- Every page must be **urgent**, **actionable** and need **human judgement**. If the response is mechanical, automate it instead.
+- People can only respond with urgency a few times a day before fatigue sets in. Noisy alerts train people to ignore pages.
+- Delete rules that rarely fire (less than once a quarter) and signals that appear in no dashboard and no alert.
+
+The book's Bigtable story shows the cost of noise. The SLO was set on mean latency, but the slowest 5% of requests were much slower, so alerts fired constantly and engineers missed real problems. The team temporarily set the target at the 75th percentile and turned off email alerts. With fewer interruptions, the on-call engineers could fix the underlying issues.
+
+> Takeaway: metrics tell you something is wrong and how much; traces tell you which service and which call; logs tell you exactly what happened inside it. Measure latency, traffic, errors and saturation, use histograms instead of averages, propagate a trace ID everywhere, and page only on symptoms that need a human.
+
+?? Traces. Metrics show that checkout latency rose but are aggregated per service, and logs are per service and lack the cross-service context. A trace follows one checkout request through every service as a tree of timed spans, so the waterfall shows directly which span (say the payment service's call) takes most of the time. Then you use that service's logs, filtered by trace ID, to see why.
+
+@14.02
+## SLIs: measuring what users feel
+The SRE workbook defines a service level indicator (SLI) as a ratio: **good events divided by total events**, from 0% to 100%. Keeping every SLI in this form means the same tools can alert, chart and report on any of them. Examples from the workbook:
+- successful HTTP requests ÷ all HTTP requests (availability)
+- gRPC calls that succeed in under 100 ms ÷ all calls (latency)
+- search results served from the full index ÷ all results, including degraded ones (quality)
+- "good user minutes" ÷ all user minutes
+
+It separates the **specification** (what users care about: "home page loads in under 100 ms") from the **implementation** (how you measure it). The same specification can be measured from server logs (cheap, but misses requests that never reached you), from probers (catch network failures but not every user's experience), or from client-side JavaScript (closest to what users feel, but most work). Start with the cheapest one that is good enough, then improve it.
+
+Which SLIs to pick depends on the type of component:
+| Component | SLIs |
+| Request-driven (APIs, web) | availability, latency, quality |
+| Pipeline (batch, streaming) | freshness, correctness, coverage |
+| Storage | durability |
+
+Keep it to about five SLI types per service, covering what matters most.
+
+## SLOs and the error budget
+An SLO is a target for an SLI over a window: "99.9% of requests succeed, measured over 4 weeks". The **error budget** is the remainder: 100% − 99.9% = 0.1% of requests are allowed to fail. That makes reliability a number product and engineering share, instead of an argument.
+
+The workbook's worked example is a mobile game API. Over four weeks it served 3,663,253 requests, of which 97.123% succeeded, with p90 latency 432 ms and p99 891 ms. The team set SLOs just below current performance: 97% availability, 90% of requests under 450 ms, 99% under 900 ms. The availability budget is 3% of 3,663,253, about **109,897 failed requests** per four weeks. Then each incident has a price:
+- a bad release causing 14,066 errors cost about **13%** of the budget;
+- a database failure with a 20-hour restore causing about 72,000 errors cost about **65%**.
+
+Since bad releases happen two or three times a year, they cost more budget in total than the rare database failure. So the team should first invest in safer releases.
+
+%%flow An error budget turns incidents into a shared currency.
+[Budget] SLO 97% -(allows 3% failures)-> *109,897 errors per 4 weeks
+[Spend] bad release -(14,066 errors)-> 13% used -(DB restore, 72,000 errors)-> 78% used
+%%
+
+**Windows.** A **rolling** window (say the last 28 days) matches how users remember outages. Use a whole number of weeks so every window has the same number of weekends. **Calendar** windows (this quarter) match business planning. The workbook's default is a four-week rolling window, with weekly summaries for prioritising and quarterly reports for planning.
+
+## The error budget policy
+An SLO only matters if missing it changes behaviour. The **error budget policy** is a written agreement, signed off by product, development and SRE, that says what happens when the budget runs out. The workbook's example actions:
+- fix the reliability bugs from the past four weeks first;
+- work only on reliability until the service is back within its SLO, with leadership backing to turn down feature requests;
+- **freeze production changes** (except fixes) until enough budget has come back;
+- in extreme cases, declare an emergency with senior approval.
+
+While budget remains, teams ship freely. A healthy service should spend some of its budget; never touching it means you could move faster. The policy also has an escalation path for disputes and a note on outages caused by dependencies (freezing anyway is friendlier to users).
+
+All three groups must agree to it. Product agrees the threshold is good enough for users, developers agree to slow down when it is missed, and SRE agrees it can be met without heroics. If one party won't enforce it, change the SLO until they will.
+
+## Alerting on the budget: burn rate
+Alerting whenever the error rate crosses 0.1% is too noisy. The workbook notes that a 0.1% error rate for 10 minutes uses only 0.02% of a 30-day budget, yet such an alert could fire up to 144 times a day while the SLO is still met. The better measure is **burn rate**: how fast you are spending the budget relative to plan. A burn rate of 1 uses exactly the whole budget by the end of the window. For a 99.9% SLO over 30 days:
+| Burn rate | Error rate | Budget gone in |
+| 1 | 0.1% | 30 days |
+| 2 | 0.2% | 15 days |
+| 10 | 1% | 3 days |
+| 1,000 | 100% | 43 minutes |
+
+Budget consumed = burn rate × alert window ÷ SLO period. The workbook's recommended starting thresholds:
+| Severity | Long window | Short window | Burn rate | Budget used |
+| Page | 1 hour | 5 minutes | 14.4 | 2% |
+| Page | 6 hours | 30 minutes | 6 | 5% |
+| Ticket | 3 days | 6 hours | 1 | 10% |
+
+Check: 14.4 × 1 h ÷ 720 h = 2%.
+
+The **short window** (1/12 of the long one) is the "multiwindow" part. An alert fires only when both windows exceed the threshold. The long window shows the burn is significant; the short window shows it is still happening. When errors stop, the short window drops below the threshold within minutes and the alert clears, instead of firing for another hour.
+
+%%flow Multiwindow burn-rate alert: page only when the spend is both large and still happening.
+[Check] 1-hour burn rate above 14.4 -(and)-> 5-minute burn rate above 14.4 -(both true)-> *Page on-call
+[Clear] errors stop -(5-minute window recovers first)-> alert resets within minutes
+%%
+
+**Low-traffic services** break this maths. At 10 requests an hour, a single failure is a 10% error rate and a 1,000× burn rate. Options from the workbook: add synthetic traffic, group small services that share failure domains into one SLO, add client retries, or deliberately set a lower SLO.
+
+! Example: half the budget gone in week one
+! A 99.9% SLO over 4 weeks with 3 million requests has a 3,000-error budget. One outage in week 1 causes 1,500 errors: 50% spent. The burn-rate alert paged during the outage (1-hour burn far above 14.4). Now the policy applies. You are not out of budget yet, so you don't need a full freeze. But at this rate you will be, so the team prioritises the outage's postmortem actions, slows risky launches, and watches the 3-day ticket alert. If a second incident uses the rest, the policy's freeze kicks in until the window rolls past the outage.
+
+> Takeaway: define SLIs as good ÷ total events users feel, set an SLO slightly below what you achieve, and treat the remainder as a budget to spend. A signed error budget policy decides what happens when it runs out. Alert on burn rate with a long and a short window, not on raw error spikes.
+
+?? Half the budget gone in week one means you are burning about 2× too fast; at that pace you run out in week two. The policy says reliability work rises in priority now: do the incident's postmortem actions and slow risky changes. If the budget is exhausted, freeze non-critical launches and changes, and spend engineering time on reliability, until the rolling window recovers. Product, development and SRE agreed to those actions in advance, so nobody has to argue about them now.
+
+@14.03
+## How an unmanaged incident goes wrong
+The SRE book's chapter on managing incidents opens with a story. On-call engineer Mary is paged when one datacenter stops serving. Two more fail, the rest overload, and the whole service goes down. Then the response falls apart:
+- **Tunnel vision.** Mary dives into logs and rolls back a release (which doesn't help). Deep in the details, she loses sight of the bigger picture and of simple mitigations.
+- **Poor communication.** Developers join informally and nobody knows who is doing what. Executives demand updates and suggest unhelpful fixes.
+- **Freelancing.** Another engineer, Malcolm, on his own initiative, pushes an untested CPU affinity change to production. The servers restart with it and fail, making things worse.
+
+The fix isn't smarter engineers. It is a structure that gives each person one job.
+
+## Roles: separate the deciding from the doing
+Google's process is based on the **Incident Command System** used by emergency services. Its core idea is a **recursive separation of responsibilities**. Everyone knows their role and stays inside it, which also gives them freedom to act without second-guessing each other.
+- **Incident commander (IC)**: holds the overall picture, assigns and prioritises work, removes blockers. The IC holds every role that hasn't been handed out yet.
+- **Operations lead**: works with the IC to actually change the system. **Only the ops team changes production during the incident.** That rule alone stops a Malcolm.
+- **Communications lead**: the public face of the response. Sends regular updates to stakeholders and often keeps the incident document current.
+- **Planning lead**: handles longer-term needs: filing bugs, arranging handoffs and food, and recording every temporary change ("we disabled the cache flag") so it can be reverted later.
+
+%%flow The incident commander coordinates; only operations touches production.
+[Command] *Incident commander -(assigns work)-> Ops lead -(only team changing prod)-> Production
+[Support] Incident commander -(delegates)-> Comms lead -(regular updates)-> Stakeholders and users
+[Later] Incident commander -(delegates)-> Planning lead -(tracks temporary changes, handoffs)-> Follow-up bugs
+%%
+
+Why separate the commander from the fixer? Fixing needs deep focus on one problem. Coordinating needs a wide view: is this still the right approach, is anyone working on mitigation, who needs updates, who else should join? One person can't do both, which is exactly what failed for Mary. When a role gets too big, its holder asks for more people or splits off a sub-incident.
+
+Other parts of the process:
+- **A known command post**: a set place where responders coordinate, such as a war room or a chat channel. Chat gives you a log of what happened for free.
+- **A live incident document**: the IC's most important job. Many people can edit it at once. It holds the current status, the impact, a timeline and the actions taken, with the most important information at the top. It is messy but useful, and becomes the raw material for the postmortem.
+- **Explicit handoff**: at the end of a shift, brief the new IC (by phone or video) and don't leave until they have said "I have command". Then tell everyone who is in charge.
+
+**When to declare an incident.** Declare early; it is easier to close a small incident than to add structure to a big one. Declare if any of these is true: a second team is needed, customers can see the outage, or the problem is still unsolved after an hour of focused work.
+
+**Mitigate first.** The book's priorities are: stop the bleeding, restore service, and keep evidence for root-cause analysis. Rolling back, failing over, draining a region or shedding load usually beats debugging during the outage.
+
+## Blameless postmortems
+After the incident, the companion chapter on postmortem culture covers learning from it. A **postmortem** is a written record of the incident: impact, timeline, actions taken, root causes and contributing factors, what went well, and follow-up actions with owners and priorities. Teams agree in advance on what triggers one, for example:
+- user-visible downtime or degradation beyond a threshold;
+- **any** data loss;
+- on-call intervention such as a rollback or rerouting traffic;
+- resolution time beyond a threshold;
+- a monitoring failure (a human found the problem before the alerts did).
+
+**Blameless** means the write-up looks for contributing causes in systems and processes, and does not blame individuals. It assumes everyone acted reasonably with the information they had. The reason is practical: if people fear punishment, they hide mistakes, and the organisation stops learning. The idea comes from healthcare and aviation. As the chapter puts it, you can't "fix" people, but you can fix systems so the next person makes a better choice.
+
+Its example contrast: a blaming note says the backend must be rewritten because it keeps breaking and someone is tired of being paged. A blameless version proposes the rewrite as an action item, because the current runbook is long and hard to learn, and future on-call engineers would benefit.
+
+%%seq From page to postmortem: mitigate during the incident, learn after it.
+Alert > IC : page: checkout errors 20%
+IC > Ops : roll back the 14:00 deploy
+IC > Comms : post status update every 30 min
+Ops -> IC : error rate back to normal
+IC > IC : declare mitigated, keep the timeline
+IC > Team : blameless postmortem + action items
+%%
+
+**Review.** Senior engineers review each draft for completeness. Was the key data collected? Is the impact assessed? Is the root cause analysed deeply enough? Are the actions right and prioritised? Was it shared with the right people? An unreviewed postmortem might as well not exist. Teams keep the culture alive with a "postmortem of the month", reading clubs on old incidents, and the **Wheel of Misfortune**, where new SREs replay a past incident as a role-play.
+
+> Takeaway: give incidents a structure. One commander coordinates; only the operations lead changes production; a communications lead handles updates; everything goes into a live document. Mitigate first, then write a blameless postmortem whose action items fix the system, not the person.
+
+?? Fixing needs deep focus on one technical thread; coordinating needs a wide view of the whole incident: whether the current approach is still right, who is working on what, and what stakeholders need to hear. One person can't do both. The SRE book's unmanaged incident shows the failure: the on-call engineer was absorbed in debugging, nobody coordinated helpers or communications, and an engineer freelanced an untested change that made things worse. A separate commander keeps the big picture, and only the ops lead changes production.
+
+@14.04
+## Most outages come from change
+The two AWS Builders' Library articles start from Amazon's rule to "avoid walking through one-way doors". Prefer changes you can undo, and make undoing them fast and automatic. Deployments are where most change happens, so they get the most protection.
+
+## Amazon's pipeline
+Clare Liguori's article describes the pipeline every change goes through, whether code, infrastructure, config or OS patches:
+1. **Source and build.** Code review is the last manual approval. Builds compile, run unit tests, and package and sign the artifact.
+2. **Pre-production.** *Alpha* and *beta* run functional and integration tests. *Gamma* is the most production-like stage: same deployment config, same alarms, continuous synthetic "canary" traffic, deployed in several regions.
+3. **Gamma one-box.** The new version goes to one host (or container, or a slice of Lambda traffic) while the rest stays on the old version for 30 to 60 minutes. This catches problems that only appear when old and new versions run side by side.
+4. **Production in waves.** The goal is never to hurt two regions, or two Availability Zones in one region, at once.
+   - **Wave 1**: a low-traffic region, one AZ or cell at a time.
+   - **Wave 2**: a high-traffic region, where rare code paths actually get exercised.
+   - **Later waves** grow: 3 regions, then up to 12, then the rest. Each still deploys to only one AZ per region at a time.
+5. Each wave starts with a **one-box** stage taking at most about 10% of the region's or AZ's traffic, then a **rolling deployment** that replaces at most 33% of hosts at a time.
+
+%%flow Each wave widens the blast radius only after the last one has baked.
+[Pre-prod] Build -(tests pass)-> Gamma -(one-box 30 to 60 min)-> Gamma fleet
+[Production] Wave 1 small region -(bake 12 h)-> Wave 2 big region -(bake 2 to 4 h)-> *Later waves
+[Each step] one-box -(bake 1 h)-> rolling 33% at a time -(alarm fires)-> automatic rollback
+%%
+
+**Bake time** gives slow problems (memory leaks, daily batch jobs, rare paths) time to show up. Typical minimums: 1 hour after each one-box, 12 hours after the first regional wave, 2 to 4 hours after each later wave. Bake can also need a minimum amount of traffic, such as at least 100 calls to the Create API, to prove the new code actually ran. A normal change reaches all regions in about **4 to 5 business days**.
+
+**Automatic rollback.** Every service has a high-severity alarm in each region covering errors, p50/p90/p99 latency, CPU, memory, disk, log errors and health checks. These roll up into one aggregate alarm per team, together with the canary alarms. If it fires, every in-flight deployment for that team in that region rolls back to the previous artifact, without a human. One-box stages get alarms scoped to just that box, because 10% of traffic may not move the service-wide numbers.
+
+**Blockers and windows.** The pipeline won't start a deployment while the team's alarm is firing. It only deploys when on-call engineers are likely to be around: not at night, at weekends or on holidays, and for many teams not on Friday afternoons. Windows that are too small make changes pile up into risky bundles.
+
+**Feature flags** add one more layer. Deploying the code and turning the feature on become separate steps, so turning a feature off doesn't need a deploy (general practice; the articles mention configuration and feature-flag pipelines).
+
+## When rollback itself is unsafe
+Sandeep Pokkunuri's article covers the trap: rollback is only safe if the old version can still work with everything the new version did. In a distributed system, a rolling deployment means **old and new versions run at the same time**, reading each other's data and talking to each other. The most common problem is a **protocol change**. Two of the article's examples:
+- **Compression.** V2 compresses data it writes to disk. V1 can't read compressed data. During the rollout, V1 hosts reading data that V2 hosts wrote fail, and rolling back leaves data no running version can read.
+- **Heartbeats.** Servers send heartbeats every 5 s and drop peers silent for 5 s. "Just changing a number" to 10 s makes old servers drop connections to new ones across the fleet.
+
+## The two-phase deployment
+The fix is to split a change into two deployments, each safe to roll back. The article's example moves stored data from XML to JSON:
+| Phase | Version | Reads | Writes | Why rollback is safe |
+| Prepare | V2 | XML and JSON | XML | No JSON exists yet |
+| Activate | V3 | XML and JSON | JSON | Every running version (V2, V3) can read JSON |
+
+%%flow Prepare teaches every reader the new format before any writer uses it.
+[Prepare] V1 reads XML -(deploy V2)-> V2 reads XML and JSON, writes XML -(verify 100% of hosts)-> safe point
+[Activate] V2 everywhere -(deploy V3)-> *V3 writes JSON -(roll back to V2)-> still reads JSON
+%%
+
+The heartbeat version is the same. In Prepare, servers accept a 10 s silence but still send every 5 s. In Activate, they start sending every 10 s.
+
+Precautions from the article:
+- **Prepare must reach 100% of hosts** before Activate starts. A deploy tool that calls a deploy "successful" once *most* hosts are healthy is not enough; one host that missed Prepare will fail to read JSON.
+- **Bake between phases** for several days. Once V3 has written JSON, rolling back to V1 is unsafe again, so you want to be sure V2 is good first.
+- **Don't drop XML support afterwards** until a backfill has rewritten all old objects to JSON.
+
+**Serialization habits** that avoid the problem:
+- Use standard formats (JSON, Protocol Buffers) instead of custom ones.
+- Store an explicit format version with the data.
+- Don't serialize classes you don't own.
+- **Tolerate and keep unknown fields**: if an old version reads a record with a new field and writes it back, it should keep that field, not erase it. With this rule, many changes don't need two phases at all.
+
+**Test rollback, don't reason about it.** Testing must use several hosts and the same deployment config as production; a one-host test environment makes every deploy atomic and hides mixed-version bugs. The test: deploy to half the fleet (old and new side by side), finish the deploy, then roll back fully, with continuous traffic hitting every API throughout.
+
+! Example: adding a "currency" field to orders
+! V2 adds `currency` to the stored order record and requires it when reading. Halfway through the rollout, a V1 host updates an order written by V2 and saves it without `currency` (it doesn't know the field), so V2 hosts reading that order fail. Safe version: Prepare (V2) reads `currency` if present and defaults to USD, keeps unknown fields on write, and doesn't write `currency` yet. Activate (V3) starts writing it. Rolling back V3 to V2 is safe because V2 can read records with or without the field.
+
+> Takeaway: roll out in small, widening waves, one AZ at a time, with bake time and alarms that roll back automatically. During a rollout old and new versions run together, so any change to data formats or protocols needs two phases: first teach every reader the new format, then switch the writers.
+
+?? During a rolling deployment, version N and N+1 run at the same time, and after a rollback version N must read whatever N+1 already wrote. If N+1 writes a format (compressed data, JSON instead of XML, a new required field) that N can't read, N hosts fail on that data mid-rollout, and rolling back leaves data the running code can't read. The fix is two phases: first deploy a version that reads both formats but still writes the old one, make sure it is on every host, then deploy the version that writes the new format.
+
+@14.05
+## The constraint: no downtime, no wrong data
+Stripe's post on online migrations describes changing its data model at a scale where stopping is not allowed. Stripe has no maintenance windows, and every service must keep getting correct data during the migration. The scale rules out anything naive: they had hundreds of millions of subscription objects. At one second per object, migrating 100 million objects one by one would take over three years.
+
+The case: each Customer record used to hold its subscriptions **inline** (first one, later an array). Every subscription change rewrote the whole customer, and querying subscriptions meant scanning customers. The goal was a separate `subscriptions` table.
+
+## The four steps
+Stripe's pattern, also called **expand and contract** or **dual writing**:
+1. **Dual write.** Write every change to both the old place and the new table. Then **backfill** the existing data into the new table.
+2. **Switch reads.** Move every read to the new table.
+3. **Switch writes.** Make the new table the only place written to.
+4. **Remove the old data.** Delete the old field and its data.
+
+%%flow Expand, migrate, contract: at every step one store is complete and correct.
+[Expand] old field only -(1. dual write + backfill)-> both stores written -(2. reads move)-> *reads from new table
+[Contract] reads from new table -(3. writes move)-> new table only -(4. delete old data)-> old field gone
+%%
+
+Each step can be rolled back on its own, and each runs for a while before the next. That is the point: you never flip everything at once.
+
+**Step 1 in detail.** Dual writes were ramped up gradually while watching database metrics, because writing twice adds load. Existing subscriptions were copied lazily whenever they were updated. The rest needed a **backfill**. Instead of scanning the production database, Stripe loaded a database snapshot into Hadoop. A MapReduce job (written in Scalding) listed the subscription IDs to copy, and a fleet of workers copied them in parallel. Afterwards the job ran again to confirm nothing was missing.
+
+**Step 2** used GitHub's Scientist library (lesson 14.06) to read from both stores and compare results in production. Mismatches raised alerts. Reads moved to the new table only once the results matched.
+
+**Step 3** was the hardest. Subscription logic (updates, proration, renewals) spanned thousands of lines across services. Stripe changed one small code path at a time and never more than a few hundred lines at once, with more Scientist experiments along the way. To find forgotten callers, they made the old accessor **raise an error** if anything still used it.
+
+**Step 4.** Old arrays were emptied lazily as customers were loaded. A final job swept up whatever was left.
+
+## Schema changes without locking the table
+The same idea applies to a single table. Some `ALTER TABLE` operations rewrite or lock the whole table, which blocks traffic for minutes or hours on a big table. Which operations do this depends on the database and version, so check before running one. The safe sequence for a new required column (general practice; it isn't from these two sources):
+1. **Add the column as nullable**, with no default that forces a rewrite. On most modern databases this changes only metadata and is instant.
+2. **Deploy code that writes it** for all new and updated rows.
+3. **Backfill** old rows in small batches (say 1,000 rows each, with pauses), so you don't create huge transactions, lock contention or replication lag.
+4. **Add the NOT NULL constraint** once every row has a value. In PostgreSQL, add a `CHECK (col IS NOT NULL) NOT VALID` constraint, then `VALIDATE` it separately; validation scans the table without blocking writes.
+5. Only then deploy code that **relies** on the column always being there.
+
+If you add NOT NULL first, either the database rewrites the table to fill a default, or old code that doesn't know the column fails every insert.
+
+## gh-ost: online schema change for MySQL
+For changes MySQL can't do in place, GitHub's **gh-ost** copies the table instead:
+1. Create an empty **ghost table** with the new schema.
+2. **Copy existing rows** into it in small batches.
+3. At the same time, **read the MySQL binary log** (the replication stream) and apply every insert, update and delete on the original table to the ghost table.
+4. When the ghost table has caught up, **cut over**: atomically rename the tables so the ghost becomes the real table.
+
+%%flow gh-ost builds the new table beside the old one and swaps at the end.
+[Copy] original table -(batched row copy)-> *ghost table (new schema)
+[Changes] app writes -(to original)-> binary log -(gh-ost applies events)-> ghost table
+[Finish] ghost caught up -(atomic rename)-> ghost becomes the table
+%%
+
+Older tools did step 3 with **triggers** on the original table. gh-ost avoids triggers, which it says bring "many limitations and risks": triggers add work to every write inside the application's own transaction and can't be paused. Reading the binlog asynchronously gives gh-ost control:
+- **True pause.** When throttled (for example because replicas are lagging), it stops all its writes, both row copying and event applying, so the primary returns to normal load.
+- **Interactive control.** You can change settings while it runs, through a socket.
+- **Postponed cut-over.** You can delay the swap until a quiet period.
+- **Test on a replica.** It runs the whole migration on a replica and leaves both tables for comparison. GitHub runs this continuously.
+
+> Takeaway: change data at scale with expand and contract: dual write, backfill, move reads (verified), move writes, then delete the old data. Each step can be undone. For schema changes, add columns as nullable, backfill in batches, and add constraints last. Use tools like gh-ost that copy into a shadow table and swap, instead of locking the live one.
+
+?? Adding a NOT NULL column directly can force the database to rewrite or lock the whole table to fill the default, blocking traffic on a large table. It also breaks any running code that inserts rows without the new column. Adding it as nullable is usually an instant metadata change; code then starts writing it, a batched backfill fills old rows without long locks, and only when every row has a value do you add (and separately validate) the NOT NULL constraint. Every step is small and reversible.
+
+@14.06
+## The problem: proving a new read path is right
+In a migration (14.05) or a rewrite, there comes a moment when you switch reads from the old path to the new one: from the monolith to a new service, or from the old table to a new store. Tests cover the cases you thought of. Production has cases you didn't: odd data from 2014, users with 40,000 subscriptions, rounding in an old currency. The way to be sure is to run both paths **in parallel on real traffic**, compare them, and only cut over once they agree. This is sometimes called a **read drain** or **shadow read**: you gradually drain read traffic off the old path while proving the new one matches it.
+
+## GitHub Scientist
+Scientist is GitHub's Ruby library for exactly this. You wrap the old code as the **control** (`use`) and the new code as the **candidate** (`try`):
+
+```ruby
+def allows?(user)
+  science "widget-permissions" do |e|
+    e.context user: user
+    e.use { model.check_user(user).valid? }  # control: old path
+    e.try { user.can?(:read, model) }        # candidate: new path
+  end
+end
+```
+
+Each time the experiment runs, Scientist:
+- decides whether to run the candidate at all (`enabled?`, for example 1% of calls);
+- runs both blocks **in random order**, so neither always benefits from warm caches;
+- measures the time each one takes;
+- **rescues any exception from the candidate**, so a bug in the new code can't break the request;
+- compares the two results;
+- **always returns the control's result** to the caller;
+- passes everything (both values, both timings, any mismatch) to your `publish` method, which sends it to metrics and stores mismatches for review.
+
+%%flow Shadow reads: users always get the old answer while the new one is checked against it.
+[Request] caller -(allows? user)-> Scientist -(control)-> *Old path -(result returned)-> caller
+[Shadow] Scientist -(candidate, errors caught)-> New path -(compare)-> Publish mismatches and timings
+%%
+
+## Running the experiment
+1. **Start small.** `enabled?` turns on the candidate for a small percentage of calls, which limits extra load and the risk of slow candidates. Scientist does **not** protect you from a candidate that hangs, so keep the percentage low at first.
+2. **Investigate mismatches.** Each one is either a bug in the new path, a bug in the old path you now have to keep (or consciously fix), or noise.
+3. **Teach it about known differences.** `compare` sets what "equal" means, such as comparing only IDs or ignoring order. `ignore` marks mismatches you understand (for example, the new store returns a newer timestamp). `clean` trims what gets stored for review.
+4. **Calibrate.** The docs suggest first running the control against itself. Random ordering plus data changing between the two reads can create false mismatches, so you learn the background noise rate.
+5. **Ramp up** until the mismatch rate is zero (or explained) across a long enough period to cover rare paths: monthly jobs, edge-case customers.
+6. **Cut over.** Make the new path the real one. The docs advise keeping write-side duplication (dual writes) in place for a while, so you can switch back.
+
+**The big caveat:** Scientist is only safe around code that **doesn't change data**. Running a write twice, once in each path, would apply it twice. For writes, use dual writing (14.05) and compare the stored results later, or compare what each path *would* write without writing it.
+
+## How Stripe used it
+In Stripe's subscriptions migration (14.05), Scientist experiments read subscriptions from both the old inline field and the new table on live traffic. Any mismatch raised an alert. Errors in the new path didn't affect users. Reads moved only once the results matched. During the hardest step, switching writes, more experiments checked each small change. Finally, the old accessor was made to raise an error, flushing out any caller that still used it.
+
+%%seq A read drain from monolith to new service, one percentage step at a time.
+Team > Scientist : enable candidate on 1% of reads
+Scientist > Metrics : 0.4% mismatches (timestamps)
+Team > Scientist : ignore newer timestamps, fix 2 bugs
+Scientist > Metrics : 0 mismatches over 2 weeks at 100%
+Team > App : switch reads to new service (keep dual writes)
+Team > App : later: remove old read path
+%%
+
+! Example: moving search reads out of a monolith
+! A monolith answers `GET /orders?user=…` from its own tables; a new orders service should take over. Week 1: the experiment runs the new service on 1% of requests, and 3% of those mismatch. Investigation finds the new service sorts ties differently (fixed with `compare` on sorted IDs) and misses cancelled orders older than 2019 (a real backfill bug, fixed). Weeks 2 to 3: ramp to 100% with 0 unexplained mismatches, p99 of the new path is 40 ms against 120 ms. Cut over reads, keep dual writes for a month, then retire the old path.
+
+> Takeaway: before switching reads, run the new path in the shadow of the old one on real traffic. Return the old result, catch the new path's errors, compare results and timings, and ramp up until mismatches are zero or explained. Only do this for reads, and keep a way back after cutting over.
+
+?? Run both paths on live traffic with a tool like GitHub Scientist. The old path stays the control and its result is always returned to the user. The new path runs as the candidate, its exceptions are caught, and its result and timing are compared and published. Start at a small percentage, investigate and fix or explicitly ignore each mismatch, ramp up, and cut over only after a long period with no unexplained mismatches. Keep dual writes so you can switch back.
+
+@14.07
+## Nobody wants backups; they want restores
+The SRE book's data integrity chapter puts it bluntly: **"No one really wants to make backups; what people really want are restores."** A backup is only valuable if you can restore from it, within the time users can tolerate, to the state you need. So measure teams on restore success, not on backup jobs completing.
+
+It distinguishes two things:
+- **Backups** must load back into the running application quickly. They are taken daily, hourly or continuously, because everything since the last backup is at risk.
+- **Archives** are long-term copies for audit and compliance, such as financial records kept for 7 years. A week to retrieve one is fine, and they often can't be loaded straight back into the application.
+
+## Ways data gets lost
+The chapter classifies failures along three axes:
+- **Cause**: user action, operator mistake, application bug, infrastructure defect, faulty hardware, or site disaster.
+- **Scope**: widespread, or narrow (a few users).
+- **Rate**: "big bang" (a million rows replaced by ten in a minute) or **creeping** (ten rows a minute, for weeks).
+
+That gives 24 kinds of failure (6 × 2 × 2), and no single defence covers them all. In a study of 19 Google recovery efforts, the most common user-visible losses came from **software bugs** deleting data or breaking references. The hardest ones were low-grade corruption discovered **weeks or months** later.
+
+## Replication is not a backup
+**"Replication and redundancy are not recoverability."** Replicas protect against hardware failure. But if a bug or a person deletes or corrupts data, replication faithfully copies the damage to every replica within seconds. You need copies from **a point in time before** the damage.
+
+## Defence in depth: three layers
+%%layers Three layers of protection, from fastest to recover to widest coverage.
+Soft deletion | deleted data hidden but kept 15 to 60 days; undo user and app mistakes *
+Backups and restore | tiered copies: snapshots (minutes), local disk (hours), tape or offsite (days)
+Early detection | out-of-band validators find corruption before it spreads into every backup
+%%
+
+**1. Soft deletion.** Deleted data is marked and hidden but kept for a while before being destroyed. Typical periods are 15, 30, 45 or 60 days; Gmail's Trash keeps messages 30 days. This covers the most common case, a user or a bug deleting something, and recovery takes minutes. The chapter notes most hijacking and integrity problems are noticed within 60 days, so keeping data much longer adds little.
+
+**2. Backups, tiered.**
+- Tier 1: frequent snapshots near the live data, kept hours to a few days, restored in minutes.
+- Tier 2: copies on a distributed filesystem, kept a week or two, restored in hours. If you release twice a week, keep at least a week or two, so a bug can be caught and rolled back past.
+- Further tiers: tape or offsite storage that survives losing a whole site, taken less often and kept longer.
+
+Google often keeps 30 to 90 days of backups. Copies should sit on **different** technology from the live data. If a filesystem bug can destroy the data, a backup on the same filesystem can be destroyed with it.
+
+**3. Early detection.** Bad data spreads over time, into new records and into every new backup. **Out-of-band validators** check invariants independently of the application: do files in Drive match their folder listings? Do all message references in Gmail point at real messages? Gmail's validators detect inconsistencies within 24 hours, which is what lets developers ship more than once a week. Validate only the invariants whose failure would really hurt users; overly strict validators get ignored.
+
+## Untested backups fail
+Recovery paths that never run quietly break: backups that are empty, credentials that expired, restores that need a tool nobody installed, or a restore that would take three weeks. The chapter says: **"you only know that you can recover your recent state if you actually do so."** So:
+- run restores **continuously and automatically**, end to end, into a test environment;
+- check the restored data is complete and correct, not just that the job finished;
+- check how long a restore takes against your recovery time target;
+- alert when a restore test **fails to report success** (a missing heartbeat), not only when it reports failure.
+
+Two cases from the chapter:
+- **Gmail, February 2011.** A bug lost user data, and Google restored it from tape for the first time at that scale. Because restores had been rehearsed, the team gave a reliable estimate, recovered 99%+ of data before the estimated finish, and restored every account within hours of it.
+- **Google Music, March 2012.** A refactored deletion pipeline had a race condition and deleted about 600,000 audio files belonging to 21,000 users. It went unnoticed for a month. 436,223 files were on tape: restoring them took 5,475 restore jobs and recalling 5,337 tapes (about 1.5 PB). 17 tapes were bad and the vendor left out 1,862 tapes, so redundant copies were used. It took almost 7 days. About 161,000 files had never been backed up; users had to re-upload them. The fix included alerting on the **global** deletion rate (for example above 10× its usual 95th percentile).
+
+## PostgreSQL's three options
+The PostgreSQL docs list three backup methods. The docs page itself is only an overview; the details below are general PostgreSQL knowledge.
+| Method | How | Good | Limits |
+| SQL dump | `pg_dump` exports one database as SQL from a consistent snapshot; `pg_dumpall` for the whole cluster | portable across versions, restore single tables | slow for large databases, no point-in-time recovery |
+| File system copy | copy the data directory with the server stopped, or with an atomic snapshot of all volumes | fast for big data | whole cluster only, same major version, needs downtime or snapshots |
+| Continuous archiving (PITR) | a base backup (`pg_basebackup`) plus every WAL segment archived (`archive_command`) | restore to any moment, e.g. one second before a bad `DELETE` | more moving parts; a failing archive must be alerted on |
+
+%%flow Point-in-time recovery: replay the log up to just before the mistake.
+[Backup] Sunday base backup -(WAL segments archived continuously)-> WAL archive
+[Restore] restore base backup -(replay WAL to Tue 14:31:59)-> *database as it was before the bad DELETE at 14:32
+%%
+
+> Takeaway: backups only count if restores work, so test restores continuously and automatically. Replication copies mistakes, so you also need point-in-time copies on different technology. Layer soft deletion, tiered backups and validators that catch corruption early.
+
+?? Because a backup's only purpose is the restore, and the restore path is what silently breaks: jobs that produce empty or partial files, missing keys or tools, tapes that are unreadable, or restores that take far longer than the outage you can afford. You only find out when you need it, which is the worst time. Google's SRE book says you only know you can recover if you actually do, so restore continuously and automatically, check the restored data, and alert when a restore test doesn't report success.
+
+@14.08
+## Two numbers: RPO and RTO
+AWS's disaster recovery whitepaper calls something a disaster when an event stops a workload meeting its business goals in its main location: a region outage, a big operator mistake, ransomware. You plan recovery around two targets the business sets:
+- **RPO (recovery point objective)**: the most data you can lose, measured in time. RPO of 5 minutes means at most the last 5 minutes of writes can be lost.
+- **RTO (recovery time objective)**: the longest you can be down, from the outage to service restored.
+
+%%flow RPO looks back from the disaster; RTO looks forward.
+[Timeline] last good copy -(RPO: data lost)-> *disaster -(RTO: downtime)-> service restored
+%%
+
+The paper separates DR from **availability**. Availability is about frequent small failures (a host, a bug, a traffic spike) and is measured as an average over time. DR is about rare, large events and is measured per event by RPO and RTO.
+
+## Four strategies
+Lower RPO and RTO cost more, because more of the system must already be running in the recovery region:
+| Strategy | What runs in the recovery region | RPO / RTO | Cost |
+| Backup and restore | only backups; you create everything after the disaster | hours | $ |
+| Pilot light | data replicated live; app servers off or not deployed | tens of minutes | $$ |
+| Warm standby | a smaller but fully working copy, already serving-capable | minutes | $$ |
+| Multi-site active/active | full system in several regions, all serving traffic | near zero | $$$ |
+
+%%layers The DR ladder: each step keeps more running in the second region.
+Backup and restore | rebuild from code and backups; RPO/RTO hours
+Pilot light | database replicas live, servers off; tens of minutes
+Warm standby | small working copy, scale up on failover; minutes *
+Active/active | every region serves; near-zero RPO and RTO
+%%
+
+**Pilot light vs warm standby.** Both have a copy of your data in the DR region. A pilot light can't serve any requests until you turn servers on, maybe deploy more parts, and scale up. A warm standby can serve traffic **immediately** at reduced capacity; you only scale it up. So warm standby is the cheapest option that gives an RTO of minutes.
+
+**Active/active** removes "failover" as a separate event: traffic just stops going to the failed region. It is the most complex, because you must handle writes in several regions: conflicts, or one write region per user or per record.
+
+**Backup and restore** depends on infrastructure as code. If the recovery region has nothing running, you must be able to rebuild everything from templates, not from memory.
+
+The paper's specific examples use AWS services. Aurora Global Database replicates to other regions with typical lag under one second, and can promote a secondary region to read/write in under a minute. That gives an RPO of seconds and an RTO of a minute for the database.
+
+## Replication doesn't save you from corruption
+The paper repeats the point from 14.07. Continuous replication copies **destructive** changes too: deletes, corruption, ransomware encryption. So even warm standby and active/active need **point-in-time backups or object versioning**, so you can restore to a moment before the damage.
+
+## Detection and testing
+**Detection** is part of the RTO. The clock starts at the outage, not when someone notices. For tight RTOs, automate failover on **deep health checks** that test real user actions, not shallow pings. Be careful: automated failover on a false alarm is an outage you caused yourself.
+
+**Test failover regularly.** The paper's warning: paths you rarely run don't work when you need them. Assumptions go stale: the DR region's database can't take the full load, service quotas there are too low, a config was only updated in the main region. Amazon's experience: "the only error recovery that works is the path you test frequently." Run game days that actually fail over, and measure the RTO and RPO you really get.
+
+! Example: picking a strategy
+! An online store says it can lose at most 1 minute of orders (RPO 1 min) and be down at most 15 minutes (RTO 15 min). Backup and restore is out (hours). Pilot light might meet 15 minutes if starting servers is automated, but it is tight. Warm standby fits: database replicated with second-level lag, a small app fleet already running in region B, failover by switching DNS and scaling up the fleet. Add hourly snapshots and versioned storage in case of corruption, and a quarterly game day that measures actual failover time.
+
+> Takeaway: RPO is how much data you can lose; RTO is how long you can be down. Cost rises as you keep more running elsewhere: backup and restore (hours), pilot light (tens of minutes), warm standby (minutes), active/active (near zero). Replication copies corruption, so keep point-in-time backups too, and test failover regularly.
+
+?? RPO is the most data the business can afford to lose, measured as time since the last recoverable copy. RTO is the longest it can afford to be down, from the disaster until service is restored. For an RTO of minutes, use warm standby: a scaled-down but fully working copy in another region with live data replication, which can serve traffic immediately and only needs scaling up. Active/active gives near zero but costs much more. Pilot light, which has to start servers first, is typically tens of minutes.
+
+@14.09
+## The legal requirement
+GDPR Article 17, the "right to erasure", says a person can ask a company to erase their personal data, and the company must do it **"without undue delay"** when one of several grounds applies:
+- the data is no longer needed for the purpose it was collected for;
+- the person withdraws consent and there is no other legal basis;
+- the person objects to the processing and there are no overriding legitimate grounds;
+- the data was processed unlawfully;
+- a law requires erasure;
+- it was collected from a child for an online service.
+
+If the company **made the data public**, it must also take reasonable steps to tell other companies processing it to erase links and copies.
+
+There are **exceptions**, where processing is necessary for: freedom of expression, a legal obligation (such as tax records a law says to keep), public health, archiving and research, or legal claims. So erasure is not always total. A bank may have to keep transaction records for years while deleting marketing data. (This is a summary, not legal advice.)
+
+## Where a user's data actually lives
+Deleting the row in `users` is the easy part. The data has usually been copied all over the system:
+- **Primary databases**: the user row and everything that references it (posts, messages, orders, comments), across every service that owns a piece.
+- **Replicas and read stores**: database replicas, search indexes, caches (Redis, CDN copies of their profile photo), denormalised feed entries in other users' timelines.
+- **Object storage**: uploaded photos, videos, documents, and all their derived versions (thumbnails, transcodes).
+- **Event streams and queues**: Kafka topics with retention, dead-letter queues.
+- **Analytics**: data warehouse tables, data lake files, ML training sets and feature stores.
+- **Logs**: application logs and traces with emails, IPs or user IDs.
+- **Backups and archives**: every snapshot taken before the deletion.
+- **Third parties**: email providers, payment processors, analytics and ad vendors, support tools.
+
+%%flow One user's data fans out to many stores; deletion has to reach all of them.
+[Primary] User deletes account -(delete event)-> Users DB -(cascades)-> Posts, messages, orders
+[Copies] delete event -(consumers)-> Search index, caches, feeds -(purge)-> CDN and object storage
+[Long tail] delete event -(jobs)-> Warehouse, logs -(expire)-> *Backups, third parties
+%%
+
+## Google Cloud's deletion pipeline
+Google Cloud's page on data deletion describes how a large provider actually does it, in four stages, with a maximum of **about 180 days** end to end:
+1. **Request.** A deletion request for a resource, project or account. The data is marked for deletion immediately, with a target of within 24 hours.
+2. **Soft delete and recovery period.** Up to about **30 days** during which an accidental deletion can be undone (deleted service accounts, for instance, are disabled for 30 days). After it, a purge signal goes to every product, and Google resends it until every product confirms.
+3. **Logical deletion from live systems.** The data is marked as free space and overwritten over time. Systems like Bigtable remove it during garbage collection and **compaction** that run on a schedule, because rewriting tables is expensive. This takes about **two months**: the recovery period plus two compaction cycles.
+4. **Expiry from backups.** Backups are big snapshots on daily, weekly and monthly cycles. They are not edited to remove one user. Instead, deleted data stops being copied into new backups, and old backups **expire** on their normal schedule. This finishes within about **six months**.
+
+%%flow Google Cloud's deletion timeline, end to end at most about 180 days.
+[Stages] request, marked within 24 h -(recovery up to 30 days)-> soft deleted -(compaction, about 2 months)-> gone from live systems -(backup rotation, about 6 months)-> *gone everywhere
+%%
+
+## Crypto-shredding
+Editing every backup to remove one person is impractical. **Cryptographic erasure** solves this. Encrypt each user's (or resource's) data with its own key, and keep the keys in a separate key store that is *not* in the long-lived backups. To delete, destroy the key. Every copy of the data, including the ones in backups, becomes unreadable at once. Google Cloud uses this in Cloud Storage, which lets logical deletion finish before every block is physically overwritten.
+
+%%flow Crypto-shredding: delete one key, and every copy becomes unreadable.
+[Data] user files -(encrypted with user key K42)-> live storage and backups
+[Delete] delete request -(destroy K42 in key store)-> *all copies unreadable
+%%
+
+## Designing for deletion
+- **Keep an inventory**: a data map of every store that holds personal data, owned and kept up to date.
+- **Publish a deletion event** that every service and pipeline consumes, then **track confirmations** like Google's resent purge signal. Stop only when every store has said "done".
+- **Set retention limits** everywhere so data expires by default: logs 30 days, Kafka 7 days, backups 90 days.
+- **Keep personal data out of logs**, or log pseudonymous IDs instead of emails.
+- **Use soft delete with a fixed purge date**, so mistakes can be undone but deletion is guaranteed.
+- **Separate what you must keep** (invoices required by tax law) from what you must delete, and document why.
+
+> Takeaway: erasure is a pipeline, not a `DELETE` statement. Map every copy (replicas, caches, search, object storage, streams, warehouse, logs, backups, vendors), send a deletion event to all of them and track that each confirms, let backups expire on a fixed schedule, and use per-user encryption keys so destroying a key erases the copies you can't reach.
+
+?? Primary databases across every service (the user row and everything that references it); database replicas; caches and CDN copies; search indexes; denormalised copies such as other users' feeds or message threads; object storage, including thumbnails and transcodes; event streams, queues and dead-letter queues; the data warehouse, data lake, ML training data and feature stores; application logs and traces; backups and archives; and third-party processors such as email, payments, analytics and support tools. Some data, such as invoices, may legally have to be kept.
+
+@14.10
+## The OWASP lists
+OWASP publishes two lists of the most critical security risks, built from data on real vulnerabilities. The pages list only the names; the one-line descriptions below are mine.
+
+**OWASP Top 10 (2025), web applications:**
+1. **Broken access control**: users can act outside their permissions, such as viewing another user's data or reaching admin functions.
+2. **Security misconfiguration**: default passwords, open storage buckets, verbose error pages, unneeded features left on.
+3. **Software supply chain failures**: vulnerable or malicious dependencies, build systems and update channels.
+4. **Cryptographic failures**: sensitive data sent or stored without strong encryption; weak password hashing.
+5. **Injection**: untrusted input interpreted as code or queries (SQL, commands, cross-site scripting).
+6. **Insecure design**: missing security controls in the design itself, such as no rate limit on a password reset.
+7. **Authentication failures**: weak passwords allowed, credential stuffing not stopped, broken sessions.
+8. **Software or data integrity failures**: trusting updates, plugins or serialized data without verifying them.
+9. **Security logging and alerting failures**: attacks not logged, logs not watched, no alert.
+10. **Mishandling of exceptional conditions**: errors that fail open, leak information, or leave the system in a bad state.
+
+**OWASP API Security Top 10 (2023):**
+1. **Broken object level authorization (BOLA)**: `GET /orders/1234` returns order 1234 without checking it belongs to the caller. It is the top API risk because every endpoint that takes an ID can have it.
+2. **Broken authentication**.
+3. **Broken object property level authorization**: returning or accepting fields the user shouldn't see or set (`is_admin: true` in a profile update).
+4. **Unrestricted resource consumption**: no limits on request rate, payload size, page size or expensive operations.
+5. **Broken function level authorization**: normal users can call admin endpoints.
+6. **Unrestricted access to sensitive business flows**: automated abuse of legitimate features, such as bots buying all the tickets or mass account creation.
+7. **Server-side request forgery (SSRF)**: making the server fetch a URL the attacker chooses, including internal addresses.
+8. **Security misconfiguration**.
+9. **Improper inventory management**: forgotten old API versions and undocumented endpoints.
+10. **Unsafe consumption of APIs**: trusting data from third-party APIs too much.
+
+## Defence in layers
+For system design, the recurring defences are (general practice, mapped to the lists above):
+- **Authorization on every object access.** Check `order.owner_id == caller` in the data layer, not just at login. Use unguessable IDs as a second line of defence, but never as the only one.
+- **Validate and limit input.** Use parameterised queries, allow-lists of fields that can be updated, and limits on body size, page size and query complexity.
+- **Rate limits and quotas** (14.11) per user, per API key and per IP, plus stricter ones on sensitive flows (login, signup, password reset, checkout).
+- **Bot and abuse defences** for business flows: CAPTCHAs or proof-of-work under suspicion, device fingerprinting, email/phone verification, velocity checks ("5 accounts from this device today").
+- **Secrets and dependencies**: secrets in a vault, dependency scanning, signed builds.
+- **Logging and alerts** on auth failures, permission denials and unusual volumes.
+
+%%flow Layers on a public request: each one stops a different class of abuse.
+[Edge] Client -(TLS, DDoS scrubbing, WAF)-> CDN edge -(per-IP rate limit)-> API gateway
+[App] API gateway -(authenticate, per-user quota)-> Service -(authorize this object)-> *Database
+[Watch] Service -(auth failures, denials)-> Logs and alerts
+%%
+
+## Case: a public signup endpoint
+A signup form is open to anyone, so it attracts abuse:
+| Abuse | What it costs you | Defence |
+| Fake account creation by bots | spam, fake reviews, free-tier abuse | per-IP and per-device rate limits, CAPTCHA when signals look automated, email or phone verification before the account can act |
+| Account enumeration ("email already registered") | attackers learn who has accounts, then target them | the same response whether or not the email exists; send the "you already have an account" message by email instead |
+| SMS or email pumping | attackers trigger verification messages to premium numbers or spam lists; you pay per message | rate limit per phone number, per prefix and per IP; block high-risk country prefixes; cap daily spend |
+| Credential stuffing via the linked login | reused leaked passwords take over accounts | rate limits per account and IP, breached-password checks, MFA |
+| Resource exhaustion | huge payloads or slow requests tie up servers | size limits and timeouts at the gateway |
+
+! Example: a BOLA bug
+! `GET /api/invoices/88213` returns the invoice to any logged-in user. An attacker loops over IDs 1 to 100,000 and downloads every customer's invoices. Login worked perfectly; authorization was missing. Fix: the query becomes `SELECT … WHERE id = $1 AND account_id = $caller_account`, a test checks that a second account gets 404, and a per-user rate limit plus an alert on "many distinct invoice IDs per user" catch the next one.
+
+> Takeaway: most real attacks exploit missing authorization checks, weak limits and misconfiguration, not clever cryptography. Check permission on every object, validate and limit every input, rate limit sensitive business flows, and log and alert on suspicious patterns.
+
+?? 1. Automated fake signups: rate limit per IP and device, add a CAPTCHA when traffic looks automated, and require email or phone verification before the account can act. 2. Account enumeration through "this email is already registered": return the same response either way and tell existing users by email. 3. SMS or email pumping through verification messages: rate limit per phone number, prefix and IP, block risky prefixes and cap daily spend. Also limit payload size and request time at the gateway.
+
+@14.11
+## Rate limiters and load shedders
+Stripe's post separates two tools:
+- A **rate limiter** limits how fast each **client** can send requests. It suits cases where a client can spread its requests out without changing the outcome.
+- A **load shedder** decides based on the **whole system's** health. During an incident it drops low-priority traffic so critical traffic survives.
+
+Stripe runs four, in order of importance:
+1. **Request rate limiter**: N requests per second per user, with short bursts allowed. It is the most important; it rejected millions of requests in one month, mostly from runaway test scripts. Test mode and live mode get the same limits, so scripts don't break on launch.
+2. **Concurrent requests limiter**: at most, say, 20 requests **in flight** per user. This protects expensive endpoints from clients that retry slow requests and pile on. It fired about 12,000 times in a month.
+3. **Fleet usage load shedder**: requests are split into critical (creating a charge) and non-critical (listing charges). A share of capacity, say 20%, is always kept for critical requests; non-critical ones beyond their share get HTTP 503.
+4. **Worker utilisation load shedder**: the last line of defence. When workers run out, it sheds traffic in order: test mode first, then GETs, then POSTs, keeping critical methods longest. It sheds and restores gradually to avoid flapping. It fired about 100 times in a month.
+
+%%layers Stripe's limiters, from everyday per-user limits to emergency shedding.
+Request rate limiter | N req/s per user, token bucket; fires daily *
+Concurrent requests limiter | max ~20 in flight per user; protects slow endpoints
+Fleet usage load shedder | keep ~20% of capacity for critical calls; others get 503
+Worker utilisation shedder | sheds test, then GET, then POST; rare emergencies
+%%
+
+**Implementation.** Stripe uses a **token bucket** per user, stored in Redis: each request takes a token, tokens refill at a steady rate, and an empty bucket means rejection.
+
+**Rollout advice.** Stripe recommends:
+- **fail open**: if Redis is down or the limiter has a bug, let traffic through rather than taking the API down;
+- return **429** for rate limits and **503** for load shedding, with messages that tell the client what to do;
+- put each limiter behind a **feature flag** as a kill switch, with metrics on how often it fires;
+- **dark launch** first: log what it *would* block, tune thresholds so legitimate usage passes, and sometimes help heavy customers change their code.
+
+## Where to put the limiter
+Hello Interview's breakdown compares three placements:
+| Placement | Good | Bad |
+| In each app server (in-process) | fastest, no extra hop | each server sees only its share; with 20 servers a user effectively gets about 20× the limit |
+| Dedicated rate-limit service | global view, can use business context | extra network hop per request, another thing that can fail |
+| API gateway / load balancer | rejects bad traffic before it reaches the app; most common | only sees HTTP data (IP, headers, token), not business details |
+
+It chooses the **gateway**, with shared state in **Redis** so all gateway instances count the same user together.
+
+%%flow Gateways share one counter per client in Redis, so the limit is global.
+[Request] Client -(API key or JWT)-> Gateway 1 -(Lua: refill and take token)-> *Redis shard for this key
+[Request] Client -(next request)-> Gateway 2 -(same key, same shard)-> Redis shard for this key
+[Outcome] Redis -(allowed)-> App servers -(or rejected)-> 429 with Retry-After
+%%
+
+## Which key to limit by
+| Key | Use when | Watch out for |
+| **User ID** (from the JWT) | logged-in users; fairest per person | doesn't help on unauthenticated endpoints |
+| **API key** | developer APIs, per customer or per app; matches billing and plans | one customer may run many servers on one key; leaked keys |
+| **IP address** | anonymous traffic: login, signup, public pages; first line against floods | NAT: an office, university or mobile carrier puts thousands of users behind one IP, so set IP limits higher; attackers rotate IPs |
+
+Real systems **layer** them: per IP on unauthenticated routes, per user or API key on authenticated ones, per endpoint for expensive calls, and a global limit. The most restrictive rule that applies wins. Login is often limited both per IP and per target account, so attacks from many IPs on one account are caught too.
+
+## Making it correct and fast
+- **Atomic updates.** Reading the bucket, computing the refill and writing it back must happen as one step. Otherwise two concurrent requests both see the last token and both pass. In Redis, do it in a **Lua script**, which runs atomically.
+- **Scale.** Hello Interview estimates one Redis instance at 50,000 to 100,000 checks per second (each check is several operations). For 1M requests per second, shard by client key across about 10 shards (Redis Cluster does this with its 16,384 hash slots).
+- **Fail open or closed?** Stripe fails open. Hello Interview chooses fail-closed for its social API, because Redis failures often happen during traffic spikes, exactly when backends need protection. Payments and security endpoints usually fail closed. Either way, alert when the fallback activates.
+- **Tell the client.** Return 429 with `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` and `Retry-After`. Reject immediately rather than queueing.
+- **Config.** Gateways poll a rules table about every 30 seconds, or rules are pushed for urgent changes.
+
+> Takeaway: rate limit per client and load shed per system. Put the limiter at the gateway with shared counters in Redis, updated atomically. Limit by user ID when logged in, API key for developer APIs, and IP for anonymous traffic (with NAT-friendly limits), layering several keys with the strictest winning.
+
+?? Use **user ID** for authenticated traffic: it is fair per person and follows them across devices and IPs. Use **API key** for developer or B2B APIs, where limits match the customer's plan and billing. Use **IP** for unauthenticated endpoints such as login, signup and public pages, and as a first line against floods, with higher limits because NAT puts many real users behind one IP. In practice combine them, with the most restrictive applicable rule winning.
+
+@14.12
+## Fixed window: simple but leaky
+A **fixed window counter** keeps one counter per client per window: `count[user][12:01]`. Each request increments it; above the limit, reject. When the minute changes, a new counter starts at zero. In Redis it is just `INCR` plus `EXPIRE`, as ByteByteGo's chapter shows.
+
+The flaw is at the **boundary**. With a limit of 100 per minute, a client can send 100 requests at 12:00:59 (allowed: window 12:00 has room) and 100 more at 12:01:00 (allowed: window 12:01 just reset). That is **200 requests in about one second**, twice the limit, and it can happen at every minute boundary. ByteByteGo's example: a limit of 5 per minute let 10 requests through between 2:00:30 and 2:01:30. Any 60-second span that straddles a boundary can see up to 2× the limit, because the counter only ever looks at calendar windows.
+
+%%flow Fixed windows reset at the boundary, so two full bursts fit in one second.
+[12:00 window] 100 requests at 12:00:59 -(count 100, allowed)-> window resets
+[12:01 window] 100 requests at 12:01:00 -(count 100, allowed)-> *200 requests in 1 second
+%%
+
+## Sliding window log: exact but heavy
+Store the **timestamp of every request** (a Redis sorted set per client). On each request, remove timestamps older than one window, count the rest, and allow if under the limit. This is exact for any rolling 60 seconds. The cost is memory: a limit of 5,000 per hour means up to 5,000 timestamps per client. In ByteByteGo's version, rejected requests' timestamps are stored too, which makes it heavier still.
+
+## Sliding window counter: the approximation
+Cloudflare's post explains the method it chose. Keep **two counters** per client: the previous window and the current one. Estimate the count over the last full window by assuming the previous window's requests were spread evenly:
+
+`rate = prev_count × (window − elapsed) / window + curr_count`
+
+Cloudflare's example: limit 50 per minute. We are 15 seconds into the current minute, with 18 requests so far, and the previous minute had 42. The sliding 60 seconds covers the last 45 seconds of the previous minute (75% of it) plus the current 15 seconds:
+
+`rate = 42 × 45/60 + 18 = 31.5 + 18 = 49.5`
+
+49.5 is under 50, so the request is allowed.
+
+%%flow The sliding estimate weights the previous window by how much of it is still inside the last 60 s.
+[Windows] previous minute: 42 requests -(75% still inside the window)-> 31.5 -(plus current 18)-> *49.5 of 50, allow
+%%
+
+Applying it to the boundary attack: at 12:01:00 with 100 requests in the previous minute, `100 × 60/60 + 0 = 100`, so the second burst is **rejected**. The 2× burst is gone.
+
+How accurate is it? Cloudflare tested it on 400 million requests from 270,000 sources. Only **0.003%** of requests were wrongly allowed or blocked; the average difference from the true rate was 6%. There were no false positives (nobody under the limit was blocked); 3 sources slipped through, each by less than 15% over.
+
+Why Cloudflare liked it:
+- **Two numbers per counter**, so memory stays tiny across millions of rules.
+- **One atomic operation per request**: memcache `INCR` on the current counter, and one `GET` for both. Cloudflare could only use `GET`, `SET` and `INCR`; compare-and-swap failed under attack because of contention.
+- **One setting**: just a rate. The leaky bucket used by NGINX needs a rate and a burst size, which are hard to tune.
+
+## Cloudflare's architecture
+- **Anycast** sends a client to its nearest data centre (PoP), and a given IP normally keeps reaching the same one. So each PoP counts **on its own**, with no global coordination: lower latency, and one PoP failing doesn't affect others.
+- Inside a PoP, counters live in a **memcache cluster behind Twemproxy**, sharded with consistent hashing.
+- **Counting is asynchronous**: increments happen off the request path, so legitimate requests aren't slowed.
+- When a client goes over, a **mitigation flag** with an end time is set. Servers check only the flag and cache it locally until it expires, so an attacking source costs almost nothing per request.
+
+This handled several billion requests a day and attacks of up to 400,000 requests per second against one domain.
+
+## The token bucket, for comparison
+ByteByteGo and Hello Interview both cover the **token bucket**. A bucket holds up to *capacity* tokens and refills at *rate* tokens per second; each request takes one. ByteByteGo's example: capacity 4, refill 2 per second. It deliberately **allows bursts** up to capacity and then enforces the average rate. You store only `tokens` and `last_refill` per client. Choose a sliding window when you want "never more than N in any 60 seconds", and a token bucket when short bursts are fine (Stripe allows bursts for flash sales).
+
+| Algorithm | Memory per client | Boundary burst | Notes |
+| Fixed window | 1 counter | up to 2× limit | simplest |
+| Sliding log | 1 timestamp per request | none, exact | expensive at high limits |
+| Sliding counter | 2 counters | nearly none, approximate | Cloudflare: 0.003% wrong |
+| Token bucket | tokens + last refill time | bursts up to capacity, by design | Stripe, Hello Interview |
+
+> Takeaway: fixed windows reset at boundaries and let up to 2× the limit through. A sliding log is exact but stores every timestamp. The sliding window counter keeps two numbers and weights the previous window by its overlap; Cloudflare measured it wrong on only 0.003% of requests. Use a token bucket when you want controlled bursts.
+
+?? A fixed window resets its counter at fixed times, so it only limits requests inside each calendar window, not inside every rolling period. A client can use the whole limit at the very end of one window and the whole limit again at the start of the next. For example, 100 requests at 12:00:59 and 100 at 12:01:00 are both allowed, giving 200 in about a second, twice the limit for any 60-second span that crosses the boundary.
+
+@14.13
+## Tenant isolation is more than login
+In a multi-tenant SaaS, many customers (tenants) share one system. AWS's tenant isolation whitepaper makes the key point first: **authentication and authorization are not isolation**. Getting past the login screen or API gateway doesn't mean tenant A's code path can't touch tenant B's data. Isolation means each request is limited to its own tenant's resources all the way down, so a bug or a malicious query can't cross over.
+
+## Silo, pool and bridge
+The paper describes three models.
+
+**Silo**: each tenant gets dedicated resources: its own database, its own stack, or even its own AWS account or VPC.
+- Good: meets strict compliance, **no noisy neighbours**, easy cost per tenant, small blast radius (one tenant's outage stays with them).
+- Bad: cost (idle resources per tenant), heavy onboarding (provisioning infrastructure per new tenant), slower to roll out changes, monitoring spread across many places, and limits on how many accounts or databases you can run. The paper notes 20 siloed tenants may be manageable; a thousand hurts.
+
+**Pool**: all tenants share the same infrastructure, and data is separated by a tenant ID.
+- Good: cost efficiency (capacity follows total load), one place to deploy and operate, faster to ship, easy onboarding (insert a row).
+- Bad: **noisy neighbours**, harder cost attribution, **a bigger blast radius** (an outage hits everyone), and customers in regulated industries may refuse to share.
+
+**Bridge**: a mix, decided per layer or per service. For example, a shared web tier with a separate database per tenant.
+
+**Tiering** packages these as plans: basic tenants in the pool, premium or regulated tenants in silos.
+
+%%flow Pool and silo differ in what tenants share.
+[Pool] Tenants A, B, C -(same service)-> Shared app -(WHERE tenant_id = ?)-> One shared database
+[Silo] Tenant A -(own stack)-> App A -(own credentials)-> *Database A
+[Bridge] Tenants A, B -(shared web tier)-> Shared app -(routes by tenant)-> Database A or Database B
+%%
+
+## Shared tables vs database per tenant
+| | Shared tables with `tenant_id` (pool) | Database per tenant (silo) |
+| Cost | lowest; one database to size | per-tenant overhead; small tenants waste resources |
+| Onboarding | insert a row | create and migrate a database |
+| Schema migrations | once | once per tenant: thousands of runs, some fail halfway |
+| Isolation | depends on every query filtering correctly | strong; a missing filter can't leak across |
+| Noisy neighbour | one tenant's heavy query slows everyone | contained |
+| Per-tenant backup/restore | hard: restore one tenant's rows from a shared backup | easy |
+| Data residency, custom encryption | hard | easy |
+| Cross-tenant analytics | easy | needs a separate pipeline |
+
+Many systems use pool by default and move big or regulated tenants to silos.
+
+## Making the pool safe
+The paper shows how to enforce the tenant boundary below application code:
+- **Tenant context in the token.** The JWT carries the tenant ID; services take it from there, never from a request parameter the user can change.
+- **Database-enforced filters.** PostgreSQL **row-level security**: a policy `USING (tenant_id = current_tenant)` means even a query that forgets `WHERE tenant_id = …` sees only its tenant's rows.
+- **Scoped credentials.** For DynamoDB, an IAM condition on `dynamodb:LeadingKeys` restricts a request to items whose partition key starts with its tenant ID. The paper generates these policies on the fly from templates, filling in the tenant ID from the token, instead of creating thousands of static policies.
+
+%%seq Each request carries its tenant, and the database enforces it even if code forgets.
+Client > Gateway : request + JWT (tenant=acme)
+Gateway > Service : forward, tenant context = acme
+Service > TokenMgr : credentials scoped to acme
+TokenMgr -> Service : temporary creds (acme rows only)
+Service > DB : SELECT * FROM orders (no filter)
+DB -> Service : only acme rows (row-level security)
+%%
+
+## Shuffle sharding: limiting the blast radius
+Sharding the pool limits how many tenants one problem can hurt. AWS's shuffle-sharding article shows how to do much better than plain shards.
+
+Start with 8 workers and no sharding: one "poison" request that crashes workers, retried by the client, can crash them one after another and take down **everyone**. **Regular sharding** into 4 shards of 2 workers limits a bad tenant to its shard: 25% of customers affected.
+
+**Shuffle sharding** gives each tenant its own random pair of workers out of the 8. There are C(8,2) = **28** possible pairs. Two tenants may share one worker, but rarely both. If a bad tenant kills its two workers, any other tenant still has at least one healthy worker (as long as its client retries on the other one). Only tenants with that exact pair, about 1/28 or 3.6%, lose both. That is **7 times better** than regular sharding, using the same 8 workers.
+
+%%flow Shuffle sharding: tenants share some workers, but almost never their whole set.
+[Rainbow] Rainbow tenant -(assigned)-> *Worker 1 and worker 4
+[Rose] Rose tenant -(assigned)-> Worker 1 and worker 8
+[Failure] Rainbow poison request kills 1 and 4 -(Rose retries)-> Worker 8 still serves Rose
+%%
+
+At scale it gets dramatic. Route 53 has 2,048 virtual name servers and gives each domain 4 of them: C(2048,4) ≈ **730 billion** combinations, enough for every domain to have a unique set, and no two domains share more than 2. A DDoS against one domain saturates its 4 servers, while every other domain keeps at least 2 healthy ones. The attacked domain can then be moved to dedicated capacity. It costs nothing extra: it is just a smarter way to assign existing capacity.
+
+> Takeaway: pool tenants for cost and speed, silo them for isolation, compliance and blast radius, and mix the two by tier or layer. In the pool, enforce the tenant boundary below the code (tenant from the token, row-level security, scoped credentials). Use shuffle sharding so one bad tenant can only hurt a tiny fraction of the others.
+
+?? Shared tables with a tenant_id are cheaper, easy to onboard (insert a row), need one schema migration, and make cross-tenant analytics easy. But isolation depends on every query filtering correctly (row-level security helps), one tenant's heavy load affects everyone, and per-tenant restore or data residency is hard. A database per tenant gives strong isolation, no noisy neighbours, easy per-tenant backup, restore, residency and cost tracking, and suits regulated customers. But it costs more, onboarding means provisioning, and migrations must run per tenant. A common answer is to pool by default and silo large or regulated tenants.
