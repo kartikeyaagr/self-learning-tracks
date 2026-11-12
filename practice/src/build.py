@@ -173,17 +173,58 @@ def main():
     data = [{'n': f'{i+1:02d}', 'name': t, 'slug': slugify(t), 'part': next(pn for pn, ts in PARTS if t in ts),
              'lessons': by_tag[t]} for i, t in enumerate(TAGS)]
     data = [m for m in data if m['lessons']]               # topics appear as soon as they have a problem
+    plans = [load_plan(f, ids) for f in sorted((SRC / 'plans').glob('*.json'))]
     js = lambda x: json.dumps(x, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/')
     app = (SRC / 'app.html').read_text(encoding='utf-8')
-    app = app.replace('__DATA__', js(data)).replace('__PARTS__', js([pn for pn, _ in PARTS]))
+    app = app.replace('__DATA__', js(data)).replace('__PARTS__', js([pn for pn, _ in PARTS])).replace('__PLANS__', js(plans))
     app = app.replace('__TOTAL__', str(len(probs)))
     (OUT / 'index.html').write_text(app, encoding='utf-8')
 
     by_rt = {}
     for p in probs:
         by_rt[p['rt']] = by_rt.get(p['rt'], 0) + 1
-    print(f'{len(probs)} problems verified · {len(data)}/{len(TAGS)} topics · runtimes {by_rt}')
+    print(f'{len(probs)} problems verified · {len(data)}/{len(TAGS)} topics · {len(plans)} plans · runtimes {by_rt}')
+
+
+def load_plan(path, ids):
+    """plans/<id>.json: a study plan (ordered sections of problem slugs). Every slug must exist."""
+    plan = json.loads(path.read_text(encoding='utf-8'))
+    where = f'plans/{path.name}:'
+    assert plan.get('id') == path.stem, f'{where} id must equal the file name'
+    for k in ('group', 'title', 'blurb', 'sections'):
+        assert plan.get(k), f'{where} missing {k}'
+    for sec in plan['sections']:
+        assert sec.get('name') and sec.get('problems'), f'{where} each section needs a name and problems'
+        bad = [x for x in sec['problems'] if x not in ids]
+        assert not bad, f'{where} unknown problems {bad}'
+    return plan
+
+
+def check(paths):
+    """Verify only the given problem/plan files and write nothing, so parallel authors can't clash.
+    Related slugs and plan entries may point at any problem file that exists on disk."""
+    lessons, ids = lesson_index(), {f.stem for f in (SRC / 'problems').glob('*.py')}
+    bad = 0
+    for raw in paths:
+        f = Path(raw).resolve()
+        try:
+            if f.suffix == '.json':
+                plan = load_plan(f, ids)
+                print(f'OK    {f.name}  ({sum(len(x["problems"]) for x in plan["sections"])} problems)')
+                continue
+            p = build_one(f, lessons)
+            unknown = [r for r in p['related'] if r not in ids]
+            assert not unknown, f'{f.name}: unknown related {unknown}'
+            print(f'OK    {f.name}')
+        except Exception as e:  # report every file, not just the first failure
+            bad += 1
+            print(f'FAIL  {f.name}: {type(e).__name__}: {e}')
+    print(f'{len(paths) - bad}/{len(paths)} passed')
+    sys.exit(1 if bad else 0)
 
 
 if __name__ == '__main__':
-    main()
+    if sys.argv[1:2] == ['--check']:
+        check(sys.argv[2:])
+    else:
+        main()

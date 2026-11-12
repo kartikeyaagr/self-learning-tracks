@@ -1,0 +1,65 @@
+{
+ "id": "optimization",
+ "group": "ML Math",
+ "title": "Optimization",
+ "blurb": "Build the optimizers behind model training from first principles: solve quadratics in closed form, read curvature from the Hessian, then implement gradient descent, momentum, AdaGrad, RMSProp, Adam and L-BFGS, and race them against each other.",
+ "prereq": "Comfortable with NumPy arrays and matrix products, and with taking partial derivatives of simple functions.",
+ "next": "Apply these optimizers inside real networks in the deep learning plans, and study how learning-rate schedules and batch size interact at scale.",
+ "sections": [
+  {
+   "name": "Foundations: minima, convexity, curvature",
+   "problems": [
+    "minimum-of-univariate-quadratic",
+    "minimum-of-axis-aligned-paraboloid",
+    "convexity-certificate-via-hessian",
+    "convex-polytope-membership",
+    "classify-critical-point-from-hessian"
+   ]
+  },
+  {
+   "name": "Gradient descent and momentum",
+   "problems": [
+    "vanilla-gradient-descent",
+    "batch-vs-stochastic-vs-mini-batch-gd",
+    "classical-momentum",
+    "nesterov-momentum"
+   ]
+  },
+  {
+   "name": "Adaptive optimizers",
+   "problems": [
+    "adagrad",
+    "rmsprop",
+    "adam-optimizer",
+    "adamw-decoupled-weight-decay"
+   ]
+  },
+  {
+   "name": "Learning-rate schedules",
+   "problems": [
+    "learning-rate-sweep",
+    "linear-warmup",
+    "cosine-annealing-with-warm-restarts",
+    "lr-range-test-and-one-cycle-policy"
+   ]
+  },
+  {
+   "name": "Regularisation and training hygiene",
+   "problems": [
+    "lasso-regression-using-ista",
+    "gradient-accumulation",
+    "dropout",
+    "early-stopping"
+   ]
+  },
+  {
+   "name": "Second-order methods and stability",
+   "problems": [
+    "newton-s-method",
+    "gradient-clipping",
+    "l-bfgs",
+    "optimizer-showdown"
+   ]
+  }
+ ]
+}

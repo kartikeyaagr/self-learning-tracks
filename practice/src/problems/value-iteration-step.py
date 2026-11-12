@@ -51,7 +51,7 @@ TESTS = [
     (Pc, Rc, np.array([5.0, 5.0]), 0.5),
     (P1, R1, np.zeros(4)),
     (P1, R1, _r.normal(size=4), 0.99),
-    (P1, np.zeros((4, 3)), np.ones(4), 1.0),
+    (np.full((4, 3, 4), 0.25), np.zeros((4, 3)), np.ones(4), 1.0),   # exact tie in every state: lowest action wins
 ]
 
 EXPLANATION = r"""
@@ -59,7 +59,7 @@ EXPLANATION = r"""
 The backup is a $\gamma$-contraction in the max norm: $\lVert T V - T U\rVert_\infty \le \gamma \lVert V - U\rVert_\infty$. Repeating it from any start converges to the unique fixed point $V^*$, and the greedy policy with respect to $V^*$ is optimal. The error shrinks by a factor of $\gamma$ per sweep.
 
 ## Ties
-Test 6 has zero rewards and a constant $V$, so every action ties. Deterministic tie-breaking (lowest index) keeps policies reproducible. `argmax` already does this.
+Test 6 has uniform transitions, zero rewards and a constant $V$, so every action ties exactly. Deterministic tie-breaking (lowest index) keeps policies reproducible. `argmax` already does this.
 
 ## Cost
 Each sweep is $O(S^2 A)$. Fine for gridworlds, hopeless for real state spaces. That gap is why we move to sampled methods (Q-learning) and function approximation (DQN). DQN's target $r + \gamma \max_{a'} Q(s', a')$ is this same backup, estimated from one sample.

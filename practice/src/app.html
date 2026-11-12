@@ -504,6 +504,7 @@ textarea{border-radius:10px;background:var(--card)}
 /* ---------- practice: problem lists, filters, editor, results ---------- */
 .plist{display:flex;flex-direction:column;gap:8px}
 .prow{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:14px;align-items:center;padding:13px 16px;text-decoration:none;transition:transform .12s,box-shadow .12s}
+.prow.num{grid-template-columns:22px 18px minmax(0,1fr) auto}
 .prow:hover{transform:translateY(-1px);box-shadow:var(--lift)}
 .prow b{font-size:15.5px;font-weight:600;letter-spacing:-.01em;line-height:1.3}
 .prow .tg{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px}
@@ -571,7 +572,7 @@ textarea{border-radius:10px;background:var(--card)}
 .katex{font-size:1.05em}
 .katex-display{overflow-x:auto;overflow-y:hidden;padding:4px 0}
 @media (max-width:1100px){.pgrid{grid-template-columns:minmax(0,1fr)}.ide{position:static}}
-@media (max-width:640px){.prow{grid-template-columns:14px minmax(0,1fr)}.prow .rt{grid-column:2}.CodeMirror{height:340px}}
+@media (max-width:640px){.prow{grid-template-columns:14px minmax(0,1fr)}.prow .rt{grid-column:2}.prow.num{grid-template-columns:22px 14px minmax(0,1fr)}.prow.num .rt{grid-column:3}.CodeMirror{height:340px}}
 </style>
 </head>
 <body>
@@ -599,6 +600,7 @@ textarea{border-radius:10px;background:var(--card)}
 // {done, at, act, grades, rev}) so the hub reads it unchanged. A "lesson" here is a problem; its module is its first tag.
 const DATA = __DATA__;
 const PARTS = __PARTS__;
+const PLANS = __PLANS__;                        // study plans: ordered sections of problem ids (src/plans/*.json)
 const ALL = DATA.flatMap(m => m.lessons.map((l, i) => ({...l, mod: m.n, idx: i})));
 const key = id => id.replace('.', '-');
 const st = {done:{}, at:{}, act:{}, grades:{}, rev:{}, code:{}, hints:{}, sol:{}, expl:{}};
@@ -692,6 +694,7 @@ const ICON = {
   home: '<svg width="16" height="16" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1.5" fill="currentColor"/><rect x="9" y="2" width="5" height="5" rx="1.5" fill="currentColor" opacity=".45"/><rect x="2" y="9" width="5" height="5" rx="1.5" fill="currentColor" opacity=".45"/><rect x="9" y="9" width="5" height="5" rx="1.5" fill="currentColor"/></svg>',
   all: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
   rev: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5V5h-2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  plan: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 2.5h7l3 3v8H3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M5.5 8h5M5.5 10.5h3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
   day: '<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3" fill="currentColor"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
 };
 function side(){
@@ -699,6 +702,7 @@ function side(){
   const nv = (href, page, icon, label, extra = '') => `<a class="nv" href="${href}" ${cur.page===page?'aria-current="page"':''}>${ICON[icon]}${label}${extra}</a>`;
   $('#side').innerHTML = nv('#', 'home', 'home', 'Overview') + nv('#all', 'all', 'all', 'All problems', `<span class="c" style="margin-left:auto;font:500 11px var(--mono);color:var(--faint)">${ALL.length}</span>`)
     + nv('#l' + key(dl.id), 'daily', 'day', 'Problem of the day', isDone(dl.id) ? `<span style="margin-left:auto;color:var(--go)">${CHECK}</span>` : '')
+    + (PLANS.length ? nv('#plans', 'plans', 'plan', 'Study plans', `<span class="c" style="margin-left:auto;font:500 11px var(--mono);color:var(--faint)">${PLANS.length}</span>`) : '')
     + nv('#review', 'review', 'rev', 'Review', due ? `<span class="cnt">${due}</span>` : '')
     + PARTS.map((P, pi) => { const ms = DATA.filter(x => x.part === P); if (!ms.length) return '';
       return `<div class="part lab"><span>${esc(P)}</span></div>` + ms.map(x => { const d = modDone(x), t = x.lessons.length, on = x.n === m;
@@ -743,12 +747,51 @@ function home(){
       <div><div class="lab">Solved</div><div class="v">${n}<small>/ ${ALL.length}</small></div><div class="bar"><i style="width:${n/ALL.length*100}%;background:#7FD1A8"></i></div></div>
     </div>
   </section>
+  ${PLANS.length ? `<div class="sh"><h2>Study plans</h2><a class="lab" href="#plans" style="text-decoration:none">All ${PLANS.length} plans →</a></div>
+  <div class="mods">${PLANS.slice(0, 6).map(planCard).join('')}</div>` : ''}
   <div class="sh"><h2>Topics</h2><span class="lab">${n} / ${ALL.length} solved</span></div>
   ${PARTS.map((P, pi) => { const ms = DATA.filter(x => x.part === P); if (!ms.length) return '';
     return `<div class="parth"><span class="lab">Part ${pi+1}</span><h3>${esc(P)}</h3></div><div class="mods">` + ms.map(m => { const d = modDone(m), t = m.lessons.length, [bg, fg] = hue(m);
       return `<a class="card mcard" href="#t${m.n}"><div class="pcover" style="--c:${bg};--ci:${fg}"><span>${m.n}</span>${d === t ? `<span class="ck">${CHECK}</span>` : ''}</div>
         <h4>${esc(m.name)}</h4>${segs(m)}<div class="ft"><span>${d}/${t} solved</span><span class="dif">${counts(m.lessons).filter(x => x[1]).map(([k, v]) => `<i>${v}${k[0]}</i>`).join('')}</span></div></a>`; }).join('') + '</div>'; }).join('')}
   <p class="foot-note">Problems are written for this site. Each one links to the course lessons that teach its idea.</p>`;
+}
+
+// ---------- study plans ----------
+const planItems = pl => pl.sections.flatMap(s => s.problems).map(id => ALL.find(l => l.id === id)).filter(Boolean);
+const plansWith = id => PLANS.filter(pl => pl.sections.some(s => s.problems.includes(id)));
+function planCard(pl){
+  const ls = planItems(pl), d = ls.filter(l => isDone(l.id)).length;
+  return `<a class="card mcard" href="#plan-${pl.id}"><div class="tp"><span class="lab">${esc(pl.group)}</span>${d === ls.length && d ? `<span class="pill ok">${CHECK} Done</span>` : ''}</div>
+    <h4>${esc(pl.title)}</h4><p style="margin:0;color:var(--muted);font-size:14px;line-height:1.45;flex:1">${esc(pl.blurb)}</p>
+    <div class="bar"><i style="width:${ls.length ? d / ls.length * 100 : 0}%"></i></div>
+    <div class="ft"><span>${d}/${ls.length} solved</span><span>${pl.sections.length} sections</span></div></a>`;
+}
+function plansPage(){
+  crumbs([['Study plans', '#plans']]);
+  const groups = [...new Set(PLANS.map(p => p.group))];
+  $('#view').innerHTML = `<h1 style="font-size:40px;letter-spacing:-.045em;margin:4px 0 6px">Study plans</h1>
+  <p style="color:var(--muted);margin:0 0 8px;max-width:640px">Curated sequences of problems, ordered so each one builds on the last. Work through a plan section by section, or jump to any problem.</p>
+  ${groups.map(g => `<div class="parth"><h3>${esc(g)}</h3></div><div class="mods">${PLANS.filter(p => p.group === g).map(planCard).join('')}</div>`).join('')}`;
+}
+function planPage(id){
+  const pl = PLANS.find(p => p.id === id); if (!pl) return plansPage();
+  crumbs([['Study plans', '#plans'], [pl.title, `#plan-${pl.id}`]]);
+  const ls = planItems(pl), d = ls.filter(l => isDone(l.id)).length, nx = ls.find(l => !isDone(l.id)) || ls[0];
+  let i = 0;
+  $('#view').innerHTML = `
+  <section class="panel mhead"><div>
+    <div class="lab">Study plan · ${esc(pl.group)}</div>
+    <h1>${esc(pl.title)}</h1>
+    <p style="margin:0 0 16px;color:var(--muted);max-width:620px;font-size:16.5px">${esc(pl.blurb)}</p>
+    <div class="meta"><span class="pill">${ls.length} problems</span>${counts(ls).filter(x => x[1]).map(([k, v]) => `<span class="pill ${k}">${v} ${k}</span>`).join('')}<span class="pill ${d===ls.length?'ok':d?'ip':''}">${d}/${ls.length} solved</span></div>
+    <div style="margin-top:20px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">${nx ? `<a class="btn" href="#l${key(nx.id)}">${d ? (d === ls.length ? 'Practise again' : 'Continue') : 'Start plan'} →</a>` : ''}
+      <div style="flex:1;min-width:180px"><div class="seg">${ls.map(l => `<i class="${isDone(l.id)?'on':''}"></i>`).join('')}</div></div></div>
+  </div><div class="big" aria-hidden="true">${pl.sections.length}</div></section>
+  ${pl.prereq || pl.next ? `<div class="two" style="margin-top:14px">${pl.prereq ? `<div class="card" style="padding:18px 20px"><div class="lab" style="margin-bottom:8px">Before you start</div><p style="margin:0;font-size:15px;color:var(--muted)">${esc(pl.prereq)}</p></div>` : '<span></span>'}${pl.next ? `<div class="card" style="padding:18px 20px"><div class="lab" style="margin-bottom:8px">Where to go next</div><p style="margin:0;font-size:15px;color:var(--muted)">${esc(pl.next)}</p></div>` : ''}</div>` : ''}
+  ${pl.sections.map((sec, si) => { const sl = sec.problems.map(x => ALL.find(l => l.id === x)).filter(Boolean), sd = sl.filter(l => isDone(l.id)).length;
+    return `<div class="parth"><span class="lab">Section ${si + 1}</span><h3>${esc(sec.name)}</h3><span class="lab" style="margin-left:auto">${sd}/${sl.length}</span></div>
+    <div class="plist">${sl.map(l => row(l).replace('class="card prow"', 'class="card prow num"').replace('<span class="sd', `<span class="lab">${pad(++i)}</span><span class="sd`)).join('')}</div>`; }).join('')}`;
 }
 
 function topicPage(n){
@@ -847,6 +890,7 @@ async function problemPage(k){
         ${ex ? `<div class="card prose" id="expl">${render(p.ex_md)}</div>` : ''}
       </section>
       ${p.lessons.length ? `<section class="card blk"><div class="lab">Learn the idea</div><h3>Course lessons on this</h3><div class="links">${p.lessons.map(x => `<a href="${esc(x.href)}">${esc(x.t)}<span>${esc(x.c)}</span></a>`).join('')}</div></section>` : ''}
+      ${plansWith(p.id).length ? `<section class="card blk"><div class="lab">In study plans</div><div class="links">${plansWith(p.id).map(pl => `<a href="#plan-${pl.id}">${esc(pl.title)}<span>${esc(pl.group)}</span></a>`).join('')}</div></section>` : ''}
       ${p.related.length ? `<section class="card blk"><div class="lab">Try similar problems</div><div class="links">${p.related.map(r => ALL.find(x => x.id === r)).filter(Boolean).map(x => `<a href="#l${key(x.id)}">${esc(x.t)}<span>${x.d}${isDone(x.id) ? ' · solved' : ''}</span></a>`).join('')}</div></section>` : ''}
       <nav class="pn" aria-label="Problem navigation">
         ${prev ? `<a class="card" href="#l${key(prev.id)}"><span class="lab">← Previous</span><b>${esc(prev.t)}</b></a>` : ''}
@@ -979,6 +1023,8 @@ function route(){
   ed = null;
   if (h === 'all'){ cur = {page: 'all', mod: null, k: null}; allPage(); }
   else if (h === 'review'){ cur = {page: 'review', mod: null, k: null}; reviewPage(); }
+  else if (h === 'plans'){ cur = {page: 'plans', mod: null, k: null}; plansPage(); }
+  else if (h.startsWith('plan-')){ cur = {page: 'plans', mod: null, k: null}; planPage(h.slice(5)); }
   else if (/^t\d\d$/.test(h)){ cur = {page: 'topic', mod: h.slice(1), k: null}; topicPage(h.slice(1)); }
   else if (/^l[a-z0-9-]+$/.test(h) && ALL.some(l => key(l.id) === h.slice(1))){
     const k = h.slice(1), l = ALL.find(x => key(x.id) === k);
