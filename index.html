@@ -98,7 +98,7 @@ main{ max-width:1040px; margin:0 auto; padding:28px 24px 100px }
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="./" aria-label="Tracks home"><span class="logo"><svg viewBox="0 0 26 26" aria-hidden="true"><rect width="26" height="26" rx="7" fill="var(--ink)"/><rect x="6" y="6" width="6" height="6" rx="1.6" fill="var(--bg)"/><rect x="14" y="6" width="6" height="6" rx="1.6" fill="var(--accent)"/><rect x="6" y="14" width="6" height="6" rx="1.6" fill="var(--bg)"/><rect x="14" y="14" width="6" height="6" rx="1.6" fill="var(--bg)"/></svg></span><span class="wd">Tracks <b>5</b></span></a>
+  <a class="brand" href="./" aria-label="Tracks home"><span class="logo"><svg viewBox="0 0 26 26" aria-hidden="true"><rect width="26" height="26" rx="7" fill="var(--ink)"/><rect x="6" y="6" width="6" height="6" rx="1.6" fill="var(--bg)"/><rect x="14" y="6" width="6" height="6" rx="1.6" fill="var(--accent)"/><rect x="6" y="14" width="6" height="6" rx="1.6" fill="var(--bg)"/><rect x="14" y="14" width="6" height="6" rx="1.6" fill="var(--bg)"/></svg></span><span class="wd">Tracks <b id="nT">5</b></span></a>
   <span id="chips" style="display:flex;gap:8px"></span>
 </header>
 <main>
@@ -178,12 +178,14 @@ $('#chips').innerHTML = `
 const C = pickContinue(views), cur = C.next;
 const hr = new Date().getHours(), hello = hr < 5 ? 'Up late' : hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
 $('#hero').style.cssText = acc(C) + `;--px:${C.t.pix}`;
-$('#hero').innerHTML = `<div class="lab">${hello} · 5 tracks · ${totalAll} lessons</div>
+const units = [...new Set(TRACKS.map(t => t.unit))].map(u => `${views.filter(v => v.t.unit === u).reduce((a, v) => a + v.total, 0)} ${u}`).join(' · ');
+$('#nT').textContent = TRACKS.length;
+$('#hero').innerHTML = `<div class="lab">${hello} · ${TRACKS.length} tracks · ${units}</div>
   <h1>Everything you're learning, <span class="px">in one place.</span></h1>` + (cur
   ? `<a class="note" href="${href(C, '#l' + key(cur.id))}"><div class="lab">${C.n ? 'Continue' : 'Start here'} · ${esc(C.t.name)} · ${cur.id} · ${cur.mins} min</div>
-       <h3>${esc(cur.title)}</h3><p>${esc(cur.mod.name)} · lesson ${cur.i + 1} of ${cur.mod.lessons.length}</p>
+       <h3>${esc(cur.title)}</h3><p>${esc(cur.mod.name)} · ${C.t.unit.slice(0, -1)} ${cur.i + 1} of ${cur.mod.lessons.length}</p>
        <span class="btn">${C.n ? 'Continue' : 'Start learning'} <span class="xp">+10 XP</span></span></a>`
-  : `<a class="note" href="${href(C, '#review')}"><div class="lab">${esc(C.t.name)} · complete</div><h3>All ${C.total} lessons done.</h3>
+  : `<a class="note" href="${href(C, '#review')}"><div class="lab">${esc(C.t.name)} · complete</div><h3>All ${C.total} ${C.t.unit} done.</h3>
        <p>Keep it fresh with the review deck.</p><span class="btn">Open review deck</span></a>`);
 
 // Stats row: same four-up cards as the course home, totalled across tracks.
@@ -192,7 +194,7 @@ const week = [...Array(7)].map((_, i) => addDays(monday, i));
 $('#stats').innerHTML = `
   <div class="card stat"><div class="lab">Streak</div><div class="num">${curStreak}<small>days</small></div>
     <div class="seg" title="This week">${week.map(d => `<i class="${allDays[d] ? 'fl' : ''}"></i>`).join('')}</div></div>
-  <div class="card stat"><div class="lab">Today</div><div class="num">${todayDone}<small>/ ${DAILY_GOAL} lessons</small></div>
+  <div class="card stat"><div class="lab">Today</div><div class="num">${todayDone}<small>/ ${DAILY_GOAL} done</small></div>
     <div class="seg">${[...Array(DAILY_GOAL)].map((_, i) => `<i class="${i < todayDone ? 'on' : ''}"></i>`).join('')}</div></div>
   <div class="card stat"><div class="lab">Experience</div><div class="num">${totalXP}<small>XP</small></div>
     <div class="seg">${views.map(v => `<i class="${v.xp ? 'on' : ''}" title="${esc(v.t.name)}: ${v.xp} XP"></i>`).join('')}</div></div>
@@ -205,7 +207,7 @@ $('#courses').innerHTML = views.map(v => `
     <div class="hd">${logo(v)}<div><h3>${esc(v.t.name)}</h3><div class="lvl">Lv${v.lvl.i + 1} · ${esc(v.lvl.name)} · ${v.xp} XP</div></div></div>
     <div class="bar" role="progressbar" aria-label="${esc(v.t.name)} progress" aria-valuenow="${v.n}" aria-valuemin="0" aria-valuemax="${v.total}"><i style="width:${100 * v.n / v.total}%"></i></div>
     <div class="next">${v.next ? `${v.n ? 'Next' : 'Starts with'}: <b>${esc(v.next.title)}</b>` : '<b>Complete.</b> Every lesson done.'}</div>
-    <div class="ft"><span>${v.n}/${v.total} lessons${v.due ? ` · <span class="due">${v.due} due</span>` : ''}</span><span>Open →</span></div>
+    <div class="ft"><span>${v.n}/${v.total} ${v.t.unit}${v.due ? ` · <span class="due">${v.due} due</span>` : ''}</span><span>Open →</span></div>
   </a>`).join('');
 </script>
 </body>
