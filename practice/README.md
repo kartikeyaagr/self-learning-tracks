@@ -1,7 +1,7 @@
 # Practice Lab
 
 Coding problems with tests, hints, full solutions and explanations. Python, NumPy, Pandas and SQL run in the
-browser (Pyodide in a Web Worker). PyTorch problems open as Colab notebooks.
+browser (Pyodide in a Web Worker). PyTorch, JAX, CUDA (Numba kernels) and Triton problems open as Colab notebooks.
 
 ## Build
 
@@ -21,6 +21,7 @@ Create `src/problems/<slug>.py` with:
 | `HINTS` | At least 2, from a nudge to a near-giveaway |
 | `TESTS` | At least 5 tuples of arguments (for SQL: setup scripts). The first `examples` are shown |
 | `EXPLANATION` | Why it works, complexity, common bugs, interview follow-ups |
+| `REFERENCE` | Triton only: code defining the same function with PyTorch on CPU. Expected outputs come from it, because the build machine has no GPU; SOLUTION is syntax-checked only |
 
 The build fails if the solution doesn't pass its own tests twice with identical output, if the starter passes,
 or if a tag, lesson or related slug doesn't exist. `harness.py` grades both here and in the browser.

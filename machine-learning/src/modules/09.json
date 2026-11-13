@@ -1,0 +1,202 @@
+{
+ "n": "09",
+ "name": "ML in production",
+ "lessons": [
+  {
+   "id": "09.01",
+   "t": "From notebook to service",
+   "n": [
+    "A model in production is a small part of a larger system: data pipelines, feature computation, serving, logging and monitoring are most of the code and most of the failures.",
+    "**Batch inference** precomputes predictions on a schedule and serves them by lookup; **online inference** computes per request. Choose by how fresh the inputs must be, how many entities need scores, and the latency budget.",
+    "**Training/serving skew** is any difference between the features or data the model saw in training and what it sees live: two code paths computing the same feature, different freshness, or a changed input distribution.",
+    "The strongest defence is to **log features at serving time** and train on those logs, so that training and serving share one computation by construction.",
+    "Validate inputs at the boundary against a schema (types, ranges, null rates); a model fed garbage returns confident garbage without raising an error."
+   ],
+   "a": "## The model is the small box\nA notebook ends with a fitted object and a metric. A service has to keep producing good predictions for months while its inputs change underneath it. Sculley et al.'s \"Hidden Technical Debt in Machine Learning Systems\" made the point with a now-famous figure: the ML code is a small box surrounded by configuration, data collection, feature extraction, verification, serving infrastructure and monitoring. Most production incidents happen in those surrounding boxes, and most of them do not raise exceptions. The model keeps returning numbers; the numbers are just wrong.\n\nThis module covers the four habits that make an ML system trustworthy: serve it the same inputs it was trained on (this lesson), build training data reproducibly (09.02), watch it in production (09.03), and change it through controlled experiments (09.04). Inference Engineering's \"Production Serving & Model Lifecycle\" module covers packaging, health checks and rollouts for large-model servers; this module is about the data and statistics side that applies to every model.\n\n## Batch or online\n| Dimension | Batch (offline) inference | Online (real-time) inference\n| When it runs | on a schedule, e.g. nightly | per request\n| Serving path | key-value lookup of a stored score | feature fetch, model forward pass\n| Latency budget | none for the model; lookup is ~1 ms | typically 10-100 ms end to end\n| Freshness | as old as the last run | uses the current request context\n| Coverage | only entities known at run time | any entity, including brand-new ones\n| Cost | proportional to all entities, every run | proportional to traffic\n| Failure mode | stale or missing scores | latency spikes, feature-store outages\n\nBatch suits churn scores for 5 million customers, weekly demand forecasts, or \"recommended for you\" rails that can be a day old. Online is needed when the input is only known at request time: fraud scoring a transaction, ranking search results for a query, re-ranking a feed after the last click. Many systems are hybrid: precompute expensive user and item embeddings in batch, then do a cheap online computation that combines them with request context. Near-real-time features (counts over the last 5 minutes, computed by a stream processor) sit between the two.\n\n%%flow A typical hybrid: heavy features are batch-computed, light context is added per request, and what was served is logged for the next training run.\nRequest -(id + context)-> Feature fetch -(batch + streaming features)-> *Model -(score)-> Response -(log features + score)-> Training log\n%%\n\n## Training/serving skew\nSkew is the gap between what the model learned from and what it is given. It comes in three forms:\n- **Code skew**: the training pipeline computes `days_since_signup` in SQL over a warehouse table; the service recomputes it in Java from a different timestamp field with a different timezone. Same name, different feature.\n- **Data skew**: training used features as of the end of each day, but serving reads them live, or the reverse. A \"number of orders\" feature that lags by a day in training but is fresh at serving is a different variable.\n- **Distribution skew**: the population changes because of the model itself (it blocks fraud, so fraudsters adapt) or because the product changes. That is drift, covered in 09.03.\n\nGoogle's Rules of ML give the bluntest defence: record the exact feature values the service used for each prediction, and build the next training set from those records. A feature store gives one definition per feature with two materialisations (offline for training, online for serving), which removes most code skew. Logging served features removes the rest, at the cost of a delay before you have enough logged data to train on.\n\n```python\n# Skew report: compare features computed offline vs logged at serving time\nimport pandas as pd\nj = offline.merge(served, on=[\"request_id\"], suffixes=(\"_off\", \"_srv\"))\nfor f in features:\n    a, b = j[f + \"_off\"], j[f + \"_srv\"]\n    mismatch = (~((a - b).abs() <= 1e-6 * b.abs().clip(lower=1))).mean()\n    print(f, f\"mismatch={mismatch:.2%}\", f\"null_off={a.isna().mean():.2%}\", f\"null_srv={b.isna().mean():.2%}\")\n```\n\n! Example: a skew bug that tests did not catch\n! A credit model uses `income_monthly`. Training data had it in pounds per month. The serving team took it from an API that returned pounds per year. Every applicant suddenly looked 12 times richer, approval rates jumped from 41% to 78% within an hour, and nothing errored. A range check on the input (monthly income above 50,000 is rare) and a dashboard of approval rate by hour would each have caught it in minutes.\n\n## Contracts at the boundary\nTreat model inputs like an API contract. For each feature, record type, allowed range or categories, expected null rate and units, and check every batch or request against it: reject, impute with a logged default, or alert. TensorFlow Data Validation and similar tools infer a schema from training data and flag anomalies in new data, such as new categories, missing columns or range violations. The check is cheap and turns silent failures into visible ones.\n\nAlso version the whole path: model artifact, feature definitions and preprocessing code ship together. A model trained with one tokenizer or bucket boundary and served with another is skew of the most frustrating kind.\n\n> Takeaway: pick batch or online inference by freshness, coverage and latency needs, then remove training/serving skew structurally: one feature definition, served features logged for training, and a schema check at every boundary.",
+   "q": "An e-commerce ranking model was trained on daily snapshots of item features (price, stock, rating). In production it reads the same features from a live cache. Offline AUC is 0.81, but online click-through is below the old model's. Name two specific skew mechanisms that could explain this and how you would confirm each.",
+   "s": "First, freshness skew: in training, features came from end-of-day snapshots, so a label (a click during the day) is paired with a feature value that may reflect events after the click, such as a price drop that happened later or a rating updated by that very purchase. The model learned relationships that the live features do not have. Confirm by rebuilding the training set with point-in-time feature values and checking whether offline AUC drops towards the online result. Second, code or default skew: the live cache may return nulls or defaults (stock = 0 on a cache miss) at a different rate or in a different encoding from the warehouse snapshot. Confirm by logging served features for a day, joining them to the offline values for the same request and item, and reporting mismatch and null rates per feature. Fix by logging served features and training on them.",
+   "r": [
+    [
+     "Sculley et al., Hidden Technical Debt in Machine Learning Systems (2015)",
+     "https://papers.nips.cc/paper_files/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html",
+     "The catalogue of ML-specific debt: entanglement, hidden feedback loops, pipeline jungles."
+    ],
+    [
+     "Google, Rules of Machine Learning",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "Rules 29-37 on training/serving skew and logging features at serving time."
+    ],
+    [
+     "TensorFlow Data Validation guide",
+     "https://www.tensorflow.org/tfx/guide/tfdv",
+     "Schema inference, anomaly detection and skew/drift comparators between training and serving data."
+    ]
+   ],
+   "k": [
+    "serving",
+    "training/serving skew"
+   ],
+   "x": [
+    "pandas"
+   ],
+   "p": [
+    "training-serving-skew",
+    "record-schema-validation",
+    "point-in-time-feature-join"
+   ]
+  },
+  {
+   "id": "09.02",
+   "t": "Reproducible data",
+   "n": [
+    "A model is reproducible only if you can rebuild its exact training set; that needs a pinned **data version**, deterministic splits and point-in-time-correct features, not just a saved random seed.",
+    "**Hashed splits** assign each entity by a stable hash, e.g. `int(sha256(salt + user_id)) % 100 < 80` for train, so membership never changes as data grows or rows are reordered.",
+    "Split by the entity that must not leak (user, patient, session), not by row, or near-duplicate rows of one entity end up on both sides.",
+    "A **point-in-time join** pairs each label at time $t$ with the latest feature value known at or before $t$ (minus any availability delay); a plain join on the current table leaks the future.",
+    "Version data by immutable snapshots (table time travel, content-addressed files) and record the triple (code commit, data version, config) with every model artifact."
+   ],
+   "a": "## Why rerunning the notebook is not enough\nThree weeks after launch, someone asks why the model approved a particular customer, or a regression appears and you want to retrain last month's model to compare. If the training table has been updated in place since then, the split depends on row order, and features were joined against current values, you cannot rebuild the dataset, let alone the model. Reproducibility in ML is mostly a data problem, and it has three parts.\n\n%%layers What has to be pinned to rebuild a training set exactly.\nData version | immutable snapshot ID of every source table or file\nSplit assignment | deterministic function of entity ID, never of row order or a random draw\n*Feature values | as of each label's timestamp, not as of today\nCode and config | commit hash, feature definitions, hyperparameters, seed\n%%\n\n## Hashed splits\nA random split with a fixed seed is reproducible only while the input rows and their order stay identical. Add one day of data and every row's assignment changes, so some former test users are now in training and your new test score is contaminated. The robust alternative is to derive the split from a hash of a stable ID:\n\n```python\nimport hashlib\ndef bucket(entity_id: str, salt: str = \"churn-v1\", buckets: int = 100) -> int:\n    h = hashlib.sha256(f\"{salt}:{entity_id}\".encode()).hexdigest()\n    return int(h[:15], 16) % buckets\nsplit = \"test\" if bucket(uid) < 10 else \"val\" if bucket(uid) < 20 else \"train\"\n```\n\nProperties worth knowing:\n- **Stable**: a user's split never changes, however much data arrives, so test users stay unseen forever.\n- **Entity-level**: hash the ID that must not leak. For a model predicting per-transaction fraud, hashing transaction IDs puts one card's transactions on both sides, and the model learns the card. Hash card or customer IDs.\n- **Salted**: change the salt to draw a fresh, independent split for a new project; reuse it to compare models on the same users.\n- **Do not use Python's built-in `hash()`** for strings: it is randomised per process (PYTHONHASHSEED), so assignments differ between runs.\n\nFor time-dependent problems, combine: hold out the latest period (temporal split, as in ML lesson \"Train, validation and test splits\") and hash within it if you also need user-disjoint sets.\n\n## Point-in-time feature joins\nMost feature tables are keyed by entity and updated over time: `customer_id, ts, n_orders_30d`. A training example is a label event: `customer_id, label_ts, churned`. The naive join on `customer_id` alone picks the current row, which contains information from after the label. That leak is invisible offline (it makes the model look great) and is only discovered when online performance falls short.\n\nThe correct join, for each label row, takes the most recent feature row with `feature_ts <= label_ts - delay`, where `delay` is how long the feature takes to become available in production (a nightly batch job that lands at 06:00 makes yesterday's value unavailable until then).\n\n```python\nimport pandas as pd\nlabels = labels.sort_values(\"label_ts\")\nfeats = feats.sort_values(\"feature_ts\")\nfeats[\"available_ts\"] = feats[\"feature_ts\"] + pd.Timedelta(hours=6)\ntrain = pd.merge_asof(labels, feats, left_on=\"label_ts\", right_on=\"available_ts\",\n                      by=\"customer_id\", direction=\"backward\")\n```\n\nIn SQL the same thing is a window function: join on entity with `feature_ts <= label_ts`, then keep `ROW_NUMBER() OVER (PARTITION BY label_id ORDER BY feature_ts DESC) = 1`. Feature stores (Feast and others) implement this as a built-in \"point-in-time join\" so each team does not reinvent it.\n\n! Example: the leak a plain join creates\n! A churn label is \"cancelled within 30 days of 1 March\". The feature `support_tickets_30d` in the current table counts tickets up to today, including the angry tickets customers filed while cancelling. Joined naively, the feature is strongly predictive (offline AUC 0.93). Joined point-in-time as of 1 March, AUC is 0.78, and 0.78 is the number production will see.\n\nLate-arriving data needs a decision too: if a feature value with timestamp 09:00 actually landed in the table at 14:00, was it available for a 10:00 prediction? Keep both an event time and an ingestion time and join on the one that matches serving.\n\n## Versioning data and models\n- **Immutable snapshots**: table formats such as Delta Lake and Iceberg support time travel (`VERSION AS OF 412`); object stores with content-addressed files (DVC, lakeFS) give the same for files. Never overwrite a training extract in place.\n- **Lineage record** saved next to every model artifact: data snapshot IDs, split salt, feature definitions version, code commit, hyperparameters, seed, library versions. A model registry stores it; a small JSON file next to the weights is better than nothing.\n- **Determinism**: even with all of that, GPU kernels and parallel data loaders can make training non-bitwise-reproducible. Aim for *statistical* reproducibility: rebuilding gives the same dataset bit for bit and a model within noise of the original.\n\n> Takeaway: reproducibility comes from three habits: assign splits by a salted hash of the leaking entity, join features as of each label's time plus availability delay, and record immutable data versions with every model.",
+   "q": "A fraud team splits 18 months of transactions randomly by row (seed 42) and joins the current customer table to get account age and dispute count. Their test AUC is 0.97; in production it is 0.84. Identify every leak in this setup and the corrected design.",
+   "s": "There are three leaks. First, the row-level split puts transactions from the same card or customer in both train and test, so the model memorises entity-specific patterns; split by a salted hash of customer (or card) ID. Second, the random split ignores time: the model trains on transactions after the test ones, learning fraud patterns from the future; hold out the latest months as test, optionally hashing customers within it. Third, the join against the current customer table leaks post-transaction information: dispute count includes disputes caused by the very fraud being predicted, and account age is computed as of today. Use a point-in-time join so each transaction gets values as of its timestamp minus the delay with which those fields reach production. Also pin a data snapshot so the rebuilt dataset is reproducible, since a random seed alone stops working once rows are added.",
+   "r": [
+    [
+     "Feast: Point-in-time joins",
+     "https://docs.feast.dev/getting-started/concepts/point-in-time-joins",
+     "How a feature store builds leak-free training sets from timestamped feature tables."
+    ],
+    [
+     "Google ML Crash Course: Dividing the original dataset",
+     "https://developers.google.com/machine-learning/crash-course/overfitting/dividing-datasets",
+     "Train/validation/test splits and why test examples must stay unseen."
+    ],
+    [
+     "Delta Lake: table batch reads and time travel",
+     "https://docs.delta.io/latest/delta-batch.html",
+     "The 'Query an older snapshot of a table' section: versions and timestamps as of."
+    ],
+    [
+     "DVC documentation",
+     "https://dvc.org/doc",
+     "Versioning datasets and models alongside code with content-addressed storage."
+    ]
+   ],
+   "k": [
+    "data versioning",
+    "leakage"
+   ],
+   "x": [
+    "pandas",
+    "SQL"
+   ],
+   "p": [
+    "hashed-dataset-split",
+    "point-in-time-feature-join",
+    "row-number",
+    "drop-duplicates"
+   ]
+  },
+  {
+   "id": "09.03",
+   "t": "Monitoring models",
+   "n": [
+    "Labels in production often arrive days or months late, so monitoring layers fast proxies (input drift, prediction drift, data quality) on top of slow truth (accuracy and calibration once labels mature).",
+    "**PSI** compares binned distributions: $\\text{PSI} = \\sum_b (a_b - e_b)\\ln\\frac{a_b}{e_b}$; the usual reading is below 0.1 stable, 0.1 to 0.25 worth a look, above 0.25 a real shift.",
+    "The **KS** statistic $D = \\sup_x |F_{\\text{ref}}(x) - F_{\\text{cur}}(x)|$ is distribution-free, but with large samples its p-value flags trivial shifts; alert on the effect size $D$, not on $p < 0.05$.",
+    "**Calibration drift** (ECE rising while AUC holds) breaks every downstream threshold and expected-value calculation even when ranking is fine.",
+    "Alerts should require persistence (several consecutive breaching windows) and route to a person with a runbook; a drift alert with no owner is noise."
+   ],
+   "a": "## What can be watched, and when\nA deployed model fails in ways that do not raise exceptions: an upstream column changes meaning, the population shifts, the relationship between features and outcome changes. What you can observe depends on time.\n\n%%flow Signals become available at very different delays; monitoring needs a layer for each.\nRequest -(seconds)-> Data quality checks -(minutes)-> Input and prediction drift -(days to months)-> *Label-based metrics\n%%\n\n- **Data quality** (immediately): null rates, schema violations, out-of-range values, category cardinality. The cheapest and highest-yield layer: most incidents are broken pipelines, not subtle drift.\n- **Input drift** (minutes to hours): has the distribution of each feature moved away from training?\n- **Prediction drift** (minutes to hours): has the distribution of scores, or the share of positive decisions, moved? This is often the single best proxy, because it summarises all features through the model.\n- **Performance** (when labels arrive): accuracy, AUC, calibration on predictions whose labels have matured.\n\nTypes of shift, informally: *covariate shift* changes $P(x)$ with $P(y \\mid x)$ fixed; *label shift* changes $P(y)$; *concept drift* changes $P(y \\mid x)$ itself. Only the last one makes the model wrong for inputs it handles well today, and it is visible only through labels.\n\n## Measuring drift: PSI and KS\n**Population Stability Index**: bin a feature using quantiles of the reference (training) data, often 10 bins, compute the share of reference $e_b$ and current $a_b$ in each bin, then\n\n$$\\text{PSI} = \\sum_{b} (a_b - e_b)\\,\\ln\\frac{a_b}{e_b}$$\n\nPSI is a symmetrised KL divergence on the binned distributions. Empty bins make it infinite, so add a small epsilon. It works on categorical features directly (one bin per category plus \"other\").\n\n**Two-sample Kolmogorov-Smirnov**: $D = \\sup_x |F_{\\text{ref}}(x) - F_{\\text{cur}}(x)|$, the largest gap between the two empirical CDFs. No binning and no distribution assumptions, for continuous features. The trap is sample size: with 1 million rows on each side, a $D$ of 0.003 is \"significant\" at $p < 0.001$ and means nothing. Alert on $D$ (for example, $D > 0.1$) and use the p-value only for small samples.\n\n```python\nimport numpy as np\ndef psi(ref, cur, bins=10, eps=1e-6):\n    edges = np.quantile(ref, np.linspace(0, 1, bins + 1))\n    edges[0], edges[-1] = -np.inf, np.inf\n    e = np.histogram(ref, edges)[0] / len(ref) + eps\n    a = np.histogram(cur, edges)[0] / len(cur) + eps\n    return float(np.sum((a - e) * np.log(a / e)))\n```\n\n| Method | Input | Strength | Weakness\n| PSI | binned numeric or categorical | interpretable, one scale for all features | depends on binning; insensitive inside bins\n| KS statistic | continuous | no binning, exact | p-value meaningless at scale; one feature at a time\n| Page-Hinkley / CUSUM | a stream of a metric | detects the change point quickly | needs a tolerance and threshold tuned per stream\n| Classifier two-sample test | all features jointly | catches multivariate shifts | heavier; needs care to interpret\n\nDrift on an unimportant feature is harmless; drift on the top feature is serious. Weight drift alerts by feature importance, and always look at prediction drift too.\n\n## Calibration drift and delayed labels\nIf a model outputs 0.2, about 20% of such cases should be positive. Expected calibration error summarises how far that holds: bin predictions by confidence, then $\\text{ECE} = \\sum_b \\frac{n_b}{N} |\\text{acc}_b - \\text{conf}_b|$ (see ML lesson \"Calibrated probabilities\" for reliability diagrams and recalibration). Calibration matters whenever someone uses the probability itself: expected loss, bid prices, a fixed threshold. It drifts readily under label shift: if the fraud base rate doubles, a well-ranked model is now under-confident everywhere, AUC barely moves, and the approval threshold silently lets more fraud through.\n\nLabels often lag. Chargebacks arrive up to 60 to 120 days after a transaction; loan defaults take months. Handle this explicitly:\n1. Compute label-based metrics only on **matured cohorts**: predictions old enough that nearly all their labels have arrived.\n2. Track early proxies with known lag: first-week disputes as a leading indicator of 90-day fraud.\n3. Report the maturation curve so a dip caused by immature labels is not mistaken for degradation.\n\n! Example: reading a drift dashboard\n! A loan model's top feature, `debt_to_income`, has PSI 0.04 this week. The prediction score distribution has PSI 0.31, and the share of applications above the approval threshold rose from 38% to 52%. The input drift is in a mid-importance feature, `employment_length`, whose PSI is 0.6: an upstream change started sending years instead of months. Prediction drift found it; per-feature PSI explained it; a schema range check would have prevented it.\n\n## Alerting that people trust\n- Alert on **persistent** breaches, such as three consecutive hourly windows above threshold, not single spikes.\n- Set thresholds from history: compute PSI between consecutive weeks of known-good data to see the natural noise floor.\n- Each alert has an owner and a runbook: check upstream pipelines, compare against the previous model, retrain or roll back.\n- Retraining is not automatically the fix. Retraining on data from a broken pipeline bakes the bug into the next model.\n\n> Takeaway: monitor in layers by delay: data quality and prediction drift for speed, per-feature PSI and KS effect sizes for diagnosis, and calibration and accuracy on matured labels for truth, with persistent, owned alerts.",
+   "q": "A churn model's AUC on last quarter's matured labels is unchanged at 0.79, but the retention team reports that the 'top 10% risk' list now converts to actual churn at 18% instead of the 30% it used to. Explain how both facts can be true and what you would monitor to have caught it earlier.",
+   "s": "AUC measures ranking only, and is unchanged if the model still orders customers equally well. The retention list depends on calibration and the base rate: if overall churn fell (label shift, perhaps from a pricing change), the top decile contains fewer real churners even with the same ordering, so the model's probabilities are now over-confident. Alternatively, the score distribution may have shifted so that the top 10% now reaches further into lower-risk customers. Either way, the probability no longer means what it meant. Monitoring that would catch it: base-rate tracking on matured cohorts, ECE or a reliability curve per cohort, prediction-distribution PSI, and precision in the top decile as a business metric with a persistent-breach alert. The fix is usually recalibration on recent matured data, not a full retrain.",
+   "r": [
+    [
+     "Rabanser, Günnemann and Lipton, Failing Loudly: Detecting Dataset Shift (2018)",
+     "https://arxiv.org/abs/1810.11953",
+     "Empirical comparison of shift detectors, including univariate KS with Bonferroni and classifier-based tests."
+    ],
+    [
+     "Chip Huyen, Data Distribution Shifts and Monitoring",
+     "https://huyenchip.com/2022/02/07/data-distribution-shifts-and-monitoring.html",
+     "Covariate, label and concept shift with production examples and what to monitor."
+    ],
+    [
+     "SciPy ks_2samp reference",
+     "https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.ks_2samp.html",
+     "The statistic, alternatives and exact versus asymptotic p-values."
+    ],
+    [
+     "Guo et al., On Calibration of Modern Neural Networks (2017)",
+     "https://arxiv.org/abs/1706.04599",
+     "Defines ECE and reliability diagrams as used for calibration monitoring."
+    ]
+   ],
+   "k": [
+    "drift",
+    "calibration",
+    "monitoring"
+   ],
+   "x": [
+    "NumPy",
+    "SciPy"
+   ],
+   "p": [
+    "population-stability-index",
+    "two-sample-ks-drift",
+    "expected-calibration-error",
+    "delayed-label-monitoring",
+    "consecutive-breach-alerts"
+   ]
+  },
+  {
+   "id": "09.04",
+   "t": "Experimenting with models",
+   "n": [
+    "Offline metrics are a filter, not a verdict: a model ships when a randomised **online experiment** shows it improves the metric the business cares about, without harming guardrails.",
+    "A **canary** sends 1 to 5% of traffic to the new model to catch breakage (errors, latency, prediction distribution) within minutes; an A/B test is a separate, longer step that measures value.",
+    "Checking a fixed-horizon test repeatedly and stopping at the first $p < 0.05$ inflates false positives to about 20% with ten looks. **Sequential tests** (mSPRT, alpha spending) give **always-valid** p-values you may watch continuously.",
+    "Check **sample ratio mismatch** first: if a 50/50 test shows 50.8/49.2 on a million users, assignment or logging is broken and the result is untrustworthy.",
+    "For ranking models, **interleaving** (merging both models' lists for each user) detects preference with far fewer users than an A/B test, but does not measure business impact."
+   ],
+   "a": "## Why offline wins do not ship by themselves\nAn offline metric is computed on logged data collected under the old model. It cannot see feedback effects (the new recommender changes what users click), position bias, latency costs, or whether the metric correlates with revenue or retention. Model teams regularly see offline NDCG improve while the online metric is flat. The online experiment is the measurement that counts; offline evaluation decides what is worth testing.\n\nThe general theory of A/B tests (hypothesis tests, power and sample size, multiple testing) is in ML Maths, \"A/B testing\". This lesson covers what is specific to rolling out models.\n\n%%flow A model rollout ladder: each rung answers a different question and can stop the rollout.\nOffline eval -(passes)-> Shadow -(no errors)-> Canary 1-5% -(healthy)-> *A/B test -(wins)-> Ramp to 100%\n%%\n\n## Shadow, canary, A/B\n- **Shadow (dark launch)**: the new model receives a copy of live traffic and its predictions are logged but not used. It answers \"does it run, how fast, and how different are its outputs?\" with zero user risk. It cannot measure user response.\n- **Canary**: a small share of real traffic is served by the new model. The question is safety: error rate, latency percentiles, prediction distribution, any obvious business metric collapse. Decisions come in minutes to hours, often automated: compare canary against a same-sized baseline slice with a non-parametric test such as Mann-Whitney U on latency, and roll back automatically on failure.\n- **A/B test**: randomised split, typically 50/50 or 10/90, run for a pre-registered duration (at least one or two full weekly cycles) to estimate the effect on the primary metric with a confidence interval.\n\n| Stage | Traffic | Duration | Question | Typical decision rule\n| Shadow | copy of 100%, not served | hours to days | does it work, how different? | error-free, latency within budget\n| Canary | 1-5% | minutes to hours | is it safe? | no regression on health metrics vs baseline slice\n| A/B | 10-50% | 1-4 weeks | is it better? | primary metric CI excludes 0; guardrails hold\n\n## Designing the A/B test for a model\n- **Unit of randomisation**: usually the user, hashed with an experiment salt (the same technique as hashed splits in 09.02). Randomising per request lets one user see both models, which contaminates anything with memory, like recommendations.\n- **Metrics**: one primary metric decided in advance (purchases per user), a few secondary ones, and guardrails that must not get worse (latency p99, error rate, unsubscribe rate). Ratio metrics like click-through per impression need the delta method or a bootstrap for correct variance, because impressions per user vary.\n- **Sample ratio mismatch (SRM)**: before reading results, test whether the observed split matches the design with a chi-square test. A 50.8/49.2 split on a million users has $p < 10^{-50}$; something (bot filtering, a crash in one arm, a redirect) removes users non-randomly, and the effect estimate is biased.\n- **Variance reduction**: CUPED regresses the metric on its own pre-experiment value, $Y' = Y - \\theta(X - \\bar X)$ with $\\theta = \\text{cov}(X,Y)/\\text{var}(X)$, often cutting variance by 30 to 50% and shrinking required sample size by the same factor.\n- **Novelty and learning effects**: a new recommender can win in week one because it is different; check that the effect is stable over time.\n\n## Peeking and sequential testing\nA fixed-horizon test assumes you look once, at the end. Dashboards invite daily looks. If you stop the first time $p < 0.05$, the false positive rate is no longer 5%: with ten evenly spaced looks it is roughly 19%, and with continuous monitoring it approaches 1 eventually. Two families of remedies:\n1. **Group sequential designs** with alpha spending (O'Brien-Fleming, Pocock): a few planned interim looks with stricter thresholds early.\n2. **Always-valid inference**: the mixture sequential probability ratio test (mSPRT) of Johari et al. gives a p-value sequence that is valid at any stopping time, so the dashboard can show it continuously and you may stop as soon as it crosses $\\alpha$. The price is lower power than a perfectly planned fixed test at the same sample size.\n\n```python\nimport numpy as np\ndef msprt_pvalues(diffs, sigma2, tau2=1.0):\n    # diffs: running per-pair differences (treatment - control), assumed ~N(theta, sigma2)\n    p, out = 1.0, []\n    for n in range(1, len(diffs) + 1):\n        m = np.mean(diffs[:n])\n        lam = np.sqrt(sigma2 / (sigma2 + n * tau2)) * np.exp(\n            n * n * tau2 * m * m / (2 * sigma2 * (sigma2 + n * tau2)))\n        p = min(p, 1.0 / lam)          # always-valid p-value never increases\n        out.append(p)\n    return out\n```\n\n## Interleaving for rankers\nFor two ranking models, team-draft interleaving builds each user's list by alternately drafting the next-best item from model A and model B, then credits clicks to the model that contributed the clicked item. Each user compares both models side by side, which removes between-user variance; published industry reports describe needing one to two orders of magnitude fewer users than an A/B test to detect the same preference. Use interleaving to screen many ranker variants quickly, then A/B test the winner to measure business impact, which interleaving cannot do.\n\n! Example: a canary that saved the A/B test\n! A new ranking model passes offline evaluation. On a 2% canary its p99 latency is 240 ms against a 150 ms budget, because a new feature triggers an uncached database read. Automated canary analysis flags it within 20 minutes and rolls back. Had it gone straight to a 50/50 A/B test, the slow arm would have lost on engagement and the team would have wrongly concluded the model was worse.\n\n> Takeaway: roll models out through shadow, canary and A/B stages that answer safety then value; randomise by user, check SRM before reading results, and use sequential tests if anyone will watch the dashboard.",
+   "q": "A team runs a 50/50 A/B test of a new recommender, checks the dashboard every morning, and stops on day 4 when conversion is up 2.1% with p = 0.03. Arm sizes are 412,880 and 405,120 users. List the problems with this conclusion and what a sound process would have done.",
+   "s": "Two independent problems. First, peeking: stopping at the first daily look with p below 0.05 inflates the false positive rate well above 5%, so p = 0.03 at day 4 is not evidence at the nominal level. A sound process pre-registers a duration covering full weekly cycles, or uses a sequential method (mSPRT always-valid p-values or alpha spending) that allows daily looks. Second, the arm sizes show sample ratio mismatch: 412,880 vs 405,120 is a 50.5/49.5 split on 818k users, which a chi-square test rejects at p far below 0.001. Some users are being lost or duplicated in one arm, so the effect estimate is biased whatever its p-value. Investigate assignment and logging before reading any metric. Also, four days is too short to separate a novelty effect from a lasting improvement, and guardrail metrics should be checked.",
+   "r": [
+    [
+     "Kohavi, Tang and Xu, Trustworthy Online Controlled Experiments (book site)",
+     "https://experimentguide.com/",
+     "The standard reference; chapters on SRM, guardrails, variance and pitfalls."
+    ],
+    [
+     "Johari et al., Always Valid Inference: Continuous Monitoring of A/B Tests (2015)",
+     "https://arxiv.org/abs/1512.04922",
+     "Why peeking breaks fixed-horizon tests and how mSPRT p-values fix it."
+    ],
+    [
+     "Google SRE Workbook: Canarying Releases",
+     "https://sre.google/workbook/canarying-releases/",
+     "How to size, run and judge a canary, with metric selection advice."
+    ],
+    [
+     "Deng et al., CUPED: Improving the Sensitivity of Online Controlled Experiments (2013)",
+     "https://exp-platform.com/Documents/2013-02-CUPED-ImprovingSensitivityOfControlledExperiments.pdf",
+     "Variance reduction with pre-experiment covariates; section 3 for the estimator."
+    ]
+   ],
+   "k": [
+    "A/B testing",
+    "sequential testing",
+    "canary"
+   ],
+   "x": [
+    "NumPy",
+    "SciPy"
+   ],
+   "p": [
+    "msprt-always-valid-pvalues",
+    "canary-mann-whitney",
+    "b-test-significance",
+    "bootstrap-confidence-interval"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,157 @@
+{
+ "id": "llm-from-scratch",
+ "group": "Build from Scratch",
+ "title": "Language Modeling from Scratch",
+ "blurb": "Build a modern language model end to end, one exercise at a time: tokenizers and Transformer blocks, GPU kernels and parallelism, scaling laws, inference, evaluation, data pipelines and post-training with preferences and verifiable rewards. Each problem isolates one piece you would otherwise only see buried inside a large training codebase.",
+ "prereq": "You should be comfortable with Python, NumPy and PyTorch and know how attention and a Transformer block work; the PyTorch and Triton study plans are good preparation for the kernel sections.",
+ "next": "Continue with the Inference Engineering study plan for serving in more depth, or the reinforcement learning problems for the policy-gradient ideas behind RLHF and GRPO.",
+ "sections": [
+  {
+   "name": "Tokenization",
+   "problems": [
+    "train-deterministic-bpe-vocabulary",
+    "apply-ranked-bpe-merges"
+   ]
+  },
+  {
+   "name": "PyTorch and einops",
+   "problems": [
+    "named-dimension-batched-attention-scores",
+    "mixed-precision-training-memory-accountant",
+    "transformer-training-flop-estimator",
+    "gradient-accumulation-equivalence"
+   ]
+  },
+  {
+   "name": "Architectures",
+   "problems": [
+    "rmsnorm-forward-pass",
+    "parameter-matched-swiglu-block",
+    "rotary-query-and-key-embeddings",
+    "causal-grouped-query-attention"
+   ]
+  },
+  {
+   "name": "Attention Alternatives",
+   "problems": [
+    "parallel-and-recurrent-linear-attention",
+    "mamba-2-gated-state-scan",
+    "gated-deltanet-state-update",
+    "top-k-moe-router-with-load-statistics"
+   ]
+  },
+  {
+   "name": "GPUs and TPUs",
+   "problems": [
+    "gpu-occupancy-calculator",
+    "shared-memory-bank-conflict-analyzer",
+    "global-memory-coalescing-counter",
+    "blockwise-online-softmax"
+   ]
+  },
+  {
+   "name": "Kernels, Triton, and XLA",
+   "problems": [
+    "masked-triton-gelu-kernel",
+    "triton-row-wise-softmax",
+    "tiled-triton-row-sum",
+    "fused-tiled-matmul-and-relu"
+   ]
+  },
+  {
+   "name": "Parallelism I",
+   "problems": [
+    "simulate-distributed-collectives",
+    "collective-effective-bandwidth",
+    "synchronize-data-parallel-gradients",
+    "reconstruct-column-parallel-mlp-layer"
+   ]
+  },
+  {
+   "name": "Parallelism II",
+   "problems": [
+    "account-for-zero-memory-by-stage",
+    "measure-pipeline-bubble-utilization",
+    "choose-topology-aware-parallel-plan"
+   ]
+  },
+  {
+   "name": "Scaling Laws I",
+   "problems": [
+    "saturating-power-law-fit",
+    "extrapolate-data-mixture-scaling-curves",
+    "estimate-critical-batch-size",
+    "isoflop-sweep-exponent"
+   ]
+  },
+  {
+   "name": "Inference",
+   "problems": [
+    "decode-attention-with-kv-cache",
+    "plan-kv-cache-capacity",
+    "perform-exact-speculative-sampling"
+   ]
+  },
+  {
+   "name": "Scaling Laws II",
+   "problems": [
+    "generate-warmup-stable-decay-schedule",
+    "fit-learning-rate-and-batch-size-scaling",
+    "orthogonalize-muon-momentum-update",
+    "diagnose-mup-width-invariants"
+   ]
+  },
+  {
+   "name": "Evaluation",
+   "problems": [
+    "conditional-perplexity",
+    "score-multiple-choice-continuations",
+    "fit-elo-ratings-from-pairwise-votes",
+    "remove-response-length-bias-from-judge-scores"
+   ]
+  },
+  {
+   "name": "Data Processing",
+   "problems": [
+    "perform-stable-exact-deduplication",
+    "text-deduplication-minhash",
+    "temperature-based-data-mixtures"
+   ]
+  },
+  {
+   "name": "Mid-Training and Post-Training",
+   "problems": [
+    "build-assistant-only-sft-loss-mask",
+    "canonicalize-pairwise-preference-data",
+    "score-kl-regularized-policy-batch",
+    "dpo-closed-form-loss"
+   ]
+  },
+  {
+   "name": "Post-Training with RLVR",
+   "problems": [
+    "normalize-grpo-group-advantages",
+    "grpo-group-relative-advantage",
+    "compare-sequence-and-token-length-normalization"
+   ]
+  },
+  {
+   "name": "Alignment and Multimodality",
+   "problems": [
+    "vit-patchify",
+    "symmetric-clip-contrastive-loss",
+    "siglip-pairwise-loss",
+    "assign-multimodal-rope-coordinates"
+   ]
+  },
+  {
+   "name": "Guest Lecture with Dan Fu",
+   "problems": [
+    "simulate-continuous-decode-batching",
+    "find-reusable-prefixes-in-kv-trie",
+    "route-cache-aware-prefill-requests",
+    "measure-kernel-timeline-utilization"
+   ]
+  }
+ ]
+}

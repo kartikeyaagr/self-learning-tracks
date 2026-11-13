@@ -628,7 +628,7 @@ const now = () => new Date().toISOString();
 const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const CHECK = '<svg width="16" height="16" viewBox="0 0 20 20"><path d="M4.5 10.5l3.6 3.6 7.6-8.2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 const FLAME = '<svg width="14" height="16" viewBox="0 0 14 16" aria-hidden="true"><path d="M7 1c.5 2.6 4.5 4.4 4.5 8.5A4.5 4.5 0 0 1 2.5 9.5C2.5 7.6 3.6 6.4 4.4 5.6c.2 1.5.9 2.3 1.6 2.6C5.9 5.6 6.3 3 7 1z" fill="currentColor"/></svg>';
-const RT = {python: 'Python', numpy: 'NumPy', pandas: 'Pandas', sql: 'SQL', torch: 'PyTorch · Colab', jax: 'JAX · Colab', cuda: 'CUDA · Colab', triton: 'Triton · Colab'};
+const RT = {python: 'Python', numpy: 'NumPy', pandas: 'Pandas', sql: 'SQL', torch: 'PyTorch · Colab', jax: 'JAX · Colab', cuda: 'CUDA (Numba) · Colab', triton: 'Triton · Colab'};
 const TAGS = [...new Set(ALL.flatMap(l => l.tags))];
 
 // ---------- game layer (same formulas as the courses and the hub) ----------
@@ -906,6 +906,8 @@ async function problemPage(k){
     <aside class="ide">
       ${colab ? `<div class="card colab"><div class="lab">Runs in Colab</div><h3 style="margin:8px 0 0;font-size:20px;letter-spacing:-.02em">${RT[p.rt]}</h3>
           <p>This runtime can't run in a browser. The notebook has the statement, the starter code and the same tests. Run it in Colab, then mark the problem solved here.</p>
+          ${p.gpu ? '<p style="margin-top:-8px">Needs a GPU: in Colab choose <b>Runtime → Change runtime type → GPU</b>.</p>' : ''}
+          ${p.gpu_only ? '<p style="margin-top:-8px">The tests were generated from a CPU reference implementation of the same spec. The reference solution kernel itself only runs on a GPU, so it has not been executed by the site build.</p>' : ''}
           <div style="display:flex;gap:10px;flex-wrap:wrap"><a class="btn" href="${esc(p.colab)}" target="_blank" rel="noopener">Open in Colab ↗</a>
           ${d ? '' : `<button type="button" class="btn ghost" id="mark">All tests passed · mark solved</button>`}</div></div>
           <div class="card"><div class="bar2"><span class="lab">Starter code</span></div><pre class="code" style="margin:0;border-radius:0">${esc(p.starter)}</pre></div>`
@@ -914,7 +916,7 @@ async function problemPage(k){
           <button type="button" class="btn ghost" id="run" title="Run the examples (⌘↵)">Run</button>
           <button type="button" class="btn" id="submit" title="Run all tests (⌘⇧↵)">Submit</button></div>
           <textarea id="code" aria-label="Code editor">${esc(st.code[k] ?? p.starter)}</textarea></div>
-        <div class="card"><div class="bar2"><span class="lab">Results</span></div><div class="res" id="res"><span class="st">Run checks your code on the ${p.nex} example${p.nex===1?'':'s'}. Submit checks all ${p.tests.length} tests. Python starts the first time you run.</span></div></div>`}
+        <div class="card"><div class="bar2"><span class="lab">Results</span></div><div class="res" id="res"><span class="st">Run checks your code on the ${p.nex} example${p.nex===1?'':'s'}. Submit checks all ${p.ntests} tests. Python starts the first time you run.</span></div></div>`}
     </aside>
   </div>`;
   math($('#prose')); if (ex) math($('#expl')); math($('#help'));
@@ -961,7 +963,7 @@ async function go(p, l, all){
   if (busy || !ed) return; busy = true;
   const k = key(l.id), code = ed.getValue(); st.code[k] = code; lsSet();
   ['run', 'submit'].forEach(id => $('#' + id) && ($('#' + id).disabled = true));
-  const tests = all ? p.tests : p.tests.slice(0, p.nex);
+  const tests = all ? p.tj : p.tj_ex;   // JSON text: keeps 3.0 a float
   const r = await exec(p, code, tests);
   busy = false; ['run', 'submit'].forEach(id => $('#' + id) && ($('#' + id).disabled = false));
   if (cur.k !== k) return;

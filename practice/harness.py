@@ -28,7 +28,8 @@ def enc(x):
     if t == 'Tensor':  # torch, in Colab and at build time
         return enc(x.detach().cpu().numpy())
     if t == 'DataFrame':
-        return {'__df__': json.loads(x.to_json(orient='split', index=False, double_precision=15)),
+        # Cells go through enc() as Python values, so floats keep full precision (to_json caps at 15 digits).
+        return {'__df__': {'columns': [enc(c) for c in x.columns], 'data': [enc(list(r)) for r in x.itertuples(index=False, name=None)]},
                 'dtypes': [str(d) for d in x.dtypes]}
     if t == 'Series':
         return {'__sr__': enc(x.tolist()), 'name': x.name}
@@ -51,7 +52,7 @@ def dec(x):
     if '__df__' in x:
         import pandas as pd
         s = x['__df__']
-        df = pd.DataFrame(s['data'], columns=s['columns'])
+        df = pd.DataFrame([dec(r) for r in s['data']], columns=[dec(c) for c in s['columns']])
         for c, d in zip(df.columns, x['dtypes']):
             if d.startswith(('int', 'float', 'bool')):
                 df[c] = df[c].astype(d)
@@ -167,7 +168,7 @@ def grade(fn, tests, runtime, rtol=1e-6, atol=1e-8):
     for t in tests:
         args, exp = prep(dec(t['a']), runtime), dec(t['e'])
         try:
-            got = run_sql(fn, args[0]) if runtime == 'sql' else fn(*_copy(args))
+            got = run_sql(fn, args[0]) if runtime == 'sql' else plain(fn(*_copy(args)))
             ok, why = same(got, exp, rtol, atol)
         except Exception as e:  # learner code raised: report it like a failed test
             got, ok, why = None, False, f'{type(e).__name__}: {e}'
@@ -181,7 +182,26 @@ def prep(args, runtime):
     if runtime == 'torch':
         import torch
         return [torch.as_tensor(a) if np is not None and isinstance(a, np.ndarray) else a for a in args]
+    if runtime == 'triton':                                  # Colab only: kernels need CUDA tensors
+        import torch
+        return [torch.as_tensor(a).cuda() if np is not None and isinstance(a, np.ndarray) else a for a in args]
     return args
+
+
+def plain(x):
+    """Framework arrays (torch, jax) -> numpy, recursively, so results compare and encode the same way."""
+    t = type(x).__name__
+    if t == 'Tensor':
+        return x.detach().cpu().numpy()
+    if t in ('ArrayImpl', 'Array') and hasattr(x, '__array__'):
+        return np.asarray(x)
+    if isinstance(x, tuple):
+        return tuple(plain(v) for v in x)
+    if isinstance(x, list):
+        return [plain(v) for v in x]
+    if isinstance(x, dict):
+        return {k: plain(v) for k, v in x.items()}
+    return x
 
 
 def _copy(args):

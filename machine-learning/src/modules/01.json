@@ -1,0 +1,238 @@
+{
+ "n": "01",
+ "name": "How models learn",
+ "lessons": [
+  {
+   "id": "01.01",
+   "t": "The learning problem",
+   "n": [
+    "Supervised learning assumes examples $(x, y)$ are drawn from an unknown distribution $\\mathcal{D}$; the goal is a function $h$ that predicts $y$ well on *new* draws, not on the ones you have.",
+    "You pick a **hypothesis class** $\\mathcal{H}$ (lines, trees, networks) and a **loss** $\\ell(h(x), y)$; together they define what \"good\" means and what is even reachable.",
+    "**Empirical risk minimisation** picks $\\hat h = \\arg\\min_{h \\in \\mathcal{H}} \\frac1n \\sum_i \\ell(h(x_i), y_i)$, a stand-in for the true risk $R(h) = \\mathbb{E}_{\\mathcal{D}}[\\ell(h(x), y)]$ you cannot compute.",
+    "The loss you train on is often a smooth surrogate (log loss, hinge) for the one you care about (0-1 error), because the true one has no useful gradient.",
+    "Every later lesson changes one of three knobs: the class, the loss, or how the minimisation is constrained."
+   ],
+   "a": "## The setup\nSupervised learning has four ingredients. An **input** $x$, usually a vector of $d$ features ($x \\in \\mathbb{R}^d$). A **label** $y$: a real number for regression, one of $K$ classes for classification. An unknown **data distribution** $\\mathcal{D}$ over pairs $(x, y)$. And a **training set** of $n$ pairs drawn independently from it, $S = \\{(x_1, y_1), \\dots, (x_n, y_n)\\}$.\n\nThe job is to output a function $h: x \\mapsto \\hat y$ that does well on *future* draws from $\\mathcal{D}$. That one word, future, is what makes machine learning different from curve fitting. A lookup table that memorises $S$ fits the training set perfectly and is useless on the next example.\n\nTwo assumptions hide in this setup and are worth saying out loud:\n- **i.i.d. sampling**: training and future examples come from the same $\\mathcal{D}$, independently. Most real failures (drift, leakage, selection bias) are violations of this.\n- **Labels are noisy**: even the best possible predictor makes mistakes, because $y$ is not a deterministic function of $x$. The error of that best predictor is the *Bayes error*, a floor no model can beat.\n\n%%flow The learning loop: you choose the class and the loss; the data picks the function inside the class.\nSample S from D -(choose)-> Hypothesis class H -(choose)-> Loss -(minimise on S)-> *Learned h -(evaluate on new data)-> Test risk\n%%\n\n## Hypothesis classes and losses\nThe **hypothesis class** $\\mathcal{H}$ is the set of functions you are willing to consider. Linear models $h_w(x) = w^\\top x + b$ form a class with $d + 1$ parameters. Decision trees of depth 5 are another class. A ResNet-50 is a class with 25 million parameters. Picking the class is the single biggest modelling decision, because ERM can only return something inside it.\n\nThe **loss** $\\ell(\\hat y, y)$ scores one prediction. Common choices:\n\n| Task | Loss | Formula |\n| Regression | squared error | $(\\hat y - y)^2$ |\n| Regression, robust | absolute / Huber | $|\\hat y - y|$, quadratic near 0 |\n| Binary classification | 0-1 | $\\mathbb{1}[\\hat y \\ne y]$ |\n| Binary, probabilistic | log loss | $-y\\log p - (1-y)\\log(1-p)$ |\n| Binary, margin | hinge | $\\max(0, 1 - y\\,f(x))$ with $y \\in \\{-1, 1\\}$ |\n\nThe loss encodes what errors cost. Squared error punishes one prediction that is off by 10 as much as a hundred that are off by 1, so outliers dominate. Absolute error does not. If the business cost of a false negative is ten times a false positive, the loss should say so.\n\n## Empirical risk minimisation\nThe quantity you care about is the **true risk** $R(h) = \\mathbb{E}_{(x,y)\\sim\\mathcal{D}}[\\ell(h(x), y)]$. You cannot compute it, because $\\mathcal{D}$ is unknown. You can compute the **empirical risk** on the sample:\n\n$$\\hat R_S(h) = \\frac{1}{n}\\sum_{i=1}^{n} \\ell(h(x_i), y_i)$$\n\nERM picks the hypothesis with the smallest empirical risk, $\\hat h = \\arg\\min_{h\\in\\mathcal{H}} \\hat R_S(h)$. For a fixed $h$, $\\hat R_S(h)$ is an unbiased estimate of $R(h)$. The catch is that $\\hat h$ is *chosen using* $S$, so $\\hat R_S(\\hat h)$ is biased low: you picked the function that happens to look best on this sample. The gap $R(\\hat h) - \\hat R_S(\\hat h)$ is the **generalisation gap**, and the next lesson is about what controls it.\n\n```python\nimport numpy as np\n# ERM for a 1-D linear class under squared loss, by brute force over a grid of slopes\nx = np.array([1., 2., 3., 4.]); y = np.array([2.1, 3.9, 6.2, 7.8])\nslopes = np.linspace(0, 4, 401)\nrisk = [np.mean((w * x - y) ** 2) for w in slopes]\nw_hat = slopes[int(np.argmin(risk))]     # about 1.99\n```\n\nReal ERM is never a grid search; it is a closed form (least squares) or an iterative optimiser (gradient descent). But the object being minimised is the same average.\n\n## Surrogate losses\nThe loss you care about and the loss you optimise are often different. Minimising 0-1 error over linear classifiers is NP-hard in general, and its gradient is zero almost everywhere, so gradient methods get no signal. Instead you minimise a **convex surrogate** that upper-bounds it: log loss gives logistic regression, hinge gives the SVM, both covered in Module 02. You still *report* the metric you care about (accuracy, F1, cost), measured on held-out data.\n\n! Example: two classes, one sample, three hypotheses\n! Data: 100 emails, 20 spam. Class $\\mathcal{H}_0$ = constant predictors; $\\mathcal{H}_1$ = linear models on word counts; $\\mathcal{H}_2$ = a lookup table keyed on the exact email text.\n! ERM in $\\mathcal{H}_0$ predicts \"not spam\" for everything: empirical 0-1 risk 0.20. ERM in $\\mathcal{H}_1$ might reach 0.04. ERM in $\\mathcal{H}_2$ reaches 0.00.\n! On new mail, $\\mathcal{H}_2$ has never seen any of the texts and falls back to a default guess, so its true risk is about 0.20 again. Lowest training risk is not lowest true risk; the class decides how much the training number can be trusted.\n\n## Where this course goes next\nEvery method in this course is an instance of the same template: a class, a loss, and a way of minimising empirical risk, often with a constraint added. Linear regression is squared loss over linear functions. Logistic regression is log loss over the same class. An SVM is hinge loss plus a norm penalty. k-NN and naive Bayes reach the template from different directions (memorisation and probabilistic modelling), and Module 03 shows how. The maths behind least squares and likelihood is covered in depth in the ML Maths course (Applications and Inference modules); here the focus is on how the pieces are chosen and how they fail.\n\n> Takeaway: learning is choosing a class and a loss, then minimising the average loss on a sample as a proxy for the expected loss on new data. The proxy is biased toward the sample, and controlling that bias is the rest of the subject.",
+   "q": "A team trains a fraud model by minimising log loss, reports 0.3% training error, and ships. On live traffic the model flags almost nothing. Name two distinct places in the learning setup where this could have gone wrong, and how you would tell them apart.",
+   "s": "One is the **generalisation gap**: the class is flexible enough to memorise the training set, so low empirical risk says little about true risk. You would see it by evaluating on a held-out split drawn from the same period: if held-out error is far above 0.3%, the model overfit. The other is a violation of the **i.i.d. assumption**: live traffic comes from a different distribution (new fraud patterns, a different country mix, a feature computed differently in production). Then held-out error from the old data can look fine while live performance collapses; comparing feature distributions between training and live data (or evaluating on a later time slice) exposes it. A third suspect is the **loss/metric mismatch**: with 0.3% fraud, predicting \"not fraud\" always already gives 0.3% error, so the reported number may simply be the base rate.",
+   "r": [
+    [
+     "Understanding Machine Learning (Shalev-Shwartz and Ben-David)",
+     "https://www.cs.huji.ac.il/~shais/UnderstandingMachineLearning/",
+     "Free PDF. Chapters 2-3 define the learning model, ERM and PAC learning precisely."
+    ],
+    [
+     "Cornell CS4780: Machine learning setup",
+     "https://www.cs.cornell.edu/courses/cs4780/2018fa/lectures/lecturenote01_MLsetup.html",
+     "Short notes on the D, H, loss framing with good intuition for why memorisation fails."
+    ],
+    [
+     "Cornell CS4780: Empirical risk minimisation",
+     "https://www.cs.cornell.edu/courses/cs4780/2018fa/lectures/lecturenote10.html",
+     "Surrogate losses (hinge, log, exponential) side by side and how they bound 0-1 loss."
+    ]
+   ],
+   "k": [
+    "empirical risk",
+    "loss functions"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "linear-regression",
+    "loss-functions",
+    "log-loss-binary-cross-entropy",
+    "regression-metrics"
+   ]
+  },
+  {
+   "id": "01.02",
+   "t": "Generalisation and the bias-variance trade-off",
+   "n": [
+    "Test error splits into irreducible noise, **bias** (error of the average model) and **variance** (how much the model moves when the training set changes).",
+    "Capacity is the knob: too little and both training and test error are high (underfitting); too much and training error falls while test error climbs (overfitting).",
+    "More data reduces variance but not bias; regularisation and simpler classes trade a little bias for a lot less variance.",
+    "Modern over-parameterised models can show **double descent**: test error falls again past the point where the model interpolates the training set."
+   ],
+   "a": "## Two ways to be wrong\nTrain the same model class on many different training sets drawn from $\\mathcal{D}$ and you get many different fitted functions $\\hat f_S$. At a fixed input $x$, look at how those predictions spread. For squared loss with $y = f(x) + \\varepsilon$, $\\mathbb{E}[\\varepsilon] = 0$, $\\text{Var}(\\varepsilon) = \\sigma^2$, the expected test error at $x$ decomposes exactly:\n\n$$\\mathbb{E}_{S,\\varepsilon}\\big[(y - \\hat f_S(x))^2\\big] = \\underbrace{\\sigma^2}_{\\text{noise}} + \\underbrace{\\big(f(x) - \\bar f(x)\\big)^2}_{\\text{bias}^2} + \\underbrace{\\mathbb{E}_S\\big[(\\hat f_S(x) - \\bar f(x))^2\\big]}_{\\text{variance}}$$\n\nwhere $\\bar f(x) = \\mathbb{E}_S[\\hat f_S(x)]$ is the average prediction over training sets.\n- **Noise** is the Bayes error. Nothing you do to the model changes it; only better features can.\n- **Bias** is the error of the *average* model. A straight line fitted to a parabola is wrong on average, however many datasets you average over.\n- **Variance** is the sensitivity to the particular sample. A degree-15 polynomial on 20 points changes wildly when one point moves.\n\nThe decomposition is exact for squared loss. For 0-1 loss there are analogues but no clean additive split; the intuition carries over anyway.\n\n## Capacity and the U-shaped curve\nCapacity is how rich the hypothesis class is: polynomial degree, tree depth, $1/k$ in k-NN, number of parameters, inverse regularisation strength. As capacity grows, bias falls and variance rises. Training error falls monotonically. Test error typically falls, bottoms out, then rises.\n\n%%flow As capacity grows, the dominant source of test error switches from bias to variance.\nLow capacity -(high bias)-> Underfit -(add capacity)-> *Sweet spot -(add more)-> Overfit -(high variance)-> Memorised training set\n%%\n\nThe two failure modes look different on a train/validation plot, and that is how you diagnose them:\n\n| Symptom | Training error | Validation error | Likely cause | First fix |\n| Underfitting | high | high, close to training | bias | richer class, better features, less regularisation |\n| Overfitting | low | much higher than training | variance | more data, regularisation, simpler class |\n| Healthy | low | slightly above training | balanced | stop tuning, check on test |\n| Data problem | low | high and noisy across folds | split or leakage issue | check the split (next lesson) |\n\n## What moves bias and what moves variance\n- **More training data** shrinks variance roughly like $1/n$ for many estimators and leaves bias untouched. If a linear model underfits, a billion more rows will not help it.\n- **Regularisation** (lesson 01.04) deliberately adds bias to cut variance. Ridge regression's predictions are biased toward zero but far more stable.\n- **Averaging** reduces variance: bagging and random forests average many high-variance trees, which is why they work (Module 04 goes deeper).\n- **Better features** can cut bias without much extra variance; this is often the cheapest win.\n\n! Example: k-nearest neighbours as a capacity dial\n! With $k = 1$, each prediction copies the label of the closest training point. Training error is 0 (each point is its own neighbour); the decision boundary is jagged and changes when any single point moves: low bias, high variance.\n! With $k = n$, every prediction is the majority class of the whole training set: a constant. Variance is near 0 (one more point barely changes the majority), bias is maximal.\n! On a typical tabular problem with $n = 1000$, validation error might be 18% at $k = 1$, 11% at $k = 15$ and 40% at $k = 1000$. You pick $k$ by validation, not by training error, which is always best at $k = 1$.\n\n## Beyond the U: double descent\nThe classical U-curve assumes capacity stays below the number of training points. Belkin et al. (2019) showed that if you keep going, test error can peak near the **interpolation threshold** (just enough parameters to fit the training data exactly) and then *fall again* as the model becomes heavily over-parameterised. Among the many functions that interpolate the data, gradient descent tends to find smooth, small-norm ones, which acts as an implicit regulariser. Zhang et al. (2017) made the puzzle vivid: standard image networks can perfectly fit randomly shuffled labels, so parameter count alone cannot explain why they generalise on real labels.\n\nFor the classical models in this course (linear models, trees, k-NN, kernels with explicit penalties), the U-shaped picture is the right working model. Keep double descent in mind when you reach the Deep Learning course, where it matters most.\n\n```python\n# Diagnose with a capacity sweep: fit at several capacities, compare train vs validation\nfor deg in [1, 3, 9, 15]:\n    w = np.polyfit(x_tr, y_tr, deg)\n    tr, va = mse(np.polyval(w, x_tr), y_tr), mse(np.polyval(w, x_va), y_va)\n    print(deg, round(tr, 3), round(va, 3))   # training falls every time; validation turns up\n```\n\n> Takeaway: test error is noise plus bias squared plus variance. Diagnose which one dominates from the gap between training and validation error, then add capacity for bias or add data and constraints for variance.",
+   "q": "A gradient-boosted model has 2% training error and 2.5% validation error, but the product needs 1%. A colleague proposes collecting ten times more data. Using the bias-variance view, argue whether this is likely to help and what you would try instead.",
+   "s": "Training and validation error are close (2% vs 2.5%), so variance is small: the model is not overfitting much. The dominant problem is **bias** (or irreducible noise): even on data it has seen, the model reaches only 2%. More data mainly reduces variance, so ten times more rows would likely shave a little off the 0.5% gap and leave the 2% floor. Better options attack bias: add capacity (deeper trees, more rounds, less regularisation), and above all add informative features, because if the 2% is close to the Bayes error for the current features no model can beat it. A useful check is human or oracle error on a sample: if experts also miss about 2% with the same inputs, only new information (features or labels of better quality) will help.",
+   "r": [
+    [
+     "Cornell CS4780: Bias-variance decomposition",
+     "https://www.cs.cornell.edu/courses/cs4780/2018fa/lectures/lecturenote12.html",
+     "Clean derivation of the three-term decomposition and how to read train/test curves."
+    ],
+    [
+     "Reconciling modern machine learning practice and the bias-variance trade-off (Belkin et al.)",
+     "https://arxiv.org/abs/1812.11118",
+     "The double-descent paper; read the introduction and Figure 1."
+    ],
+    [
+     "Understanding deep learning requires rethinking generalization (Zhang et al.)",
+     "https://arxiv.org/abs/1611.03530",
+     "Networks fitting random labels; why capacity counts alone fail to explain generalisation."
+    ],
+    [
+     "scikit-learn: Underfitting vs overfitting",
+     "https://scikit-learn.org/stable/auto_examples/model_selection/plot_underfitting_overfitting.html",
+     "A runnable polynomial-degree sweep with cross-validated error."
+    ]
+   ],
+   "k": [
+    "bias-variance",
+    "overfitting"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "knn-classifier",
+    "k-fold-cross-validation",
+    "bagging-classifier",
+    "decision-tree-regressor"
+   ]
+  },
+  {
+   "id": "01.03",
+   "t": "Train, validation and test splits",
+   "n": [
+    "Use three roles: **train** to fit parameters, **validation** to choose hyperparameters and models, **test** touched once to report an unbiased number.",
+    "k-fold cross-validation reuses every point for validation once; it gives a mean and a spread, at k times the cost.",
+    "**Leakage** is any path by which information about the evaluation data reaches training: preprocessing fitted on all rows, duplicates across splits, features from the future.",
+    "The split must mimic deployment: split by time if you predict the future, by group (user, patient, site) if you predict for unseen groups."
+   ],
+   "a": "## Three roles, three splits\nThe previous lesson argued that training error is optimistic. The fix is to measure on data the model never fitted. But every *decision* you make while looking at a number is also a form of fitting. So you need three roles:\n- **Training set**: the optimiser sees it and sets the parameters.\n- **Validation set**: you look at it to choose hyperparameters, features, model families and when to stop. Because you select on it, it also becomes optimistic, just more slowly.\n- **Test set**: looked at once, at the end, to report a number you will stand behind. If you tune after seeing it, it has become a second validation set.\n\nA common default is 70/15/15 or 80/10/10. With millions of rows, a 1% test set (10,000 examples) is plenty; what matters is the *absolute* number of evaluation examples, because the standard error of an accuracy estimate is about $\\sqrt{p(1-p)/m}$. At $m = 1000$ and $p = 0.9$, that is about ±1 percentage point, so a 0.5-point \"improvement\" is noise.\n\n%%flow Each split has one job. Information flows only left to right; the test set feeds nothing back.\nTraining set -(fit parameters)-> Model -(score)-> Validation set -(pick hyperparameters)-> *Final model -(score once)-> Test set\n%%\n\n## Cross-validation\nWhen data is scarce, a single validation split wastes rows and gives a noisy estimate. **k-fold cross-validation** partitions the training data into $k$ folds, trains $k$ times on $k-1$ folds and validates on the one held out, then averages. Every row is validated exactly once. With $k = 5$ you get five scores: report the mean and the standard deviation; if two configurations differ by less than about one standard deviation, treat them as tied.\n\nVariants worth knowing:\n- **Stratified k-fold** keeps class proportions equal in every fold, essential when a class is rare.\n- **Group k-fold** keeps all rows of a group (user, patient, hospital) in the same fold.\n- **Time-series split** (forward chaining) trains on the past and validates on the next block, growing the window each time.\n- **Nested CV**: an inner loop picks hyperparameters, an outer loop estimates the error of the whole procedure. Needed when you want an honest number without a separate test set.\n\n## Leakage: the silent failure\nLeakage is when the evaluation data influences training through a side door. The scores look great and production does not. Kapoor and Narayanan (2022) surveyed leakage across 17 scientific fields and found it affected hundreds of published papers. The usual suspects:\n1. **Preprocessing fitted on all data.** Standardising, imputing, selecting features or fitting PCA before splitting lets test statistics shape the training inputs. Fit every transform on the training fold only, then apply it.\n2. **Duplicates and near-duplicates** across splits: the same image resized, the same customer twice, the same sentence in two documents.\n3. **Group leakage**: several rows per patient, split at random, so the model learns to recognise patients rather than disease.\n4. **Temporal leakage**: features computed with information from after the prediction time (a \"total purchases\" column that includes the purchase being predicted), or a random split on data where the future resembles the recent past.\n5. **Target proxies**: a feature that is a consequence of the label, like \"refund issued\" when predicting fraud.\n\n```python\nfrom sklearn.pipeline import make_pipeline\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.model_selection import GroupKFold, cross_val_score\n# The scaler is refit inside each fold, and no patient appears on both sides.\npipe = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))\nscores = cross_val_score(pipe, X, y, groups=patient_id, cv=GroupKFold(n_splits=5))\n```\n\n## Match the split to deployment\nThe question to ask is: *at prediction time, what will be new?* Then make the validation data new in exactly that way.\n\n| Deployment | What is new | Split |\n| Same users, new random events | individual rows | random or stratified |\n| New users or patients | the group | grouped by id |\n| Predicting next week | time | train on past, validate on a later block |\n| New site or hospital | the environment | leave-one-site-out |\n| Stable assignment across retrains | nothing should move | hash the id into buckets |\n\nA **hash-based split** (bucket = hash(id) mod 100) gives each id the same split forever, even as new data arrives. That stops rows drifting from test into train between retrains, which random re-splitting would do.\n\n! Example: a churn model that looked 12 points too good\n! Data: 2 years of monthly snapshots per customer; label = churns next month. A random 80/20 split gave AUC 0.91. Problem 1: the same customer appears in both splits, with nearly identical features month to month. Problem 2: a feature \"support tickets in the last 90 days\" was computed at extraction time, so it included tickets filed after the snapshot.\n! Fix: cut by time (train on year 1, validate on the first quarter of year 2), recompute features as of each snapshot date, and keep each customer on one side. AUC fell to 0.79, which matched what the model later did in production.\n\n> Takeaway: give train, validation and test separate jobs, fit every transform inside the training fold, and design the split so that what is new at evaluation is exactly what will be new in deployment.",
+   "q": "You build a model that predicts machine failure from sensor readings sampled every minute on 40 machines, and random 5-fold CV gives 97% accuracy. Explain why that number is suspect and design a split that answers the real question \"will this work on next month's data from the same fleet\" and, separately, \"will it work on a new machine\".",
+   "s": "Minute-level readings are strongly autocorrelated, so a random split puts almost identical neighbouring minutes in train and validation; the model can interpolate between them instead of learning failure signals. Both machine identity and time leak. For **next month on the same fleet**, split by time: train on months 1..t, validate on month t+1, and roll forward (time-series CV), with a gap between the windows if features use lookback windows so no window spans the cut. For **a new machine**, group by machine id: leave-one-machine-out or GroupKFold over the 40 machines, so each validation machine is unseen; ideally also keep the time ordering inside. Expect both numbers to be well below 97%; the gap between them tells you how much the model relies on machine-specific behaviour. Fit any scaling or feature selection inside each training fold.",
+   "r": [
+    [
+     "scikit-learn: Cross-validation",
+     "https://scikit-learn.org/stable/modules/cross_validation.html",
+     "k-fold, stratified, group and time-series iterators, and why the test set stays separate."
+    ],
+    [
+     "scikit-learn: Common pitfalls and recommended practices",
+     "https://scikit-learn.org/stable/common_pitfalls.html",
+     "Concrete preprocessing-leakage examples and the Pipeline fix."
+    ],
+    [
+     "Leakage and the reproducibility crisis in ML-based science (Kapoor and Narayanan)",
+     "https://arxiv.org/abs/2207.07048",
+     "A taxonomy of eight leakage types with real case studies."
+    ],
+    [
+     "scikit-learn: TimeSeriesSplit",
+     "https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html",
+     "Forward-chaining splits, including the gap parameter."
+    ]
+   ],
+   "k": [
+    "cross-validation",
+    "data leakage"
+   ],
+   "x": [
+    "scikit-learn"
+   ],
+   "p": [
+    "hashed-dataset-split",
+    "k-fold-cross-validation",
+    "normalize-columns",
+    "point-in-time-feature-join"
+   ]
+  },
+  {
+   "id": "01.04",
+   "t": "Regularisation",
+   "n": [
+    "Regularisation adds a preference for simple solutions: minimise $\\hat R_S(w) + \\lambda\\,\\Omega(w)$, trading a little bias for lower variance.",
+    "**L2** ($\\|w\\|_2^2$) shrinks all weights smoothly; **L1** ($\\|w\\|_1$) drives many weights exactly to zero.",
+    "A penalty is equivalent to a hard constraint $\\Omega(w) \\le t$ and to a prior in MAP estimation: Gaussian for L2, Laplace for L1.",
+    "**Early stopping** limits how far gradient descent travels from its start, and for quadratic losses behaves much like L2."
+   ],
+   "a": "## The idea\nLesson 01.02 showed that a flexible class has high variance: it fits noise. Regularisation keeps the flexible class but adds a preference for \"simple\" members of it. The regularised objective is\n\n$$\\min_w \\; \\hat R_S(w) + \\lambda\\,\\Omega(w)$$\n\nwhere $\\Omega$ measures complexity and $\\lambda \\ge 0$ sets the exchange rate. $\\lambda = 0$ is plain ERM; $\\lambda \\to \\infty$ forces $\\Omega(w) \\to 0$, usually $w = 0$, a constant model. Somewhere between is a model with a bit more bias and much less variance, and validation (lesson 01.03) tells you where.\n\nWhy does a small norm mean simple? For a linear model $w^\\top x$, a small $\\|w\\|$ means the output changes slowly as the input changes: the function is smooth and cannot chase individual noisy points. Large weights that cancel each other out are the typical signature of overfitting, especially with correlated features.\n\n## L2 and L1\nThe two standard penalties behave differently:\n\n| Property | L2 (ridge, weight decay) | L1 (lasso) |\n| Penalty | $\\lambda\\sum_j w_j^2$ | $\\lambda\\sum_j |w_j|$ |\n| Effect on weights | shrinks all toward 0, rarely exactly 0 | sets many exactly to 0 |\n| Gradient of penalty | $2\\lambda w_j$, proportional to size | $\\lambda\\,\\text{sign}(w_j)$, constant push |\n| Correlated features | spreads weight across them | tends to pick one arbitrarily |\n| Closed form (least squares) | yes | no; coordinate descent or proximal methods |\n| Prior (MAP view) | Gaussian | Laplace |\n\nThe gradient row explains the sparsity. Under L2 the pull toward zero weakens as a weight gets small, so weights approach zero but stop short. Under L1 the pull is constant, so a weight whose data gradient is weaker than $\\lambda$ gets pushed all the way to zero and stays there. Module 02 (lesson 02.02) works through both for linear regression, including how to pick $\\lambda$.\n\n%%layers Three views of the same regulariser. Each is useful for a different question.\n*Penalty | minimise loss + lambda times norm; what you implement\nConstraint | minimise loss subject to norm at most t; explains the geometry (corners of the L1 ball give zeros)\nPrior | MAP estimate with a Gaussian or Laplace prior on weights; explains what lambda means\n%%\n\n## Three equivalent views\n- **Constraint**: minimising $\\hat R + \\lambda\\|w\\|^2$ gives the same solution as minimising $\\hat R$ subject to $\\|w\\|^2 \\le t$ for some $t$ that depends on $\\lambda$ (a Lagrange multiplier argument). The L1 ball is a diamond with corners on the axes; the loss contours tend to touch it at a corner, where some coordinates are zero.\n- **Bayesian**: with Gaussian noise and prior $w \\sim \\mathcal{N}(0, \\tau^2 I)$, the MAP estimate is ridge with $\\lambda = \\sigma^2/\\tau^2$. A tight prior (small $\\tau$) means strong regularisation. A Laplace prior gives the lasso.\n- **Stability**: regularised solutions change less when one training point changes, which is exactly lower variance.\n\n## Early stopping and other implicit regularisers\nGradient descent started at $w = 0$ moves outward step by step. Stopping after $T$ steps keeps $w$ within a region around the origin whose size grows with $T\\eta$ (steps times learning rate). For a quadratic loss this is close to L2 regularisation with $\\lambda \\approx 1/(T\\eta)$; Goodfellow et al. (Deep Learning, chapter 7) give the derivation. In practice you monitor validation loss and keep the checkpoint with the best value, stopping once it has not improved for a set number of evaluations (the *patience*).\n\nOther regularisers you will meet later: data augmentation, dropout, label smoothing, ensembling, and simply using a smaller class. They all reduce variance at some cost in bias.\n\n```python\nimport numpy as np\ndef ridge(X, y, lam):\n    # Closed form; standardise X first and leave the intercept unpenalised (centre y).\n    d = X.shape[1]\n    return np.linalg.solve(X.T @ X + lam * np.eye(d), X.T @ y)\n```\n\n## Practical rules\n1. **Standardise features** before L1 or L2. The penalty treats all weights equally, so a feature measured in millimetres gets penalised far more than the same feature in metres.\n2. **Don't penalise the intercept.** Shifting all targets by a constant should shift the prediction, not fight the penalty.\n3. **Search $\\lambda$ on a log grid**, e.g. $10^{-4}$ to $10^{2}$, because its effect is multiplicative.\n4. **Weight decay in adaptive optimisers** is not identical to an L2 term in the loss; AdamW decouples them for that reason (covered in the Deep Learning course).\n\n! Example: twelve noisy points, a degree-9 polynomial\n! Unregularised least squares fits all 12 points with coefficients in the thousands, alternating sign; validation MSE is 4.8.\n! With ridge at $\\lambda = 10^{-3}$ on standardised polynomial features, coefficients drop below 5 in magnitude, the curve is smooth, and validation MSE is 0.31. At $\\lambda = 10$ the curve is almost flat and validation MSE rises to 1.2: too much bias. The best $\\lambda$ sits in the middle of the grid, where it should.\n\n> Takeaway: regularisation buys lower variance with a little bias by penalising weight size. L2 shrinks, L1 selects, early stopping limits how far the optimiser travels, and lambda is always chosen on validation data.",
+   "q": "You fit L1-regularised logistic regression on 500 features, two of which are near-duplicates (correlation 0.99) and both truly predictive. What will the lasso likely do with them, why, and how does switching to L2 or elastic net change the outcome?",
+   "s": "The lasso will usually keep one of the pair and set the other to exactly zero, and which one survives can flip between bootstrap samples. Because the two features carry almost the same information, the loss is nearly unchanged if weight moves from one to the other, while the L1 penalty $|w_1| + |w_2|$ is the same for any split with the same total, so the corner solution (one weight zero) is as cheap as any split and the constant L1 push removes the weaker one. L2 penalises $w_1^2 + w_2^2$, which for a fixed total is smallest when the weight is shared equally, so ridge gives both about half the weight and is stable. Elastic net mixes the two: the L2 part encourages grouping (both kept with similar weights) while the L1 part still zeros out the many irrelevant features.",
+   "r": [
+    [
+     "Deep Learning (Goodfellow, Bengio, Courville), chapter 7: Regularization",
+     "https://www.deeplearningbook.org/contents/regularization.html",
+     "Sections 7.1 and 7.8: L2/L1 analysis and the early-stopping-as-L2 derivation."
+    ],
+    [
+     "Dive into Deep Learning: Weight decay",
+     "https://d2l.ai/chapter_linear-regression/weight-decay.html",
+     "A short runnable demonstration of L2 on a high-dimensional regression."
+    ],
+    [
+     "The Elements of Statistical Learning (Hastie, Tibshirani, Friedman)",
+     "https://hastie.su.domains/ElemStatLearn/",
+     "Free PDF. Section 3.4 on shrinkage methods and the constraint geometry."
+    ]
+   ],
+   "k": [
+    "regularisation",
+    "early stopping"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "ridge-regression",
+    "lasso-regression",
+    "early-stopping",
+    "lagrange-multipliers-regularization-as-constrain",
+    "adamw-decoupled-weight-decay"
+   ]
+  },
+  {
+   "id": "01.05",
+   "t": "Baselines and sanity checks",
+   "n": [
+    "Before any real model, compute a **trivial baseline**: majority class for classification, mean or median for regression, last value for time series.",
+    "A **linear baseline** (logistic or ridge on standardised features) sets the bar a complex model must clear to justify its cost.",
+    "**Learning curves** (score vs training-set size) tell you whether more data will help, separating bias from variance problems.",
+    "Cheap sanity checks catch pipeline bugs: overfit a tiny subset, shuffle labels and expect chance, and check that the loss at initialisation matches theory."
+   ],
+   "a": "## Why baselines first\nA model with 95% accuracy sounds good until you learn that 95% of the labels are the same class. Without a baseline, a number has no meaning. Baselines do three jobs:\n- They tell you whether the problem is **learnable at all** from these features.\n- They catch **pipeline bugs**: if your fancy model barely beats the majority class, suspect the data before the model.\n- They set a **cost bar**: a gradient-boosted model that beats logistic regression by 0.2 points may not be worth its training and serving cost.\n\n## The ladder of baselines\nClimb it in order, and record each number in the same table with the same split and metric.\n\n%%flow Each rung must beat the previous one by a margin larger than its noise before you climb further.\nTrivial predictor -(beats?)-> Simple heuristic -(beats?)-> Linear model -(beats?)-> *Complex model\n%%\n\n| Task | Trivial baseline | Score it gives |\n| Binary classification | predict the majority class | accuracy = majority rate; AUC = 0.5 |\n| Classification, probabilistic | predict class frequencies | log loss = entropy of the label distribution |\n| Regression (MSE) | predict the training mean | $R^2 = 0$ on that data |\n| Regression (MAE) | predict the training median | MAE of the median |\n| Time series | repeat the last value or the same day last week | \"naive\" or \"seasonal naive\" error |\n| Ranking / recommendation | most popular items | popularity hit rate |\n\nA **simple heuristic** is the rule a domain expert would write in five minutes: \"flag transactions over 5,000 dollars from new accounts\". Then the **linear baseline**: logistic regression or ridge on standardised features with basic encoding. Linear models are fast, stable, hard to overfit at moderate dimensionality, and their coefficients are a free bug detector (a huge weight on \"row id\" means leakage).\n\n```python\nfrom sklearn.dummy import DummyClassifier\nfrom sklearn.linear_model import LogisticRegression\nfor name, m in [(\"majority\", DummyClassifier(strategy=\"most_frequent\")),\n                (\"prior\", DummyClassifier(strategy=\"prior\")),\n                (\"logistic\", LogisticRegression(max_iter=1000))]:\n    m.fit(X_tr, y_tr); print(name, m.score(X_va, y_va))\n```\n\n## Learning curves\nA learning curve plots training and validation score against the number of training examples, for a fixed model. Train on 10%, 20%, ... 100% of the training set and evaluate each on the same validation set. The shape answers \"will more data help?\" before you pay for it:\n\n| Shape | Reading | Action |\n| Both curves high error and close together, flat | high bias; more data won't help | richer model or better features |\n| Large gap, validation still improving at full size | high variance; more data will help | collect data, or regularise |\n| Large gap, validation flat | variance that data alone won't fix | regularise, simplify, check for leakage or label noise |\n| Validation better than training | usually a split or augmentation artefact | check the split |\n\nA related plot, the **validation curve**, sweeps a hyperparameter instead of data size; that is the capacity sweep from lesson 01.02.\n\n## Sanity checks that catch bugs\nThese take minutes and catch many of the bugs that waste days:\n1. **Loss at initialisation.** A $K$-class softmax with small random weights should start at log loss of about $\\ln K$ (2.30 for 10 classes). A much larger value means badly scaled logits; a much smaller one means leakage.\n2. **Overfit a tiny subset.** Take 20 examples and train to near-zero training loss. If a model with enough capacity cannot memorise 20 points, the training loop, labels or gradients are broken.\n3. **Shuffle the labels.** Retrain with labels permuted: validation score should fall to the trivial baseline. If it does not, information is leaking through the features or the split.\n4. **Check predictions by eye.** Look at the 20 most confident errors. Mislabelled examples, encoding bugs and leaked IDs show up immediately.\n5. **Compare to the baseline on slices.** A model can beat the overall baseline while losing to it on an important segment.\n\nKarpathy's \"A Recipe for Training Neural Networks\" lists these as the first steps for deep models, but they apply unchanged to any model in this course.\n\n! Example: a medical triage classifier\n! Data: 8,000 visits, 6% urgent. The majority baseline scores 94% accuracy and 0 recall on urgent cases. A logistic regression on 30 features reaches AUC 0.81. A gradient-boosted model reaches AUC 0.83 on the same 5 folds, standard deviation 0.012 across folds.\n! The learning curve for the boosted model still rises at 8,000 rows (validation AUC 0.79 at 4,000, 0.83 at 8,000) with a large train/validation gap: variance-limited. The team decides that labelling 8,000 more visits is a better investment than more tuning, and keeps logistic regression in production until the gap over it exceeds two standard deviations.\n\n> Takeaway: always report a model next to a trivial and a linear baseline on the same split, read learning curves before buying data, and run the cheap sanity checks before trusting any number.",
+   "q": "Your new recommender beats a random-item baseline by 40% on hit rate@10, and your manager is pleased. What baseline is missing, why could it change the conclusion, and what would a learning curve add to the decision about whether to keep investing?",
+   "s": "The missing baseline is **most-popular items** (optionally per segment or recent window). Random items are a straw man: popularity alone usually captures a large share of hits, so a model that beats random by 40% might be no better than, or even worse than, simply recommending the top sellers. Compare against popularity on the same split (ideally time-ordered, leave-last-out per user). A learning curve (hit rate vs number of training interactions) then shows the trend: if validation hit rate is still climbing at full data and the train/validation gap is large, more interaction data should help and investment is justified; if both curves have flattened close together, the model is bias-limited and you need new signals or a different model, not more of the same data.",
+   "r": [
+    [
+     "A Recipe for Training Neural Networks (Karpathy)",
+     "https://karpathy.github.io/2019/04/25/recipe/",
+     "The \"set up the end-to-end skeleton and get dumb baselines\" section: init-loss checks, overfitting one batch, input-independent baselines."
+    ],
+    [
+     "scikit-learn: Validation curves and learning curves",
+     "https://scikit-learn.org/stable/modules/learning_curve.html",
+     "How to compute and read both plots."
+    ],
+    [
+     "scikit-learn: DummyClassifier",
+     "https://scikit-learn.org/stable/modules/generated/sklearn.dummy.DummyClassifier.html",
+     "The trivial strategies (most_frequent, prior, stratified, uniform) as ready-made baselines."
+    ],
+    [
+     "Rules of Machine Learning (Google)",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "Rules 1-4 and 13-17: launch a simple model and heuristic first, then iterate."
+    ]
+   ],
+   "k": [
+    "baselines",
+    "learning curves"
+   ],
+   "x": [
+    "scikit-learn"
+   ],
+   "p": [
+    "pos-tagging",
+    "popularity-baseline-leave-last-out",
+    "mini-batch-training-loop",
+    "regression-metrics"
+   ]
+  }
+ ]
+}

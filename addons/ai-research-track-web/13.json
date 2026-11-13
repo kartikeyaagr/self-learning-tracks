@@ -1,0 +1,358 @@
+{
+ "n": "13",
+ "name": "Training LLMs at Scale",
+ "lessons": [
+  {
+   "id": "13.01",
+   "t": "Compute and memory accounting",
+   "n": [
+    "A dense decoder has about $12Ld^2$ parameters in its blocks ($4d^2$ for attention projections, $8d^2$ for an MLP with a $4d$ hidden layer) plus $Vd$ per embedding matrix. Count before you design anything else.",
+    "Training costs about $6N$ FLOPs per token: $2N$ for the forward pass and $4N$ for the backward pass. Attention's score and value products add about $12LTd$ per token, which relative to $6N$ is roughly $T/(6d)$.",
+    "Mixed-precision training with Adam needs about 16 bytes per parameter before activations: bf16 weights and gradients (2 + 2) plus fp32 master weights and two fp32 moments (4 + 4 + 4).",
+    "Activation memory grows with micro-batch size, sequence length, hidden size and depth. Without a fused attention kernel the stored score matrices add a term quadratic in sequence length, and at long context activations run out before weights do.",
+    "Convert FLOPs to time with achieved throughput, not peak: GPU-seconds = total FLOPs / (peak FLOP/s x MFU). Model FLOPs utilisation of 35 to 50 percent is typical for well-tuned dense training."
+   ],
+   "a": "## Why count before you launch\nA large training run is a budget negotiation between three quantities: FLOPs (how long it takes), memory (whether it fits) and bandwidth (whether the GPUs wait on each other). The first two can be estimated to within ten or twenty percent with arithmetic you can do on paper, and that estimate decides the model shape, the number of GPUs, which parallelism and sharding you need, and whether the schedule is days or months. Every later lesson in this module starts from these numbers.\n\n## Counting parameters\nFor a GPT-style block with hidden size $d$, the attention projections $W_Q, W_K, W_V, W_O$ are each $d \\times d$, and the MLP has an up-projection $d \\times 4d$ and a down-projection $4d \\times d$. Norm weights and biases are $O(d)$ and negligible.\n\n| component | parameters per layer | note\n| attention Q, K, V, O | $4d^2$ | grouped-query attention shrinks K and V\n| MLP (4d hidden) | $8d^2$ | SwiGLU with hidden $8d/3$ and three matrices is also $8d^2$\n| norms, biases | $O(d)$ | ignore for budgeting\n| embeddings | $Vd$ | doubled if input and output are untied\n\nSo $N \\approx 12Ld^2 + 2Vd$ for an untied model. With $L = 32$, $d = 4096$ and $V = 32{,}000$ the blocks hold 6.44B parameters and the two embedding matrices 0.26B: a 6.7B model. Mixture-of-experts models need two counts, total parameters (memory) and active parameters per token (compute).\n\n## FLOPs per token: the 6N rule\nA matmul of a $1 \\times k$ activation with a $k \\times n$ weight costs $2kn$ FLOPs (a multiply and an add per weight). Summed over all weights, one token's forward pass costs about $2N$. The backward pass computes two products per weight matrix, the gradient with respect to the input and the gradient with respect to the weight, so it costs about $4N$. Training therefore costs\n\n$$C \\approx 6ND$$\n\nfor $D$ training tokens. This ignores attention's own products. Per layer and per token, $QK^\\top$ and the multiplication by $V$ each cost about $2Td$ FLOPs for context length $T$, so $4LTd$ forward and $12LTd$ for training. Relative to $6N \\approx 72Ld^2$ that is $T/(6d)$: about 17 percent at $T = d = 4096$, and growing linearly with context. Causal masking lets fused kernels skip roughly half of that work. Reports differ on whether they count the attention term at all, so check before comparing utilisation figures.\n\n## Memory: the 16-byte rule\nThe persistent state of mixed-precision training with Adam, per parameter:\n\n%%layers Bytes per parameter in mixed-precision Adam training (before activations).\nbf16 weights | 2 bytes, used in forward and backward\nbf16 gradients | 2 bytes, produced by backward\n*fp32 master weights | 4 bytes, what the optimiser actually updates\nfp32 Adam first moment | 4 bytes\nfp32 Adam second moment | 4 bytes\n%%\n\nThat is 16 bytes, so a 7B model carries about 107 GB of state: it does not fit on one 80 GB GPU no matter how small the batch is. This is the motivation for the sharding in the next lesson. Some frameworks keep gradients in fp32 (18 to 20 bytes); 8-bit optimisers or bf16 moments push it lower at some risk to stability.\n\n## Activations\nBackward needs the intermediate tensors from forward. For a GPT-style layer with 16-bit activations, sequence length $s$, micro-batch $b$, hidden $h$ and $a$ heads, Korthikanti et al. estimate roughly\n\n$$s\\,b\\,h\\left(34 + \\frac{5as}{h}\\right) \\text{ bytes per layer.}$$\n\nThe $34sbh$ part is linear in sequence length (layer inputs, projections, MLP intermediates, dropout masks). The $5as^2b$ part is the attention scores, softmax output and dropout mask, quadratic in $s$. FlashAttention never materialises those, so with it the per-layer figure drops to about $34sbh$. The constants assume the original GPT block; SwiGLU and no dropout shift them, so treat the formula as an approximation that tells you which term dominates.\n\nDo not forget the logits: $b \\times s \\times V$ values, often upcast to fp32 for the loss. At $s = 4096$ and $V = 128{,}000$ that is about 2.1 GB per sequence, which is why fused or chunked cross-entropy kernels exist.\n\n## From FLOPs to wall-clock time\nModel FLOPs utilisation (MFU) is the FLOPs the model mathematically requires per second divided by the hardware's peak. Recomputed activations do not count toward it (that is hardware FLOPs utilisation, HFU). Wall-clock time is\n\n$$t = \\frac{C}{n_{\\text{GPU}} \\times \\text{peak} \\times \\text{MFU}}.$$\n\nAn H100 SXM's dense bf16 peak is about 989 TFLOP/s. Well-tuned dense training reaches roughly 35 to 50 percent MFU; small models, long sequences or heavy communication do worse.\n\n%%flow From model shape to a training schedule.\nShape (L, d, V) -> Parameters N -(x 6 x D)-> *Training FLOPs C -(peak x MFU x GPUs)-> Wall-clock days\nParameters N -(x 16 bytes)-> State memory -> Sharding plan\n%%\n\n! Example: a 6.7B model on one trillion tokens\n! Shape: $L = 32$, $d = 4096$, $V = 32{,}000$, untied embeddings, context 4096. Parameters: $12 \\times 32 \\times 4096^2 = 6.44$B in blocks plus $2 \\times 32{,}000 \\times 4096 = 0.26$B in embeddings, so $N = 6.70$B.\n! Compute: $6 \\times 6.70\\text{B} \\times 10^{12} = 4.02 \\times 10^{22}$ FLOPs. Attention adds $12 \\times 32 \\times 4096 \\times 4096 = 6.4$ GFLOPs per token against $6N = 40.2$ GFLOPs, 16 percent more.\n! Time at 40 percent MFU on H100s: $4.02 \\times 10^{22} / (989 \\times 10^{12} \\times 0.4) = 1.02 \\times 10^8$ GPU-seconds, about 28,200 GPU-hours, or 2.3 days on 512 GPUs (ignoring the attention term).\n! Memory: $16 \\times 6.70\\text{B} = 107$ GB of state. Activations at micro-batch 1 without a fused attention kernel: $4096 \\times 4096 \\times (34 + 160) = 3.25$ GB per layer, 104 GB across 32 layers. With FlashAttention: 0.57 GB per layer, 18 GB total. Both state and activations need to be split across GPUs or reduced.\n\n> Takeaway: $N \\approx 12Ld^2$, $C \\approx 6ND$, 16 bytes per parameter for Adam state, and an activation term that scales with $s \\cdot b \\cdot h \\cdot L$; four lines of arithmetic tell you whether a plan fits and how long it takes.",
+   "q": "You are asked to cost a run: a dense decoder with 48 layers, hidden size 6144, vocabulary 50,000 (untied embeddings), context 2048, trained on 600B tokens on 256 H100s (989 TFLOP/s bf16 peak) at 45 percent MFU. Estimate the parameter count, the training FLOPs with and without the attention term, the wall-clock time, and the model-state memory. Can any single GPU hold the full optimiser state?",
+   "s": "Parameters: blocks $12 \\times 48 \\times 6144^2 = 21.7$B, embeddings $2 \\times 50{,}000 \\times 6144 = 0.61$B, so $N \\approx 22.4$B. Training FLOPs: $6 \\times 22.4\\text{B} \\times 600\\text{B} = 8.05 \\times 10^{22}$. The attention term is $12 \\times 48 \\times 2048 \\times 6144 \\times 600\\text{B} = 4.35 \\times 10^{21}$, about 5.4 percent extra, consistent with $T/(6d) = 2048/36{,}864 = 5.6$ percent; short contexts make attention cheap relative to the weights. Total about $8.48 \\times 10^{22}$ FLOPs. Throughput: $256 \\times 989 \\times 10^{12} \\times 0.45 = 1.14 \\times 10^{17}$ FLOP/s, so about $7.4 \\times 10^5$ seconds, roughly 8.6 days, before restarts and evaluation overhead. Model state at 16 bytes per parameter: $16 \\times 22.4\\text{B} = 358$ GB. No single 80 GB GPU can hold it; even before activations you need the state split at least five ways, and in practice sharded across all 256 GPUs (about 1.4 GB each under full sharding) or split by tensor and pipeline parallelism. The first planning decision is therefore how to partition state, not how big a batch to use.",
+   "r": [
+    [
+     "Kaplan et al.: Scaling Laws for Neural Language Models (2020)",
+     "https://arxiv.org/abs/2001.08361",
+     "Section 2.1 and Table 1: the per-operation parameter and FLOP counts behind the 6N rule."
+    ],
+    [
+     "Korthikanti et al.: Reducing Activation Recomputation in Large Transformer Models (2022)",
+     "https://arxiv.org/abs/2205.05198",
+     "Section 4: the per-layer activation memory derivation, term by term."
+    ],
+    [
+     "How to Scale Your Model (JAX scaling book)",
+     "https://jax-ml.github.io/scaling-book/",
+     "The chapter on Transformer maths: parameter, FLOP and memory counting with worked numbers."
+    ],
+    [
+     "Rajbhandari et al.: ZeRO (2019)",
+     "https://arxiv.org/abs/1910.02054",
+     "Section 3.1: where the 16 bytes per parameter of mixed-precision Adam come from."
+    ]
+   ],
+   "k": [
+    "FLOPs",
+    "memory",
+    "MFU"
+   ],
+   "x": [
+    "PyTorch",
+    "Python"
+   ],
+   "p": [
+    "transformer-training-flop-estimator",
+    "mixed-precision-training-memory-accountant",
+    "training-compute-budget",
+    "gradient-accumulation-equivalence"
+   ]
+  },
+  {
+   "id": "13.02",
+   "t": "Data parallelism and ZeRO",
+   "n": [
+    "Data parallelism gives every GPU a full replica and a different slice of the batch, then averages gradients with an all-reduce so all replicas take the identical step. Mathematically it is just a larger batch.",
+    "A ring all-reduce is a reduce-scatter followed by an all-gather; each GPU sends and receives about $2(n-1)/n$ times the gradient size, so its time barely depends on the number of GPUs but is set by the slowest link.",
+    "Plain data parallelism replicates all 16 bytes per parameter on every GPU. ZeRO removes the redundancy in stages: stage 1 shards optimiser states, stage 2 also gradients, stage 3 also the parameters themselves.",
+    "Stages 1 and 2 cost the same communication as ordinary data parallelism; stage 3 costs about 1.5 times as much, because parameters are all-gathered again in the backward pass. PyTorch FSDP is the ZeRO-3 design built into PyTorch.",
+    "Communication is hidden by overlapping it with compute: gradient buckets are reduced while backward continues, and ZeRO-3 prefetches the next layer's parameters while the current layer runs."
+   ],
+   "a": "## Data parallelism\nThe simplest way to use $n$ GPUs is to give each one a full copy of the model and a different micro-batch. Each rank runs forward and backward on its own data, the gradients are averaged across ranks, and every rank applies the same optimiser step, so the replicas never drift apart. The result is identical, up to floating-point summation order, to training on one GPU with an $n$ times larger batch. That identity is also its limit: you can only grow the batch so far before optimisation stops benefiting (the critical batch size, discussed in the scaling-laws lesson), and every GPU must still hold the whole model.\n\n## The ring all-reduce and what it costs\nAveraging gradients is an all-reduce. The bandwidth-optimal ring version splits the buffer of $S$ bytes into $n$ chunks and runs two phases around a ring of GPUs:\n\n%%flow Ring all-reduce as two phases, each n-1 steps around the ring.\nGradients on every rank -(reduce-scatter, n-1 steps)-> *Each rank owns one summed chunk -(all-gather, n-1 steps)-> Every rank has the full sum\n%%\n\nIn each of the $2(n-1)$ steps every rank sends one chunk of size $S/n$ to its neighbour, so per-rank traffic is $2\\frac{n-1}{n}S$, close to $2S$ however many GPUs join. A simple cost model is\n\n$$t \\approx 2(n-1)\\,\\alpha + 2\\frac{n-1}{n}\\frac{S}{B}$$\n\nwith per-step latency $\\alpha$ and per-link bandwidth $B$. Large buffers are bandwidth-bound and small ones latency-bound, which is why frameworks group gradients into buckets (PyTorch DDP defaults to 25 MB). NCCL's benchmarks report \"bus bandwidth\", the algorithm bandwidth $S/t$ multiplied by $2(n-1)/n$, so that numbers are comparable across GPU counts and with link speed. Real libraries also use tree and hierarchical algorithms, but the ring formula is the right first estimate.\n\nIn practice the all-reduce for one bucket starts as soon as backward has produced it, overlapping with the gradients still being computed. With gradient accumulation you skip synchronisation on all but the last micro-batch (`no_sync()` in DDP).\n\n## Where the memory goes\nFrom lesson 1, mixed-precision Adam needs about 16 bytes per parameter: 2 for bf16 weights, 2 for gradients and 12 for fp32 master weights and moments ($K = 12$ in the ZeRO paper's notation). Data parallelism stores all of it on every rank. ZeRO (Zero Redundancy Optimizer) observes that each rank only needs the full state of the slice it updates, and partitions the rest:\n\n| stage | sharded across $N_d$ ranks | memory per GPU | traffic per step\n| DP (no ZeRO) | nothing | $16\\Psi$ | $2\\Psi$ (all-reduce)\n| ZeRO-1 | optimiser states | $4\\Psi + 12\\Psi/N_d$ | $2\\Psi$\n| ZeRO-2 | + gradients | $2\\Psi + 14\\Psi/N_d$ | $2\\Psi$\n| ZeRO-3 | + parameters | $16\\Psi/N_d$ | $3\\Psi$\n\nHere $\\Psi$ is the parameter count and traffic is in parameter-sized units (multiply by bytes per element). ZeRO-1 and ZeRO-2 replace the all-reduce with a reduce-scatter of gradients (each rank gets the summed gradient for its shard), a local optimiser step on that shard, and an all-gather of the updated bf16 weights. A reduce-scatter plus an all-gather is exactly an all-reduce, so the cost is unchanged and the memory saving is free.\n\n## ZeRO-3 and FSDP\nStage 3 also shards the bf16 parameters, so no rank ever holds the whole model at rest. Before a layer runs forward, its parameters are all-gathered, used, and freed; in backward they are gathered again, gradients are computed, and a reduce-scatter sends each rank its shard of the summed gradient. That is three parameter-sized collectives per step instead of two. The extra 50 percent buys memory that scales as $1/N_d$.\n\n%%seq One ZeRO-3 / FSDP unit (a Transformer block) during a training step.\nGPU > Peers: all-gather block parameters (forward)\nPeers -> GPU: full parameters; run forward, then free them\nGPU > Peers: all-gather block parameters again (backward)\nPeers -> GPU: full parameters; run backward, then free them\nGPU > Peers: reduce-scatter block gradients\nPeers -> GPU: summed gradient for this GPU's shard; local Adam step\n%%\n\nPyTorch's Fully Sharded Data Parallel implements this design. The model is wrapped in units, usually one per Transformer block; each unit's parameters are flattened and sharded, and the next unit's all-gather is prefetched while the current one computes. The sharding strategies map onto ZeRO: `FULL_SHARD` is stage 3, `SHARD_GRAD_OP` keeps parameters gathered between forward and backward (close to stage 2), and `HYBRID_SHARD` shards within a node and replicates across nodes, so the frequent all-gathers stay on fast intra-node links. The newer `fully_shard` API (FSDP2) shards each parameter individually as a DTensor. A mixed-precision policy chooses the parameter dtype for compute and the dtype for gradient reduction; reducing in fp32 is safer for very large $N_d$.\n\nWhen even $16\\Psi/N_d$ is too much, ZeRO-Offload and ZeRO-Infinity move optimiser states (and optionally parameters) to CPU memory or NVMe, trading PCIe bandwidth for capacity. Sharding never reduces activation memory, though; that needs the techniques of the next two lessons.\n\n! Example: a 7.5B model on 64 GPUs\n! Plain data parallelism: $16 \\times 7.5\\text{B} = 120$ GB per GPU, which does not fit on an 80 GB card.\n! ZeRO-1: $4 \\times 7.5 + 12 \\times 7.5 / 64 = 30 + 1.4 = 31.4$ GB. ZeRO-2: $2 \\times 7.5 + 14 \\times 7.5/64 = 15 + 1.6 = 16.6$ GB. ZeRO-3: $120/64 = 1.9$ GB. These match the figures in the ZeRO paper.\n! Communication: gradients in bf16 are $2 \\times 6.7\\text{B}$ bytes for a 6.7B model, 13.4 GB. A ring over 64 GPUs moves $2 \\times \\frac{63}{64} \\times 13.4 = 26.4$ GB per rank. At an assumed 50 GB/s per GPU across nodes (a 400 Gb/s network port per GPU), that is about 0.53 s per step if nothing overlaps; ZeRO-3 raises it to about 0.79 s. If a step's compute takes several seconds, overlap hides most of it; if it takes 0.5 s, the network becomes the bottleneck.\n\n> Takeaway: data parallelism costs one all-reduce of about $2S$ per rank per step; ZeRO-1 and ZeRO-2 cut the replicated optimiser and gradient memory for free, and ZeRO-3 or FSDP shards everything for 1.5 times the traffic.",
+   "q": "You must fine-tune a 13B model with full Adam on 32 GPUs (4 nodes of 8, 80 GB each, about 50 GB/s per GPU between nodes). Profiling shows activations need about 35 GB per GPU at your chosen micro-batch. Which ZeRO stages fit, and what does each cost in gradient-synchronisation time per optimiser step if nothing is overlapped?",
+   "s": "Per-GPU model state with $\\Psi = 13$B and $N_d = 32$: plain DP $16 \\times 13 = 208$ GB (impossible); ZeRO-1 $4 \\times 13 + 12 \\times 13/32 = 52 + 4.9 = 56.9$ GB, plus 35 GB of activations is 92 GB, which does not fit; ZeRO-2 $2 \\times 13 + 14 \\times 13 / 32 = 26 + 5.7 = 31.7$ GB, plus 35 GB is about 67 GB, which fits with some headroom for buffers and fragmentation; ZeRO-3 $208/32 = 6.5$ GB, plus 35 GB is 41.5 GB, which leaves room for a larger micro-batch. Communication: bf16 gradients are 26 GB, so a ring reduce-scatter plus all-gather moves $2 \\times \\frac{31}{32} \\times 26 = 50.4$ GB per rank, about 1.0 s at 50 GB/s for ZeRO-1 or ZeRO-2. ZeRO-3 adds a second parameter all-gather, about 1.5 times as much, roughly 1.5 s. ZeRO-2 is the natural choice; pick ZeRO-3 (or FSDP `FULL_SHARD`, or `HYBRID_SHARD` so the parameter gathers stay inside a node) if you want the memory for a bigger micro-batch and the step compute is long enough to hide the extra traffic. Gradient accumulation also helps: synchronisation happens once per optimiser step, not once per micro-batch.",
+   "r": [
+    [
+     "Rajbhandari et al.: ZeRO: Memory Optimizations Toward Training Trillion Parameter Models (2019)",
+     "https://arxiv.org/abs/1910.02054",
+     "Sections 5 to 7: the three stages, their memory formulas and the communication analysis."
+    ],
+    [
+     "Zhao et al.: PyTorch FSDP: Experiences on Scaling Fully Sharded Data Parallel (2023)",
+     "https://arxiv.org/abs/2304.11277",
+     "How FSDP units, prefetching, hybrid sharding and mixed precision are implemented."
+    ],
+    [
+     "The Ultra-Scale Playbook (Hugging Face)",
+     "https://huggingface.co/spaces/nanotron/ultrascale-playbook",
+     "The data-parallelism and ZeRO chapters, with memory and overlap measurements."
+    ]
+   ],
+   "k": [
+    "data parallelism",
+    "ZeRO",
+    "FSDP"
+   ],
+   "x": [
+    "PyTorch",
+    "DeepSpeed",
+    "NCCL"
+   ],
+   "p": [
+    "account-for-zero-memory-by-stage",
+    "simulate-distributed-collectives",
+    "collective-effective-bandwidth",
+    "synchronize-data-parallel-gradients",
+    "data-parallel-step-with-psum"
+   ]
+  },
+  {
+   "id": "13.03",
+   "t": "Tensor and pipeline parallelism",
+   "n": [
+    "Tensor parallelism splits each weight matrix across GPUs. In Megatron's MLP the first matrix is split by columns and the second by rows, so the only communication is one all-reduce of the layer output in forward and one in backward.",
+    "Each Transformer layer under tensor parallelism needs two all-reduces of a $b \\times s \\times h$ activation in forward and two in backward, on the critical path. That is why tensor parallelism stays inside a node on NVLink.",
+    "Pipeline parallelism assigns contiguous groups of layers to stages and streams micro-batches through them. With $p$ stages and $m$ micro-batches, idle time (the bubble) is $(p-1)/(m+p-1)$ of the step for GPipe and for 1F1B.",
+    "1F1B keeps the same bubble as GPipe but caps in-flight activations at about $p$ micro-batches instead of $m$; interleaving $v$ model chunks per GPU shrinks the bubble by a factor of about $v$ at the price of more point-to-point messages.",
+    "3-D parallelism nests them by bandwidth need: tensor parallel within a node, pipeline across nodes, data parallel (often with ZeRO-1) outermost, with rank order chosen to match the network."
+   ],
+   "a": "## When sharding is not enough\nZeRO-3 shards state, but every GPU still runs the whole model on its own micro-batch: it computes every layer and stores that layer's activations. When one layer's matmuls are too large to run efficiently on one device, when activations dominate memory, or when data parallelism has pushed the global batch past what optimisation tolerates, you need to split the model's computation itself. Tensor parallelism splits within a layer; pipeline parallelism splits across layers.\n\n## Tensor parallelism: Megatron's MLP\nTake the MLP $Z = \\mathrm{GeLU}(XA)\\,B$ with $A$ of shape $h \\times 4h$ and $B$ of shape $4h \\times h$, on $t$ GPUs. Split $A$ by columns, $A = [A_1, \\dots, A_t]$. Each GPU computes $Y_i = \\mathrm{GeLU}(XA_i)$ locally: GeLU is elementwise, so no communication is needed (splitting $A$ by rows would need a sum before the nonlinearity). Now split $B$ by rows so that GPU $i$ holds $B_i$ matching its slice of $Y$. Each computes the partial product $Y_iB_i$, and $Z = \\sum_i Y_iB_i$ is one all-reduce.\n\n%%flow Megatron tensor-parallel MLP on one of t GPUs.\nX (replicated) -(f: identity forward, all-reduce backward)-> X A_i (column shard) -> GeLU (local) -> Y_i B_i (row shard) -(g: all-reduce forward)-> *Z (replicated)\n%%\n\nThe conjugate operators $f$ and $g$ make the backward pass work: $f$ is the identity in forward and an all-reduce of input gradients in backward; $g$ is the reverse. Attention splits the same way: Q, K and V are column-parallel, which assigns whole heads to each GPU, and the output projection is row-parallel. So a layer costs two all-reduces of a $b \\times s \\times h$ tensor in forward and two in backward. Embeddings and the output layer are split along the vocabulary, with the softmax normaliser computed by a cross-GPU reduction so that full logits are never gathered.\n\nThese all-reduces sit on the critical path: the next operation needs their result. With $s = 4096$, $h = 8192$ and bf16, each one is 67 MB per sequence, four times per layer. That is fine at NVLink bandwidth and painful over the inter-node network, so tensor parallelism is normally capped at the GPUs in one node (8). Sequence parallelism (Korthikanti et al.) also splits the norm and dropout regions along the sequence dimension, replacing each all-reduce by a reduce-scatter plus all-gather of the same total volume, so activations outside the matmuls are no longer replicated $t$ times.\n\n## Pipeline parallelism and the bubble\nPipeline parallelism places layers $1..L/p$ on stage 1, the next block on stage 2, and so on. Stages exchange only activations (forward) and activation gradients (backward), point to point, so it tolerates slow links. The cost is idle time. Split the batch into $m$ micro-batches. In GPipe's schedule, every stage runs all $m$ forwards, then all $m$ backwards. Stage $p$ waits $p - 1$ slots before its first forward, and stage 1 waits $p-1$ slots at the end for backwards to drain. Out of $m + p - 1$ slots per phase, $p - 1$ are idle:\n\n$$\\text{bubble fraction} = \\frac{p-1}{m+p-1}.$$\n\nPapers also quote bubble time relative to ideal compute time, $(p-1)/m$; it is the same idle time measured against a different denominator. Either way, you need $m \\gg p$.\n\nGPipe must hold activations for all $m$ micro-batches at once, which fights the large $m$ it needs. The 1F1B schedule (one forward, one backward) runs a short warm-up of forwards, then alternates, starting each micro-batch's backward as early as possible. The bubble is unchanged, but a stage never holds more than about $p$ micro-batches of activations, independent of $m$.\n\n%%flow Why 1F1B beats GPipe on memory with the same bubble.\n[GPipe] F1 F2 ... Fm -> B1 B2 ... Bm -(holds m micro-batches)-> Peak memory grows with m\n[1F1B] Warm-up forwards -> *Alternate F and B -(holds about p micro-batches)-> Peak memory fixed by p\n%%\n\nThe interleaved schedule from the Megatron 3-D paper gives each GPU $v$ non-contiguous chunks of layers (for example layers 1-2 and 17-18), so each pipeline slot is $v$ times shorter and the bubble-to-compute ratio becomes about $(p-1)/(vm)$. The price is $v$ times as many point-to-point transfers. Newer schedules that split the backward pass into input-gradient and weight-gradient parts can fill most of the remaining bubble.\n\n## Putting the three together\n3-D parallelism uses $N = t \\times p \\times d$ GPUs. The usual guidance, from the Megatron 3-D paper's experiments:\n\n1. Tensor parallel inside a node, up to its GPU count, because it needs the most bandwidth and is latency-critical.\n2. Pipeline parallel across nodes, enough stages to fit the model and its activations.\n3. Data parallel over the rest, with ZeRO-1 to shard optimiser states; the gradient all-reduce happens once per step and overlaps with the last backward passes.\n\nThe ranks must be laid out so each tensor-parallel group is one node and consecutive pipeline stages are close in the network. Long-context training adds context parallelism (splitting the sequence across GPUs inside attention), and mixture-of-experts models add expert parallelism, but the principle is the same: the most chatty dimension gets the fastest links.\n\n! Example: bubbles for an 8-stage pipeline\n! With $p = 8$, the idle fraction is $7/(m+7)$: $m = 8$ gives $7/15 = 46.7$ percent idle, $m = 16$ gives 30.4 percent, $m = 32$ gives 17.9 percent and $m = 64$ gives 9.9 percent.\n! Layout: 1,024 GPUs as TP 8 x PP 8 x DP 16. A global batch of 1,024 sequences gives each data-parallel replica 64 sequences; with micro-batch 1 that is $m = 64$ and a 9.9 percent bubble.\n! Halving the global batch to 512 sequences halves $m$ to 32 and nearly doubles the bubble to 17.9 percent. Interleaving with $v = 2$ at $m = 32$ brings the bubble-to-compute ratio to $7/64 = 0.109$, the same 9.9 percent of the step as $m = 64$ without interleaving.\n\n> Takeaway: split matmuls column-then-row inside a node, pipeline across nodes with enough micro-batches ($m \\gg p$) and a 1F1B schedule, and spend the remaining GPUs on data parallelism.",
+   "q": "You have 512 GPUs (64 nodes of 8) for a 70B dense model, a global batch of 512 sequences of 4096 tokens, and micro-batch size 1. Compare layout A (TP 8, PP 8, DP 8) with layout B (TP 8, PP 4, DP 16): number of micro-batches per replica, bubble fraction with 1F1B, and model-state memory per GPU (16 bytes per parameter, before any ZeRO). Why would putting TP 16 across two nodes be a poor third option?",
+   "s": "Layout A: each of 8 replicas gets 512/8 = 64 sequences, so $m = 64$ and the bubble is $(8-1)/(64+7) = 7/71 \\approx 9.9$ percent. Each GPU holds 1/64 of the model, so state is $70\\text{B} \\times 16 / 64 = 17.5$ GB. Layout B: 16 replicas get 32 sequences each, $m = 32$, bubble $3/35 \\approx 8.6$ percent. Each GPU holds 1/32 of the model: $70 \\times 16 / 32 = 35$ GB, and each stage holds twice as many layers, so its activations (up to about $p$ micro-batches of its layers under 1F1B) are larger too. B has a slightly smaller bubble and more data parallelism but roughly twice the state; it fits only if activations stay under about 40 GB, and ZeRO-1 across the 16 data-parallel ranks can recover most of the optimiser share (12 of the 16 bytes). TP 16 across two nodes would put four all-reduces per layer of a $1 \\times 4096 \\times 8192$ bf16 activation (about 67 MB each) on the inter-node network, on the critical path of every layer, which typically costs far more than the bubble savings. Keep tensor parallelism within the NVLink domain.",
+   "r": [
+    [
+     "Shoeybi et al.: Megatron-LM (2019)",
+     "https://arxiv.org/abs/1909.08053",
+     "Section 3: the column-then-row split of the MLP and attention, with the f and g operators."
+    ],
+    [
+     "Narayanan et al.: Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM (2021)",
+     "https://arxiv.org/abs/2104.04473",
+     "The interleaved 1F1B schedule and the guidance on combining tensor, pipeline and data parallelism."
+    ],
+    [
+     "Huang et al.: GPipe (2018)",
+     "https://arxiv.org/abs/1811.06965",
+     "Micro-batch pipelining and the bubble analysis that later schedules improve on."
+    ],
+    [
+     "How to Scale Your Model (JAX scaling book)",
+     "https://jax-ml.github.io/scaling-book/",
+     "The chapters on sharded matmuls and Transformer parallelism, with communication costs per strategy."
+    ]
+   ],
+   "k": [
+    "tensor parallelism",
+    "pipeline parallelism",
+    "3-D parallelism"
+   ],
+   "x": [
+    "Megatron-LM",
+    "PyTorch",
+    "NCCL"
+   ],
+   "p": [
+    "reconstruct-column-parallel-mlp-layer",
+    "measure-pipeline-bubble-utilization",
+    "choose-topology-aware-parallel-plan",
+    "tensor-parallel-mlp",
+    "tensor-parallel-communication-cost"
+   ]
+  },
+  {
+   "id": "13.04",
+   "t": "Mixed precision and activation checkpointing",
+   "n": [
+    "Low-precision formats trade mantissa bits (precision) against exponent bits (range). bf16 keeps fp32's range with 8 significant bits; fp16 has more precision but overflows above 65504; fp8 comes as E4M3 (max 448) and E5M2 (max 57344).",
+    "Matmuls run in 16 or 8 bits, but the optimiser updates fp32 master weights. A small update added to a bf16 weight is often rounded away entirely, so pure-bf16 training silently stalls late in a schedule.",
+    "fp16 needs loss scaling to keep small gradients from underflowing; bf16 does not. fp8 needs scaling factors per tensor or per block, because its range is too narrow for raw activations and gradients.",
+    "Activation checkpointing stores only a few tensors per layer and recomputes the rest in backward. Full recomputation costs about one extra forward pass (training FLOPs go from about $6N$ to $8N$ per token).",
+    "Selective recomputation recomputes only the parts that are memory-heavy but cheap to compute, chiefly the attention score matrices, which removes the quadratic activation term for a few percent of extra compute."
+   ],
+   "a": "## Why precision is a budget\nTensor cores deliver roughly twice the throughput in bf16 that they do in tf32, and fp8 roughly doubles it again; halving the bytes per value also halves memory traffic and activation storage. The question is which tensors can afford fewer bits. The PyTorch course covered `autocast` and `GradScaler` mechanics; this lesson is about the numerics behind them at scale and about trading compute for memory with recomputation.\n\n| format | exponent / mantissa bits | largest finite | typical role\n| fp32 | 8 / 23 | about $3.4 \\times 10^{38}$ | master weights, optimiser moments, reductions\n| bf16 | 8 / 7 | about $3.4 \\times 10^{38}$ | matmul inputs, activations, gradients\n| fp16 | 5 / 10 | 65504 | the same, on older GPUs, with loss scaling\n| fp8 E4M3 | 4 / 3 | 448 | forward weights and activations\n| fp8 E5M2 | 5 / 2 | 57344 | gradients, which need range more than precision\n\n## Master weights\nMixed-precision training (Micikevicius et al.) keeps an fp32 copy of every weight. Each step casts it to 16 bits for forward and backward, then applies the optimiser update to the fp32 copy. The reason is rounding. bf16 has 8 significant bits, so the gap between representable numbers near a value $w$ is about $w \\times 2^{-7}$. Any update smaller than half that gap is rounded away: near 1.0 the gap is $2^{-7} \\approx 0.0078$, so adding $10^{-4}$ changes nothing. Adam's updates are roughly the learning rate in size, and late in a cosine or decay schedule they fall well below the gap for most weights. The run does not crash; it quietly stops learning.\n\n%%flow One mixed-precision step: low precision where it is fast, fp32 where it accumulates.\n*fp32 master weights -(cast)-> bf16 weights -> Forward and backward in bf16 -> bf16 gradients -(reduce, upcast)-> fp32 Adam update -> *fp32 master weights\n%%\n\nReductions follow the same logic: softmax, norms, losses and gradient all-reduces over many ranks accumulate many small terms and are done in fp32. Alternatives to fp32 master weights exist (stochastic rounding, Kahan-compensated summation in bf16), but fp32 masters are the default because they are simple and robust; they are 4 of the 16 bytes per parameter from lesson 1.\n\n## Loss scaling for fp16\nfp16's smallest normal number is about $6.1 \\times 10^{-5}$, and many activation gradients are smaller. Multiplying the loss by a scale $S$ multiplies every gradient by $S$, lifting them into range; dividing by $S$ before the update undoes it. Dynamic scaling starts with a large $S$, halves it and skips the step when an inf or NaN appears, and grows it after a run of clean steps. bf16 shares fp32's exponent range, so it needs no scaling, which is why it replaced fp16 for LLM training on hardware that supports it.\n\n## fp8\nfp8's range is too small to hold raw tensors, so every fp8 tensor carries a scale factor: the value stored is $x/s$ with $s$ chosen from the tensor's absolute maximum so that the largest entry lands near the format's maximum. Common recipes use E4M3 for weights and activations and E5M2 for gradients. NVIDIA's Transformer Engine uses delayed scaling, which picks each tensor's scale from a history of recent maxima so no extra pass over the data is needed. Per-tensor scales are fragile when a few outlier channels dominate the maximum, so recent large runs use finer-grained scaling, one factor per small tile or block (DeepSeek-V3 is a published example). Even then the fp8 region is limited to the big matmuls: embeddings, the output head, norms, attention softmax and the optimiser stay in bf16 or fp32. Expect loss curves to track bf16 closely when the recipe is right, and to diverge after many thousands of steps when it is not, so compare against a bf16 baseline on a long enough run.\n\n## Activation checkpointing\nThe other big memory consumer is activations (lesson 1: about $34sbh$ bytes per layer with fused attention, more without). Checkpointing saves only the input of each layer, $2sbh$ bytes in bf16, discards the rest after forward, and recomputes the layer's forward just before its backward. Peak activation memory becomes $L \\times 2sbh$ plus one layer's full activations.\n\nThe price is one extra forward pass. Forward is about $2N$ of the $6N$ FLOPs per token, so full recomputation raises the cost to about $8N$: 33 percent more compute for the same tokens. Model FLOPs utilisation does not count the recomputed work, so MFU drops even though the hardware is just as busy. Checkpointing every $k$-th layer instead gives intermediate trade-offs; Chen et al. showed that checkpointing about every $\\sqrt{L}$ layers gives $O(\\sqrt{L})$ memory for one extra forward.\n\nSelective recomputation (Korthikanti et al.) observes that the activations are not equally expensive. The attention scores, softmax output and dropout mask make up the quadratic $5as^2b$ term but cost few FLOPs to recompute, while the matmul outputs are cheap to store relative to recomputing them. Recomputing only the attention core removes the quadratic term at a few percent extra compute. FlashAttention does exactly this by construction: it never stores the score matrix and recomputes it tile by tile in backward. Combined with tensor and sequence parallelism, which divide the remaining activations by $t$, selective recomputation is usually enough, and full checkpointing is kept for when memory is still short.\n\n! Example: two failures the budget predicts\n! Rounding: a weight of 1.0 receiving 1,000 Adam updates of $+10^{-4}$ should end at 1.1. Accumulated in fp32 it does. Accumulated in bf16, each $1 + 10^{-4}$ rounds back to 1.0 (the gap at 1.0 is $2^{-7} = 0.0078$, half of it 0.0039), so after 1,000 steps the weight is still exactly 1.0.\n! Memory: the 6.7B model from lesson 1 ($L = 32$, $h = 4096$, $s = 4096$, micro-batch 1, 32 heads) needs about 104 GB of activations with unfused attention. Selective recomputation (or FlashAttention) removes the $5as/h = 160$ term, leaving $34 \\times 4096 \\times 4096 \\times 32 = 18.3$ GB. Full checkpointing keeps only layer inputs: $2 \\times 4096 \\times 4096 = 33.6$ MB per layer, 1.07 GB for 32 layers, plus one layer being recomputed (0.57 GB with fused attention), about 1.6 GB, for 33 percent more compute.\n\n> Takeaway: compute in bf16 or fp8 with scaling, accumulate and update in fp32, and buy activation memory with selective recomputation first and full checkpointing only when still needed.",
+   "q": "To save memory a teammate stores weights and Adam moments in bf16, with no fp32 master copy. The learning rate decays to $3 \\times 10^{-5}$ by the end of training and typical weights have magnitude around 0.02. Adam's per-step updates are roughly the learning rate in size. What happens to the updates, and what would you change? Separately, the same run uses full activation checkpointing; by how much does that inflate the FLOPs per token, and what would you try first instead?",
+   "s": "A bf16 weight of about 0.02 lies in the binade $[2^{-6}, 2^{-5})$ = [0.0156, 0.0313), where consecutive bf16 values are $2^{-6} \\times 2^{-7} = 2^{-13} \\approx 1.22 \\times 10^{-4}$ apart. An update of $3 \\times 10^{-5}$ is below half that gap ($6.1 \\times 10^{-5}$), so it is rounded away: the weight does not move, and late training stalls while the loss curve flattens for no visible reason. Larger updates are quantised to multiples of the gap, so even those that survive are distorted (an update of $10^{-4}$ becomes a step of $1.22 \\times 10^{-4}$). The fix is fp32 master weights (adds 4 bytes per parameter, usually recovered by sharding them with ZeRO), or if memory forbids it, stochastic rounding or Kahan-compensated updates in bf16. Keep the Adam second moment in fp32 too, since it is used in a square root and a division. On recomputation: full checkpointing adds one forward pass, about $2N$ on top of $6N$, so 33 percent more FLOPs per token. Try selective recomputation of the attention core, or simply FlashAttention, which removes the quadratic activation term at a few percent cost, plus sequence parallelism if tensor parallelism is in use; fall back to full checkpointing only for layers that still do not fit.",
+   "r": [
+    [
+     "Micikevicius et al.: Mixed Precision Training (2017)",
+     "https://arxiv.org/abs/1710.03740",
+     "The three ingredients: fp32 master weights, loss scaling and fp32 accumulation, with the evidence for each."
+    ],
+    [
+     "Micikevicius et al.: FP8 Formats for Deep Learning (2022)",
+     "https://arxiv.org/abs/2209.05433",
+     "The E4M3 and E5M2 definitions, their ranges and how scaling is applied in training."
+    ],
+    [
+     "Korthikanti et al.: Reducing Activation Recomputation in Large Transformer Models (2022)",
+     "https://arxiv.org/abs/2205.05198",
+     "Selective recomputation and sequence parallelism, with the memory and overhead measurements."
+    ],
+    [
+     "Chen et al.: Training Deep Nets with Sublinear Memory Cost (2016)",
+     "https://arxiv.org/abs/1604.06174",
+     "The original gradient-checkpointing analysis and the square-root schedule."
+    ]
+   ],
+   "k": [
+    "mixed precision",
+    "fp8",
+    "activation checkpointing"
+   ],
+   "x": [
+    "PyTorch",
+    "Transformer Engine",
+    "Megatron-LM"
+   ],
+   "p": [
+    "mixed-precision-training-memory-accountant",
+    "mixed-precision-with-loss-scaling",
+    "rematerialized-mlp-block",
+    "block-wise-fp8-quantization"
+   ]
+  },
+  {
+   "id": "13.05",
+   "t": "Scaling laws",
+   "n": [
+    "Pretraining loss falls as a power law in model size, data and compute, $L(x) \\approx E + (x_0/x)^{\\alpha}$, over many orders of magnitude. That regularity is what lets small runs predict big ones.",
+    "Kaplan et al. (2020) concluded that extra compute should go mostly into a bigger model ($N \\propto C^{0.73}$). Hoffmann et al. (2022, Chinchilla) found parameters and tokens should grow about equally ($N, D \\propto C^{0.5}$), which works out to roughly 20 tokens per parameter.",
+    "An IsoFLOP sweep trains several model sizes at each fixed compute budget, finds the loss-minimising size per budget, and fits a line to those optima in log-log space. Its slope is the allocation exponent.",
+    "Near the optimum the loss is flat along an IsoFLOP curve, so a model several times smaller than compute-optimal costs only a little loss. Since inference costs about $2N$ FLOPs per token, deployed models are deliberately over-trained.",
+    "Extrapolate with care: fits are only as good as the range they span, they assume the learning-rate schedule and hyperparameters are tuned at every scale, and loss predictions do not transfer directly to downstream accuracy."
+   ],
+   "a": "## What a scaling law is\nTrain a family of models that differ only in size, data or compute, plot final loss against that quantity on log-log axes, and you get something very close to a straight line, bending only as it approaches an irreducible floor. The working form is\n\n$$L(x) = E + \\left(\\frac{x_0}{x}\\right)^{\\alpha},$$\n\nwhere $E$ is the loss no amount of $x$ removes (the entropy of the text, roughly) and $\\alpha$ is the exponent. Without $E$ the fit is a line in log-log space, $\\log L = \\alpha \\log x_0 - \\alpha \\log x$, fitted by least squares on the logs. With $E$ you fit nonlinearly, and $E$ is usually the least well-determined parameter. The practical value is planning: fit on runs costing a thousandth of the target, then predict the target's loss and pick its shape.\n\n## Kaplan et al.: grow the model\nThe 2020 OpenAI study fitted loss against non-embedding parameter count, dataset size and compute across several orders of magnitude, with exponents of about 0.076 for parameters and 0.095 for data. Two findings held up: model shape (depth versus width) matters little at a fixed parameter count, and loss is a smooth, predictable function of scale. Their compute-optimal recommendation did not hold up: they concluded that most of a growing budget should go into parameters ($N_{\\text{opt}} \\propto C^{0.73}$), with comparatively few tokens, training large models well short of convergence. GPT-3 (175B parameters on about 300B tokens) reflects that regime.\n\n## Chinchilla: grow both\nHoffmann et al. re-ran the question with over 400 models and three independent methods, and all three found that parameters and tokens should scale in roughly equal proportion, with exponents near 0.5 for each. One reason for the disagreement, the authors argued, is that Kaplan's runs used a fixed learning-rate schedule length, so smaller models trained on fewer tokens were not evaluated at the end of a matched schedule; later analyses also point to counting only non-embedding parameters and to hyperparameters tuned at small scale. The headline result: Chinchilla, 70B parameters on 1.4T tokens, outperformed Gopher, 280B parameters on 300B tokens, at a similar compute budget ($5.9 \\times 10^{23}$ versus $5.0 \\times 10^{23}$ FLOPs by $6ND$). The rule of thumb that falls out is about 20 tokens per parameter, so $C = 6ND = 120N^2$ at the optimum.\n\n## IsoFLOP sweeps\nTheir most transparent method is the IsoFLOP sweep, which you can reproduce at small scale:\n\n%%flow An IsoFLOP sweep, from budgets to an allocation exponent.\nPick budgets C1..Ck -> Train 5 to 9 sizes per budget, D = C / 6N -> Fit a parabola in log N per budget -> *Minimum N_opt(C) -> Regress log N_opt on log C -(slope a)-> N_opt proportional to C^a\n%%\n\nEach learning-rate schedule must be set to end at that run's token count, or the comparison is biased toward whichever size happened to finish its decay. Approach 3 of the paper fits a joint form $L(N, D) = E + A/N^{\\alpha} + B/D^{\\beta}$ to all runs; the published values are $E = 1.69$, $A = 406.4$, $B = 410.7$, $\\alpha = 0.34$, $\\beta = 0.28$. A later replication argued that the reported fit was imprecise and that it disagrees with the other two methods, so use it for intuition about shape rather than exact optima.\n\n## Extrapolation and its traps\n- Fit range: an exponent fitted over two orders of magnitude extrapolated four further compounds small errors; check by holding out the largest runs and predicting them.\n- Schedules and hyperparameters: the law describes well-tuned models. The best learning rate falls and the best batch size grows with scale, so they need their own fitted laws (or a parameterisation like muP that makes them transfer).\n- Batch size: beyond a critical batch size, which grows as the loss falls, more data parallelism stops saving optimisation steps, which limits how fast a budget can be spent.\n- Data: the laws assume fresh, same-quality tokens. Repeating data a few times costs little, but many epochs give diminishing returns, and a mixture change moves the whole curve.\n- Downstream metrics: loss extrapolates smoothly, while accuracy on a specific benchmark can sit near chance and then rise sharply, so predict loss, then map it to tasks with a separate fit.\n\n## Over-training for inference\nCompute-optimal means optimal for training cost alone. A model is trained once and then served for a very large number of tokens, each costing about $2N$ FLOPs. Lifetime cost is roughly $6ND + 2N D_{\\text{serve}}$, and when $D_{\\text{serve}}$ is large the cheapest model for a target quality is smaller than Chinchilla-optimal and trained on far more tokens. Because the IsoFLOP curve is flat near its minimum, the training-side penalty is small. Llama 3 8B, trained on over 15T tokens, is about 1,900 tokens per parameter, almost 100 times the Chinchilla ratio.\n\n! Example: sizing a 10^24 FLOP run\n! Compute-optimal at 20 tokens per parameter: $C = 120N^2$, so $N = \\sqrt{10^{24}/120} = 91$B parameters and $D = 20N = 1.83$T tokens.\n! Flatness, using the approach-3 fit at Chinchilla's budget of $5.88 \\times 10^{23}$ FLOPs: 70B on 1.4T tokens predicts a loss of 1.937; an 8B model on $5.88 \\times 10^{23}/(6 \\times 8\\text{B}) = 12.25$T tokens predicts 1.953, only 0.9 percent worse.\n! That 8B model costs 16 GFLOPs per generated token against 140 for the 70B, 8.75 times cheaper to serve. (Taken literally the fit's own optimum here is near 33B, not 70B, one symptom of the disagreement between methods.)\n\n> Takeaway: fit power laws on small, properly tuned runs; allocate compute roughly equally to parameters and tokens (about 20 tokens per parameter) when training cost is all that matters, and over-train smaller models when inference dominates.",
+   "q": "You have a training budget of $2 \\times 10^{23}$ FLOPs and expect to serve $10^{13}$ tokens over the model's lifetime. Compute the Chinchilla-style compute-optimal size and token count at 20 tokens per parameter, then the tokens a 7B model would see with the same budget. Compare lifetime FLOPs (training plus about $2N$ per served token). What would you need to check before committing to the 7B option?",
+   "s": "Compute-optimal: $N = \\sqrt{2 \\times 10^{23}/120} = 40.8$B parameters, $D = 20N = 816$B tokens. A 7B model with the same budget sees $2 \\times 10^{23}/(6 \\times 7 \\times 10^9) = 4.76$T tokens, about 680 tokens per parameter. Serving cost: $2 \\times 40.8\\text{B} \\times 10^{13} = 8.2 \\times 10^{23}$ FLOPs versus $2 \\times 7\\text{B} \\times 10^{13} = 1.4 \\times 10^{23}$. Lifetime totals: about $1.02 \\times 10^{24}$ for the 41B model versus $3.4 \\times 10^{23}$ for the 7B, three times cheaper overall, because serving dominates. The catch is quality: the 7B model is off the compute-optimal point, so at equal training compute its loss is somewhat higher (the approach-3 fit predicts 1.988 versus 1.980, under half a percent, but do not trust the fit's third digit). Before committing, check that the extra tokens exist at the same quality (4.76T unique tokens, or acceptable repetition), validate with your own IsoFLOP or over-training points at smaller scale that the loss gap is as small as predicted, and check downstream metrics rather than loss alone. If the gap matters, spending part of the inference savings on more training tokens for the 7B model is usually the better trade.",
+   "r": [
+    [
+     "Hoffmann et al.: Training Compute-Optimal Large Language Models (2022)",
+     "https://arxiv.org/abs/2203.15556",
+     "Section 3: the three estimation approaches, the IsoFLOP figures and the Chinchilla versus Gopher comparison."
+    ],
+    [
+     "Kaplan et al.: Scaling Laws for Neural Language Models (2020)",
+     "https://arxiv.org/abs/2001.08361",
+     "The original power-law fits for N, D and C and the critical batch size discussion."
+    ],
+    [
+     "How to Scale Your Model (JAX scaling book)",
+     "https://jax-ml.github.io/scaling-book/",
+     "How compute budgets translate into hardware time and model shape choices."
+    ]
+   ],
+   "k": [
+    "scaling laws",
+    "Chinchilla",
+    "compute-optimal"
+   ],
+   "x": [
+    "NumPy",
+    "SciPy"
+   ],
+   "p": [
+    "isoflop-sweep-exponent",
+    "chinchilla-compute-optimal",
+    "saturating-power-law-fit",
+    "fixed-ratio-budget-split",
+    "fit-learning-rate-and-batch-size-scaling"
+   ]
+  },
+  {
+   "id": "13.06",
+   "t": "Data for pretraining",
+   "n": [
+    "A web pretraining pipeline is a funnel: extract text from crawled HTML, identify the language, apply heuristic quality filters, deduplicate, apply model-based quality filters, and remove unsafe or personal data. Most raw tokens never reach training.",
+    "Heuristic filters (length, symbol and stop-word ratios, repeated lines, punctuation) remove obvious junk cheaply; model-based filters, such as a classifier trained to spot educational text, select what to keep and can shift benchmark results substantially.",
+    "Exact deduplication hashes normalised documents or long substrings; near-duplicate detection uses MinHash over shingles with LSH bands, catching pairs above a Jaccard threshold of about $(1/b)^{1/r}$.",
+    "The data mixture (web, code, books, maths, multilingual) matters as much as the volume. Temperature sampling $p_i \\propto n_i^{1/T}$ upweights small sources, but you must cap how many epochs each source is repeated.",
+    "The tokenizer is part of the data pipeline: its compression (bytes per token) sets how much text a token budget buys, and choices such as byte fallback and digit splitting affect code and arithmetic."
+   ],
+   "a": "## The funnel\nPretraining data quality is now as big a lever as model size. For the same compute budget, a better-filtered corpus can match a model trained on several times more unfiltered tokens. Most open recipes for web text look like this:\n\n%%flow A web-text pipeline; each stage removes a large share of what reaches it.\nCrawl snapshots (WARC) -> Text extraction from HTML -> Language ID -> Heuristic filters -> *Deduplication -> Model-based quality filter -> PII and safety filters -> Tokenise and shard\n%%\n\nText extraction matters more than it looks: extracting from raw HTML with a tool such as trafilatura gives cleaner text than relying on the crawl's own text dumps, and FineWeb's ablations showed the difference in downstream scores. FineWeb, built from 96 Common Crawl snapshots, yields about 15T tokens after the full pipeline, and its educational subset, FineWeb-Edu, is much smaller and scores markedly better on knowledge and reasoning benchmarks for the same training tokens.\n\n## Heuristic filters\nRules inherited from C4, Gopher's MassiveText and later work are cheap to run on billions of documents:\n- document length within a range, and mean word length within a range;\n- the fraction of lines ending in terminal punctuation, and of words that are common stop words (real prose contains \"the\", \"and\", \"of\");\n- symbol-to-word ratios (too many `#` or ellipses suggests lists, spam or code fragments);\n- repeated lines, paragraphs and n-grams (boilerplate, navigation menus, cookie banners);\n- blocklists of URLs or domains.\n\nEach threshold is a hypothesis. The reliable way to choose them is ablation: train small models (around a billion parameters on tens of billions of tokens) on filtered versus unfiltered data, and compare on benchmarks that are sensitive at that scale. A filter that looks sensible can hurt, for example by removing most code or non-English text.\n\n## Model-based filtering\nA classifier can encode \"what we want more of\" directly. Older approaches trained a linear classifier to separate reference text (Wikipedia, books) from random web pages. FineWeb-Edu instead had a large instruction-tuned model rate a sample of pages for educational value, trained a small classifier on those ratings and kept pages above a threshold. Related methods score text by the perplexity of a reference language model. These filters are powerful and biased: they keep what resembles the reference, which can shrink diversity, so pipelines often mix the high-quality slice with a larger, less filtered pool.\n\n## Deduplication\nDuplicates waste compute, encourage memorisation and inflate benchmark scores when test items are duplicated in training data. Lee et al. found that standard corpora contained heavily repeated sequences and that deduplicating them reduced memorised output without hurting perplexity.\n\nExact deduplication hashes each document after normalisation (lower-casing, whitespace collapsing) and keeps the first occurrence in a stable order. Substring-level exact deduplication with suffix arrays removes repeated spans, such as licence text, inside otherwise different documents.\n\nNear-duplicate detection uses MinHash. Represent each document as a set of shingles (word 5-grams, say). For a random hash function, the probability that two sets have the same minimum hash value equals their Jaccard similarity $s$. Compute $k = b \\times r$ minimum hashes, group them into $b$ bands of $r$ rows, and make two documents candidates if any band matches entirely:\n\n$$P(\\text{candidate}) = 1 - (1 - s^r)^b.$$\n\nThat is an S-curve whose threshold sits near $(1/b)^{1/r}$. More rows per band sharpen it and raise it; more bands lower it. Candidates are then clustered (connected components) and one document per cluster is kept. FineWeb found that deduplicating each crawl snapshot separately worked better than deduplicating across all snapshots, because in older snapshots global deduplication removed most documents, and the small remainder it kept was of lower quality than what it removed.\n\n## Mixtures\nA pretraining corpus is a weighted mixture of sources. Sampling in proportion to size lets web text drown everything else; temperature sampling flattens it:\n\n$$p_i = \\frac{n_i^{1/T}}{\\sum_j n_j^{1/T}}, \\quad T \\ge 1.$$\n\n$T = 1$ is proportional sampling, and larger $T$ moves toward uniform. Every upweighted source is repeated: its epoch count is $p_i D / n_i$ for a run of $D$ tokens. A few epochs over high-quality data cost little, but beyond that returns diminish, so cap epochs and send the excess to the largest source. Mixture weights are chosen by small-scale ablations, by fitting per-domain scaling curves, or by optimisation methods such as training a proxy model. Many recipes also change the mixture late in training, annealing on a high-quality mix (maths, code, curated text) while the learning rate decays.\n\n## Tokenizer choices\nTokenizers were covered earlier in the course; at pretraining scale three choices matter. Byte-level BPE with byte fallback can encode any input, so nothing is lost or mapped to unknown. Vocabulary size trades embedding and output-layer parameters against compression: larger vocabularies give fewer tokens per byte, so a fixed token budget covers more text, especially in multilingual and code data. Pre-tokenisation rules (splitting digits individually, keeping whitespace runs for code) change arithmetic and code performance. Always quote data budgets with the tokenizer, and compare models by bits per byte rather than per-token loss when tokenizers differ.\n\n! Example: choosing bands and a mixture\n! MinHash with $b = 14$ bands of $r = 8$: threshold about $(1/14)^{1/8} = 0.72$. Pairs at Jaccard 0.5 become candidates with probability $1 - (1 - 0.5^8)^{14} = 0.053$, at 0.75 with 0.772, at 0.8 with 0.924 and at 0.9 above 0.999.\n! Mixture: sources of 900B web, 80B code, 15B books and 5B wiki tokens. At $T = 2$ the weights are proportional to $\\sqrt{n_i}$: 66.6, 19.9, 8.6 and 5.0 percent. A 1T-token run then sees web 0.74 epochs, code 2.48, books 5.73 and wiki 9.93. Wiki and books are repeated too often; capping them near four epochs and moving the surplus to web is the usual fix.\n\n> Takeaway: treat data as an engineered pipeline (extract, filter, deduplicate, mix) whose every rule is validated by small-model ablations, and report data budgets together with the tokenizer and the epoch count per source.",
+   "q": "Your near-duplicate step uses 100 MinHash values as 20 bands of 5 rows, and reviewers complain that it removes many documents that are merely on the same topic. You want to treat pairs with Jaccard similarity of about 0.8 and above as duplicates. Compute the candidate probability at Jaccard 0.5, 0.7, 0.8 and 0.9 for 20 x 5 and for 10 x 10, and recommend a configuration. What else would you check before rerunning the whole corpus?",
+   "s": "For 20 bands of 5 rows, $P = 1 - (1 - s^5)^{20}$: 0.47 at $s = 0.5$, 0.975 at 0.7, and essentially 1 at 0.8 and 0.9. The threshold $(1/20)^{1/5} \\approx 0.55$ is far too low, which explains the topical false positives: nearly half of pairs at Jaccard 0.5 are flagged. For 10 bands of 10 rows, $P = 1 - (1 - s^{10})^{10}$: 0.01 at 0.5, 0.25 at 0.7, 0.68 at 0.8 and 0.99 at 0.9, with threshold $(1/10)^{1/10} \\approx 0.79$. That matches the target, at the cost of missing about a third of pairs right at 0.8; more hashes (for example 14 bands of 8 rows, or more bands at 10 rows) sharpen the curve if recall near the threshold matters. Before rerunning: verify on a labelled sample of candidate pairs by computing their true Jaccard similarity; confirm the shingle size (word 5-grams behave very differently from character 5-grams); decide whether to deduplicate per snapshot or globally (FineWeb found per-snapshot better); keep a stable order so the same document survives each run; and run a small-model ablation on deduplicated versus original data, since the end goal is better models, not fewer documents.",
+   "r": [
+    [
+     "Penedo et al.: The FineWeb Datasets (2024)",
+     "https://arxiv.org/abs/2406.17557",
+     "The full pipeline with an ablation per step: extraction, filters, MinHash settings, per-snapshot deduplication and FineWeb-Edu."
+    ],
+    [
+     "Lee et al.: Deduplicating Training Data Makes Language Models Better (2021)",
+     "https://arxiv.org/abs/2107.06499",
+     "Exact substring deduplication with suffix arrays, near-duplicate MinHash, and the effects on memorisation."
+    ],
+    [
+     "Rae et al.: Scaling Language Models: Methods, Analysis and Insights from Training Gopher (2021)",
+     "https://arxiv.org/abs/2112.11446",
+     "The appendix on MassiveText: the quality filters and repetition rules that many later pipelines reuse."
+    ]
+   ],
+   "k": [
+    "pretraining data",
+    "deduplication",
+    "data mixtures"
+   ],
+   "x": [
+    "datatrove",
+    "Python",
+    "fastText"
+   ],
+   "p": [
+    "text-deduplication-minhash",
+    "perform-stable-exact-deduplication",
+    "temperature-based-data-mixtures",
+    "extrapolate-data-mixture-scaling-curves",
+    "train-deterministic-bpe-vocabulary"
+   ]
+  },
+  {
+   "id": "13.07",
+   "t": "Post-training with verifiable rewards",
+   "n": [
+    "A modern post-training recipe runs supervised fine-tuning (SFT) on demonstrations, then preference tuning, then reinforcement learning with verifiable rewards (RLVR) on tasks a program can grade, such as maths answers and unit tests.",
+    "SFT is next-token cross-entropy with a loss mask: only assistant tokens contribute, never the system prompt, user turns or padding. How you average over tokens (per token or per sequence) changes the weight long answers get.",
+    "RLVR replaces a learned reward model with a verifier. That removes one way to hack the reward, but verifiers have their own failure modes (answer extraction, formatting, tests that can be special-cased), so they need engineering and auditing.",
+    "GRPO-style training samples a group of completions per prompt and uses each one's reward minus the group mean, often divided by the group standard deviation, as its advantage. No value network is needed, and groups where every sample gets the same reward contribute nothing.",
+    "Evaluation needs fixed sampling settings, unbiased pass@k estimates from several samples, and decontamination: check n-gram overlap between training data and benchmarks, because a contaminated benchmark measures memory, not skill."
+   ],
+   "a": "## The post-training stack\nA pretrained model predicts web text; post-training turns it into an assistant that follows instructions and reasons reliably. Earlier modules covered PPO, GRPO and LoRA mechanics. This lesson is about how the pieces are arranged and what goes wrong at scale. Open recipes such as Tulu 3 make the stages explicit:\n\n%%flow A typical open post-training pipeline.\nBase model -(demonstrations)-> SFT -(chosen vs rejected pairs)-> Preference tuning (DPO or RM + PPO) -(prompts with checkable answers)-> *RLVR -> Evaluation and decontamination checks\n%%\n\nEach stage starts from the previous checkpoint and uses a much smaller learning rate than pretraining. Data quality and mixture, again, matter more than clever objectives.\n\n## SFT and the loss mask\nSFT data are conversations rendered with the model's chat template. The loss is ordinary cross-entropy, but a mask zeroes every position that is not an assistant token: system prompts, user turns, tool outputs and padding. Training on user tokens teaches the model to generate user text, and training on padding wastes signal. The mask must line up with the shifted labels (the label at position $t$ is token $t+1$), and the end-of-turn token should be included so the model learns to stop.\n\nTwo details change results. Packing several short conversations into one sequence needs attention masks or position resets so examples do not attend to each other. And the reduction matters: averaging over all unmasked tokens in a batch weights a 2,000-token answer 20 times more than a 100-token answer, while averaging per sequence first weights them equally. With gradient accumulation, the token-mean must be taken over the whole effective batch, not per micro-batch, or the result depends on how sequences were split.\n\n## Preference tuning, briefly\nPreference data give a prompt with a chosen and a rejected response. The classical route trains a Bradley-Terry reward model and optimises against it with PPO plus a KL penalty to the SFT model. DPO skips the reward model, using the closed-form loss\n\n$$\\mathcal{L} = -\\log \\sigma\\!\\left(\\beta\\left[\\log\\frac{\\pi(y_w)}{\\pi_{\\text{ref}}(y_w)} - \\log\\frac{\\pi(y_l)}{\\pi_{\\text{ref}}(y_l)}\\right]\\right)$$\n\non sequence log-probabilities. Preference tuning improves style, helpfulness and refusal behaviour, but a learned reward is exploitable: optimise against it hard enough and the policy finds responses the reward model overrates.\n\n## Reinforcement learning with verifiable rewards\nFor tasks with checkable outcomes, the reward can come from a program: 1 if the extracted final answer matches the reference, 0 otherwise; the fraction of unit tests passed in a sandbox; whether an instruction's constraints (word count, format, keywords) are met. The Tulu 3 report named this setting RLVR, and DeepSeek-R1-Zero showed that RL with rule-based accuracy and format rewards, starting from a base model, produces long chains of reasoning and large gains on maths benchmarks.\n\nVerifiers are code, and the policy will find their bugs. Common problems: answers that are correct but formatted differently (fractions, LaTeX, units) graded wrong; answers extracted from the wrong place; code that special-cases visible tests; and outputs that crash or hang the grader. Normalise answers, use hidden tests, sandbox with timeouts and read samples of rewarded outputs regularly.\n\n## Group-relative advantages\nGRPO, introduced with DeepSeekMath, removes PPO's value network. For each prompt it samples a group of $G$ completions, scores them, and sets each completion's advantage to\n\n$$A_i = \\frac{r_i - \\operatorname{mean}(r_{1..G})}{\\operatorname{std}(r_{1..G}) + \\epsilon},$$\n\napplied to every token of completion $i$ inside a PPO-style clipped ratio objective, usually with a KL term to a reference model. The group mean acts as a per-prompt baseline. Three consequences follow.\n\n- If every completion gets the same reward (all solved or all failed), every advantage is zero and the prompt contributes no gradient. Filter or resample prompts so most groups are mixed; a curriculum by pass rate keeps the batch informative.\n- Dividing by the standard deviation upweights prompts with low variance (nearly always solved or nearly always failed). Some later work drops it, along with per-sequence length normalisation, which can bias the policy toward longer wrong answers and shorter right ones.\n- Rollouts dominate cost. Generation runs on an inference engine and training on the trainer, with weights synchronised every step, so the system design of lessons 2 to 4 reappears on both sides.\n\n## Evaluation and contamination\nReasoning models are evaluated by sampling, so fix the temperature, top-p, maximum length and prompt template, and report the mean over several samples or seeds. For pass@k, draw $n \\ge k$ samples per problem, count $c$ correct, and use the unbiased estimator\n\n$$\\text{pass@}k = 1 - \\binom{n-c}{k}\\Big/\\binom{n}{k}.$$\n\nContamination is the larger threat. Web-scale pretraining data and synthetic SFT data can contain benchmark questions and solutions. Check overlap of long n-grams (GPT-3 used 13-grams) between training sets and benchmarks, remove matches from training data, as the Tulu 3 team did, and prefer benchmarks published after the data cut-off. A jump on one benchmark with no movement on similar ones is a contamination smell.\n\n! Example: one GRPO group and a pass@k estimate\n! Eight completions for one maths prompt receive rewards [1, 0, 0, 1, 0, 0, 0, 1]. Mean 0.375, population standard deviation $\\sqrt{0.375 \\times 0.625} = 0.484$.\n! Correct completions get advantage $(1 - 0.375)/0.484 = +1.29$, incorrect ones $(0 - 0.375)/0.484 = -0.77$. The advantages sum to zero. With the sample standard deviation (0.518) they are +1.21 and -0.72.\n! Evaluation: 16 samples per problem with 4 correct gives pass@1 $= 1 - \\binom{12}{1}/\\binom{16}{1} = 0.25$, pass@4 $= 1 - 495/1820 = 0.728$ and pass@8 $= 1 - 495/12870 = 0.962$.\n\n> Takeaway: mask SFT to assistant tokens, use preference tuning for style and RLVR for skills a program can check, harden the verifier as carefully as the model, and trust no score you have not decontaminated.",
+   "q": "In an RLVR run with GRPO you sample 64 prompts per step with 8 completions each. Logs show 20 prompts where all 8 completions are correct and 12 where all 8 are wrong. Meanwhile pass@1 on your held-out maths benchmark has risen from 40 to 70 percent in 200 steps, while two similar benchmarks moved by 2 points. What fraction of the batch is producing gradient, what would you change in sampling, and what do you suspect about the benchmark jump?",
+   "s": "Groups with identical rewards have zero advantage for every completion, so 32 of 64 prompts (256 of 512 completions, half the rollout compute) produce no policy gradient beyond any KL term. Filter prompts by pass rate: drop or down-sample those the model already always solves or always fails, and refill the batch until it holds enough mixed groups (sampling more prompts per step and discarding degenerate groups, or keeping a running per-prompt pass-rate estimate to drive a curriculum). Revisit the hardest prompts later, since a few lucky successes are the most informative signal. On the benchmark: a 30-point jump in 200 steps on one benchmark while similar benchmarks barely move suggests contamination or a verifier artefact rather than skill. Check long n-gram overlap (13-grams, say) between the RL and SFT prompt sets and the benchmark questions and answers; check whether the evaluation's answer extraction or template changed; and read a sample of newly-correct outputs to see whether they reason or recite. Report pass@1 averaged over several samples at fixed decoding settings, so the comparison is not sampling noise.",
+   "r": [
+    [
+     "Shao et al.: DeepSeekMath (2024)",
+     "https://arxiv.org/abs/2402.03300",
+     "Section 4: the GRPO objective, group-relative advantages and the outcome versus process supervision variants."
+    ],
+    [
+     "DeepSeek-AI: DeepSeek-R1 (2025)",
+     "https://arxiv.org/abs/2501.12948",
+     "R1-Zero: RL from a base model with rule-based accuracy and format rewards, and the multi-stage R1 recipe."
+    ],
+    [
+     "Lambert et al.: Tulu 3 (2024)",
+     "https://arxiv.org/abs/2411.15124",
+     "A fully open SFT, DPO and RLVR pipeline, including the verifiers and the benchmark decontamination procedure."
+    ],
+    [
+     "Rafailov et al.: Direct Preference Optimization (2023)",
+     "https://arxiv.org/abs/2305.18290",
+     "Section 4: deriving the DPO loss from the KL-regularised reward-maximisation objective."
+    ]
+   ],
+   "k": [
+    "SFT",
+    "RLVR",
+    "GRPO"
+   ],
+   "x": [
+    "PyTorch",
+    "TRL",
+    "vLLM"
+   ],
+   "p": [
+    "build-assistant-only-sft-loss-mask",
+    "normalize-grpo-group-advantages",
+    "grpo-group-relative-advantage",
+    "compare-sequence-and-token-length-normalization",
+    "dpo-closed-form-loss"
+   ]
+  }
+ ]
+}

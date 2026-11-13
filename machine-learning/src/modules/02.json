@@ -1,0 +1,298 @@
+{
+ "n": "02",
+ "name": "Linear models",
+ "lessons": [
+  {
+   "id": "02.01",
+   "t": "Linear regression",
+   "n": [
+    "Linear regression predicts $\\hat y = w^\\top x + b$ and picks $w$ by minimising squared error $\\|Xw - y\\|^2$; with an appended column of ones the intercept is just another weight.",
+    "Setting the gradient to zero gives the **normal equations** $X^\\top X w = X^\\top y$; solve them with QR or SVD (`lstsq`), never by inverting $X^\\top X$, which squares the condition number.",
+    "Geometrically, $\\hat y$ is the **orthogonal projection** of $y$ onto the column space of $X$, so the residual is orthogonal to every feature column.",
+    "Prediction needs few assumptions; interpreting coefficients and their standard errors needs many (independent, constant-variance errors, no collinearity, no omitted confounders)."
+   ],
+   "a": "## Where this module starts\nModule 01 framed learning as choosing a hypothesis class and a loss, then minimising empirical risk. Linear models are the simplest class worth using: the prediction is a weighted sum of features. They are fast, convex to fit, easy to debug, and the baseline every other model in this course has to beat. This lesson covers the regression case; later lessons swap the loss (logistic, hinge) or add a penalty (ridge, lasso) while keeping the same linear core. The ML Maths course (lesson 08.02) derives least squares from the linear-algebra side; here the focus is on what an engineer needs to fit, check and trust it.\n\n## The model and the loss\nFor $n$ examples with $d$ features, stack inputs into $X \\in \\mathbb{R}^{n \\times d}$ and targets into $y \\in \\mathbb{R}^n$. Append a column of ones to $X$ and the intercept $b$ becomes one more entry of $w$. The model is $\\hat y = Xw$ and ordinary least squares (OLS) minimises\n\n$$L(w) = \\tfrac{1}{n}\\|Xw - y\\|^2 = \\tfrac{1}{n}\\sum_i (w^\\top x_i - y_i)^2.$$\n\nWhy squared error? Three reasons. It is the negative log-likelihood if $y = w^\\top x + \\varepsilon$ with Gaussian noise, so OLS is the maximum-likelihood estimate under that model. It is smooth and convex, so there is one minimum and calculus finds it. And its minimiser is the conditional mean $\\mathbb{E}[y \\mid x]$, which is usually what you want to predict. The price: a residual of 10 costs 100 times a residual of 1, so a few outliers can drag the fit. Absolute or Huber loss (module 06) trades the closed form for robustness.\n\n\"Linear\" means linear in the parameters, not in the raw inputs. Features can be $x^2$, $\\log x$, interactions $x_1 x_2$ or one-hot encodings, and the fitting machinery is unchanged.\n\n## The normal equations and how to solve them\nThe gradient is $\\nabla L = \\tfrac{2}{n} X^\\top (Xw - y)$. Setting it to zero gives\n\n$$X^\\top X\\, w = X^\\top y.$$\n\nIf $X$ has full column rank ($n \\ge d$ and no feature is a linear combination of others), $X^\\top X$ is invertible and the solution is unique. In code, do not form the inverse:\n\n```python\nimport numpy as np\nX1 = np.c_[np.ones(len(X)), X]                  # add intercept column\nw, res, rank, sv = np.linalg.lstsq(X1, y, rcond=None)\nprint(rank, sv.max() / sv.min())                # rank and condition number of X\n```\n\n`lstsq` uses an SVD, which is stable and also reports rank and singular values. Forming $X^\\top X$ squares the condition number: if $\\kappa(X) = 10^5$, then $\\kappa(X^\\top X) = 10^{10}$ and in float64 you have lost about ten of your sixteen significant digits. Cost is $O(nd^2)$ for the factorisation, fine for $d$ in the thousands. For very large $n$ or streaming data, minimise the same loss with (mini-batch) gradient descent; the Hessian is $\\tfrac{2}{n}X^\\top X$, so its largest eigenvalue caps the stable step size and badly scaled features make convergence slow. Standardising features fixes most of that.\n\n## The geometric view\n$Xw$ ranges over the column space of $X$, a $d$-dimensional subspace of $\\mathbb{R}^n$. Least squares picks the point in that subspace closest to $y$, which is the orthogonal projection $\\hat y = Hy$ with the hat matrix $H = X(X^\\top X)^{-1}X^\\top$. Rewriting the normal equations as $X^\\top (y - \\hat y) = 0$ says the residual is orthogonal to every column.\n\n%%flow Least squares projects y onto the space the features can reach; what is left is orthogonal to every feature.\nTargets y -(project onto column space of X)-> *Fitted y-hat -(subtract from y)-> Residual r -(check)-> X-transpose r = 0\n%%\n\nUseful consequences:\n- With an intercept column, residuals sum to exactly zero and the fitted line passes through $(\\bar x, \\bar y)$.\n- $R^2 = 1 - \\|r\\|^2 / \\|y - \\bar y\\|^2$ is the fraction of variance the projection captures. Adding any feature can only enlarge the subspace, so training $R^2$ never drops; judge features on validation data.\n- The diagonal $h_{ii}$ of $H$ is the **leverage** of point $i$: how much its own label moves its own prediction. Points with extreme $x$ have high leverage and deserve a look.\n- Exact duplicates or collinear features make the subspace smaller than $d$. The projection $\\hat y$ is still unique, but $w$ is not: infinitely many weight vectors give the same predictions.\n\n## Assumptions and what breaks\nOLS will happily fit any data. The assumptions matter for what you claim afterwards.\n\n| Assumption | Needed for | Symptom when violated | Typical fix\n| Linear in the chosen features | unbiased predictions | curved pattern in residuals vs fitted | add transforms or interactions\n| Independent errors | valid standard errors | autocorrelated residuals in time series | time-aware models, clustered errors\n| Constant variance | efficient fit, honest intervals | residual spread grows with fitted value | log the target, weighted least squares\n| Normal errors | exact small-sample intervals only | heavy tails in residual plot | usually ignore for prediction; robust loss\n| No strong collinearity | stable, interpretable coefficients | huge coefficients with opposite signs | drop or merge features, ridge (02.02)\n| No omitted confounders | causal reading of a coefficient | coefficient sign flips when a feature is added | domain knowledge, experiments\n\nUnder the first three, the Gauss-Markov theorem says OLS has the lowest variance among unbiased linear estimators. That is a statement about unbiased estimators only; ridge accepts some bias to cut variance further, which is often a better deal (01.02).\n\n! Example: four points by hand\n! Data $x = (1, 2, 3, 4)$, $y = (2, 3, 5, 6)$. Means $\\bar x = 2.5$, $\\bar y = 4$. $\\sum (x - \\bar x)(y - \\bar y) = 3 + 0.5 + 0.5 + 3 = 7$ and $\\sum (x - \\bar x)^2 = 5$, so the slope is $1.4$ and the intercept is $4 - 1.4 \\cdot 2.5 = 0.5$.\n! Fitted values $(1.9, 3.3, 4.7, 6.1)$, residuals $(0.1, -0.3, 0.3, -0.1)$. They sum to 0, and $\\sum x_i r_i = 0.1 - 0.6 + 0.9 - 0.4 = 0$: orthogonal to both columns, as the geometry promises.\n! SSE $= 0.2$, total sum of squares $= 10$, so $R^2 = 0.98$.\n\n> Takeaway: least squares is a projection. Solve it with lstsq or QR, read the residuals rather than the coefficients first, and only interpret coefficients when the error and collinearity assumptions hold.\n",
+   "q": "You add a feature that is an exact copy of an existing one in different units (price in dollars and price in cents). What happens to the normal equations, to the predictions, and to the coefficients returned by `np.linalg.inv(X.T @ X) @ X.T @ y` versus `np.linalg.lstsq`?",
+   "s": "The new column is 100 times an existing one, so $X$ loses full column rank and $X^\\top X$ is singular: the normal equations have infinitely many solutions, all satisfying $w_{\\text{dollars}} + 100\\,w_{\\text{cents}} = \\text{const}$. The predictions do not change, because the column space is the same and the projection of $y$ onto it is unique. The explicit inverse either raises a singular-matrix error or, because rounding makes the matrix only nearly singular, returns enormous coefficients of opposite sign that are dominated by floating-point noise. `lstsq` uses the SVD, reports rank $d-1$, and returns the minimum-norm solution, which splits the weight between the two columns in proportion to their scale. Neither coefficient is individually meaningful; drop one column, or use ridge, which makes the system invertible and picks a unique split.",
+   "r": [
+    [
+     "Cornell CS4780 lecture notes: Linear Regression",
+     "https://www.cs.cornell.edu/courses/cs4780/2018fa/lectures/lecturenote08.html",
+     "OLS as maximum likelihood under Gaussian noise and its MAP (ridge) counterpart, in a few pages."
+    ],
+    [
+     "The Elements of Statistical Learning, ch. 3",
+     "https://hastie.su.domains/ElemStatLearn/",
+     "Sections 3.1-3.2: least squares geometry, the hat matrix and the Gauss-Markov theorem. Free PDF."
+    ],
+    [
+     "scikit-learn: Ordinary Least Squares",
+     "https://scikit-learn.org/stable/modules/linear_model.html",
+     "The LinearRegression section, including the note on collinearity and solver complexity."
+    ],
+    [
+     "Dive into Deep Learning: Linear Regression",
+     "https://d2l.ai/chapter_linear-regression/linear-regression.html",
+     "The same model fitted by minibatch SGD, as a bridge to the optimisation view."
+    ]
+   ],
+   "k": [
+    "least squares",
+    "normal equations"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "linear-regression",
+    "least-squares-solution",
+    "orthogonal-projection-matrix",
+    "moore-penrose-pseudoinverse",
+    "qr-decomposition"
+   ]
+  },
+  {
+   "id": "02.02",
+   "t": "Ridge, lasso and elastic net",
+   "n": [
+    "Ridge solves $(X^\\top X + \\lambda I)w = X^\\top y$; in the SVD basis it shrinks each direction by $\\sigma_j^2/(\\sigma_j^2 + \\lambda)$, so low-variance (often collinear) directions are shrunk most.",
+    "The lasso has no closed form, but each coordinate update is a **soft-threshold** $S(\\rho, \\lambda) = \\mathrm{sign}(\\rho)\\max(|\\rho| - \\lambda, 0)$, which is where exact zeros come from.",
+    "Elastic net mixes L1 and L2: it still selects features but keeps correlated groups together and can select more than $n$ features when $d > n$.",
+    "Fit the whole **regularisation path** on a log grid from $\\lambda_{\\max}$ down, with warm starts, and pick $\\lambda$ by cross-validation; the one-standard-error rule picks a sparser model at no real cost.",
+    "Penalty strength depends on feature scale and on the library's objective scaling; standardise first, and check whether the loss is divided by $n$."
+   ],
+   "a": "## Picking up from module 01\nLesson 01.04 introduced L2 and L1 penalties, their constraint and prior views, and why lasso drops one of two correlated features. This lesson is the mechanics for linear regression: what ridge does to each direction of the data, how the lasso is actually solved, what elastic net adds, and how to choose $\\lambda$ without fooling yourself. Assume columns of $X$ are standardised (mean 0, variance 1) and $y$ is centred, so the intercept is unpenalised and drops out.\n\n## Ridge through the SVD\nThe ridge objective $\\|y - Xw\\|^2 + \\lambda\\|w\\|^2$ has the closed form\n\n$$\\hat w_{\\text{ridge}} = (X^\\top X + \\lambda I)^{-1} X^\\top y.$$\n\nFor any $\\lambda > 0$ the matrix is positive definite, so the solution exists even with collinear columns or $d > n$. The SVD $X = U\\Sigma V^\\top$ shows what it does to predictions:\n\n$$\\hat y_{\\text{ridge}} = \\sum_j u_j \\,\\frac{\\sigma_j^2}{\\sigma_j^2 + \\lambda}\\, u_j^\\top y.$$\n\nOLS keeps each component $u_j^\\top y$ whole. Ridge multiplies it by a factor between 0 and 1 that is close to 1 for large singular values and close to 0 for small ones. Small singular values are directions where the features barely vary, typically differences between near-duplicate columns, and they are exactly where OLS coefficients blow up. The **effective degrees of freedom** $\\mathrm{df}(\\lambda) = \\sum_j \\sigma_j^2/(\\sigma_j^2 + \\lambda)$ runs from $d$ at $\\lambda = 0$ to $0$ as $\\lambda \\to \\infty$, which is a better complexity measure than counting features.\n\n## Lasso by coordinate descent\nThe lasso objective, in the scaling scikit-learn and glmnet use, is\n\n$$\\tfrac{1}{2n}\\|y - Xw\\|^2 + \\lambda \\|w\\|_1.$$\n\nThe kink at zero rules out a closed form, but one coordinate at a time is easy. Hold all other weights fixed, let $r_{(j)} = y - \\sum_{k \\ne j} x_k w_k$ be the partial residual, and $\\rho_j = \\tfrac1n x_j^\\top r_{(j)}$. With standardised columns the exact minimiser over $w_j$ is the soft-threshold $w_j = S(\\rho_j, \\lambda)$: shrink $\\rho_j$ toward zero by $\\lambda$, and if it crosses zero, stop at zero. Cycle over coordinates until nothing moves.\n\n```python\nimport numpy as np\ndef soft(r, lam): return np.sign(r) * np.maximum(np.abs(r) - lam, 0.0)\n\ndef lasso_cd(X, y, lam, iters=200):        # X standardised, y centred\n    n, d = X.shape; w = np.zeros(d); r = y.copy()\n    for _ in range(iters):\n        for j in range(d):\n            r += X[:, j] * w[j]             # remove j's contribution\n            w[j] = soft(X[:, j] @ r / n, lam)\n            r -= X[:, j] * w[j]\n    return w\n```\n\nTwo facts follow directly. At $\\lambda_{\\max} = \\max_j |x_j^\\top y|/n$ every coordinate thresholds to zero, which is where the path starts. And any feature whose correlation with the current residual stays below $\\lambda$ never enters the model. An alternative solver, ISTA, takes a full gradient step on the squared loss and then soft-thresholds every coordinate; it is slower per unit of progress but generalises to other smooth losses.\n\nThe lasso has known limits: with $d > n$ it selects at most $n$ features, and among a group of correlated features it picks one somewhat arbitrarily.\n\n## Elastic net\nElastic net adds both penalties:\n\n$$\\tfrac{1}{2n}\\|y - Xw\\|^2 + \\lambda\\Big(\\alpha\\|w\\|_1 + \\tfrac{1-\\alpha}{2}\\|w\\|_2^2\\Big).$$\n\nThe coordinate update becomes $w_j = S(\\rho_j, \\lambda\\alpha) / (1 + \\lambda(1-\\alpha))$: threshold, then shrink. The L2 part makes the objective strictly convex, so correlated features get similar weights (the grouping effect) and more than $n$ features can be selected. Beware the naming: scikit-learn's `alpha` is this $\\lambda$, and its `l1_ratio` is this $\\alpha$.\n\n| Property | Ridge | Lasso | Elastic net\n| Closed form | yes | no | no\n| Exact zeros | no | yes | yes\n| Correlated group | shares weight | keeps one | keeps the group, shrunk\n| Features selected when d > n | all, none zero | at most n | can exceed n\n| Usual solver | Cholesky or SVD | coordinate descent | coordinate descent\n\n## The path, and choosing lambda\nNever fit one $\\lambda$. Fit a grid of about 100 values spaced evenly in log scale from $\\lambda_{\\max}$ down to $\\lambda_{\\max}/10^{3}$ or so, starting each fit from the previous solution (a warm start). Neighbouring solutions are close, so the whole path costs little more than a few cold fits.\n\n%%flow The lasso path: start where every weight is zero and relax the penalty, letting features enter one by one.\nlambda max: all weights 0 -(lower lambda)-> few strong features -(lower)-> *CV minimum -(lower)-> near OLS, overfit\n%%\n\nChoose $\\lambda$ by K-fold cross-validation on the training data (module 06 covers the variants). The curve of CV error against $\\log\\lambda$ is usually flat near its minimum, so many $\\lambda$ values are statistically indistinguishable. The **one-standard-error rule** picks the largest $\\lambda$ whose CV error is within one standard error of the minimum: same accuracy within noise, fewer features, more stable. Three practical traps:\n- **Scale.** Standardise using training-fold statistics only, inside the CV loop.\n- **Library conventions.** scikit-learn's `Ridge` minimises $\\|y - Xw\\|^2 + \\alpha\\|w\\|^2$ with no $1/n$; `Lasso` divides the loss by $2n$. The same number means different strengths, and ridge's effective strength changes with dataset size.\n- **Shrinkage bias.** Lasso shrinks the weights it keeps. If you want unbiased coefficients for the selected set, refit OLS on them (the relaxed lasso), and validate that refit too.\n\n! Example: shrinkage factors and a threshold\n! Ridge on a design with singular values $(10, 1, 0.1)$ and $\\lambda = 1$: factors $100/101 = 0.99$, $1/2 = 0.5$ and $0.01/1.01 \\approx 0.01$. The strong direction is untouched, the weak one is almost removed, and $\\mathrm{df} \\approx 1.5$ out of 3.\n! Lasso coordinate update with $\\lambda = 0.3$: if $\\rho_j = 0.8$ the new weight is $0.5$; if $\\rho_j = 0.2$ it is exactly $0$; if $\\rho_j = -0.5$ it is $-0.2$.\n\n> Takeaway: ridge rescales directions of the data, the lasso soft-thresholds coordinates, and elastic net does both. Standardise, fit the whole path with warm starts, and choose lambda by cross-validation, preferring the sparser end of the flat region.\n",
+   "q": "You run lasso on unstandardised data. Income is in dollars (standard deviation 30,000) and age is in years (standard deviation 12); both matter about equally. Which coefficient does the lasso tend to zero out, why, and what would change if you re-expressed income in thousands of dollars?",
+   "s": "The lasso penalises $|w_j|$ regardless of units. To have the same effect on predictions, the age coefficient must be about 2,500 times larger than the income coefficient (30,000 / 12), so it costs 2,500 times more penalty for the same contribution. In coordinate-descent terms, age's update is thresholded far more heavily relative to its signal, so age is driven to zero first while income survives almost unshrunk. Re-expressing income in thousands multiplies its coefficient by 1,000 and its penalty with it, so the selection shifts toward age: the chosen model now depends on an arbitrary choice of units. Standardising both features (with training statistics) removes that dependence, puts every coefficient on a per-standard-deviation scale, and makes a single $\\lambda$ meaningful across features.",
+   "r": [
+    [
+     "Regularization Paths for Generalized Linear Models via Coordinate Descent",
+     "https://www.jstatsoft.org/article/view/v033i01",
+     "The glmnet paper (Friedman, Hastie, Tibshirani): soft-threshold updates, warm-started paths and the lambda grid."
+    ],
+    [
+     "Statistical Learning with Sparsity",
+     "https://hastie.su.domains/StatLearnSparsity/",
+     "Chapters 2-4 on the lasso, elastic net and their solvers. Free PDF."
+    ],
+    [
+     "scikit-learn: Linear models (Ridge, Lasso, Elastic-Net)",
+     "https://scikit-learn.org/stable/modules/linear_model.html",
+     "The exact objectives behind alpha and l1_ratio, and the CV variants LassoCV and ElasticNetCV."
+    ],
+    [
+     "The Elements of Statistical Learning, ch. 3.4",
+     "https://hastie.su.domains/ElemStatLearn/",
+     "Ridge via the SVD, effective degrees of freedom and the lasso path."
+    ]
+   ],
+   "k": [
+    "shrinkage",
+    "sparsity"
+   ],
+   "x": [
+    "NumPy",
+    "scikit-learn"
+   ],
+   "p": [
+    "ridge-regression",
+    "lasso-regression",
+    "lasso-regression-using-ista",
+    "subgradients-for-non-smooth-functions",
+    "hessian-matrix-and-convexity-of-linear-regressio"
+   ]
+  },
+  {
+   "id": "02.03",
+   "t": "Logistic regression",
+   "n": [
+    "Logistic regression models the **log-odds** as linear: $\\log\\frac{p}{1-p} = w^\\top x + b$, so $p = \\sigma(w^\\top x + b)$ and a one-unit change in $x_j$ multiplies the odds by $e^{w_j}$.",
+    "Its loss is the Bernoulli negative log-likelihood (binary cross-entropy); in margin form it is $\\log(1 + e^{-y z})$ with $y \\in \\{-1, +1\\}$, which links it to the SVM's hinge loss.",
+    "The gradient $\\frac1n X^\\top(p - y)$ has the same shape as linear regression's; the loss is convex, so gradient descent, Newton (IRLS) or L-BFGS all reach the global optimum.",
+    "On linearly separable data the unregularised optimum does not exist: weights grow without bound. Regularisation (scikit-learn applies L2 with `C=1.0` by default) fixes it.",
+    "The decision boundary $w^\\top x + b = \\log\\frac{t}{1-t}$ is a hyperplane; changing the threshold $t$ slides it without rotating it."
+   ],
+   "a": "## From scores to probabilities\nFor a binary label, a linear score $z = w^\\top x + b$ ranges over all real numbers, but a probability must lie in $(0, 1)$. Logistic regression connects the two through the sigmoid:\n\n$$p(y = 1 \\mid x) = \\sigma(z) = \\frac{1}{1 + e^{-z}}.$$\n\nInverting it shows what is really linear: $z = \\log\\frac{p}{1-p}$, the **log-odds**. Each feature adds a fixed amount to the log-odds, so a one-unit increase in $x_j$ multiplies the odds by $e^{w_j}$. With $w_j = 0.7$ the odds roughly double. That is the interpretation analysts use, and it holds only with the same caveats about collinearity and confounding as in 02.01.\n\n| Probability p | Odds p/(1-p) | Logit z\n| 0.50 | 1 | 0\n| 0.73 | 2.7 | 1\n| 0.88 | 7.4 | 2\n| 0.95 | 19 | 2.94\n| 0.99 | 99 | 4.6\n\nThe table is worth remembering: logits of a few units already mean near-certainty, which is why weights do not need to be large to produce confident predictions.\n\n## Cross-entropy from maximum likelihood\nTreat each label as a Bernoulli draw with probability $p_i = \\sigma(w^\\top x_i)$. The negative log-likelihood, averaged, is the binary cross-entropy:\n\n$$L(w) = -\\tfrac{1}{n}\\sum_i \\big[y_i \\log p_i + (1 - y_i)\\log(1 - p_i)\\big].$$\n\nWith labels recoded as $y \\in \\{-1, +1\\}$ the same loss reads $\\tfrac1n\\sum_i \\log(1 + e^{-y_i z_i})$, a function of the **margin** $y_i z_i$ only. Large positive margins cost almost nothing; a confidently wrong prediction (margin $-5$) costs about 5. Lesson 02.05 compares this curve with the SVM's hinge loss.\n\nWhy not squared error on $\\sigma(z)$? It is not convex in $w$, and its gradient contains a factor $\\sigma'(z)$ that vanishes when the model is confidently wrong, exactly when it most needs to move. Cross-entropy cancels that factor. In code, always compute the loss from logits, not from rounded probabilities: `np.logaddexp(0, -y * z)` is exact for large $|z|$, while `np.log(sigmoid(z))` returns `-inf` once $\\sigma(z)$ rounds to 0.\n\n## Fitting it\nThe gradient is strikingly simple:\n\n$$\\nabla L = \\tfrac{1}{n} X^\\top (p - y),$$\n\nprediction error times input, the same shape as linear regression. The Hessian $\\tfrac1n X^\\top S X$ with $S = \\mathrm{diag}(p_i(1 - p_i))$ is positive semi-definite, so the loss is convex and any local minimum is global.\n\n```python\nimport numpy as np\ndef fit_logreg(X, y, lam=1e-2, lr=0.5, steps=2000):   # y in {0,1}\n    w = np.zeros(X.shape[1])\n    for _ in range(steps):\n        p = 1 / (1 + np.exp(-(X @ w)))\n        w -= lr * (X.T @ (p - y) / len(y) + lam * w)  # L2 keeps w finite\n    return w\n```\n\nPlain gradient descent works but is slow on badly scaled features. **Newton's method** uses the Hessian; for logistic regression each Newton step is a weighted least-squares solve, hence the name iteratively reweighted least squares (IRLS), and it converges in 5 to 10 iterations for moderate $d$. scikit-learn defaults to L-BFGS, a quasi-Newton method that approximates curvature from recent gradients, and uses SAGA or liblinear for large sparse problems.\n\n**Separable data.** If some hyperplane separates the classes perfectly, scaling $w$ up always lowers the loss, so the minimiser does not exist: weights diverge, probabilities saturate at 0 and 1, and the optimiser runs until it hits its iteration limit. This happens often with many features or rare categories. An L2 penalty makes the optimum finite and unique; scikit-learn's `LogisticRegression` applies one by default, with `C` the *inverse* strength ($C = 1/\\lambda$, applied to a summed rather than averaged loss).\n\n## Decision boundaries\nPredicting class 1 when $p \\ge t$ is the same as $z \\ge \\log\\frac{t}{1-t}$. For $t = 0.5$ the boundary is the hyperplane $w^\\top x + b = 0$, with $w$ normal to it. Moving the threshold shifts the hyperplane parallel to itself; it never rotates. The size $\\|w\\|$ sets how fast probability changes across the boundary: the distance from the boundary to the 0.73 contour is $1/\\|w\\|$.\n\n%%flow One prediction: a linear score, squashed to a probability, then cut at a threshold chosen for the costs at hand.\nFeatures x -(w.x + b)-> Logit z -(sigmoid)-> *Probability p -(compare with t)-> Class\n%%\n\nCurved boundaries come from features, not from the model: adding $x_1^2$, $x_2^2$ and $x_1 x_2$ lets a linear boundary in the expanded space become an ellipse in the original one. Lesson 02.06 does this implicitly with kernels. Choosing $t$ is a cost question covered in module 06; whether $p$ can be trusted as a probability is lesson 03.04.\n\n! Example: one gradient step by hand\n! Weights $w = (2, -1)$, bias $b = -0.5$, one example $x = (1, 0.5)$ with $y = 1$.\n! Logit $z = 2 - 0.5 - 0.5 = 1.0$, so $p = \\sigma(1) = 0.731$ and the loss is $-\\ln 0.731 = 0.313$.\n! Error $p - y = -0.269$, so the gradient is $(-0.269, -0.134)$ for $w$ and $-0.269$ for $b$. A step with learning rate 0.5 gives $w = (2.134, -0.933)$ and $b = -0.366$; the new logit is $1.30$ and $p = 0.79$.\n\n> Takeaway: logistic regression is a linear model of the log-odds fitted by maximum likelihood. The loss is convex and the gradient is error times input; regularise it, or separable data will send the weights to infinity.\n",
+   "q": "You train unregularised logistic regression with gradient descent on a dataset that turns out to be perfectly linearly separable. Describe what happens to the training loss, the norm of the weights and the predicted probabilities as iterations increase, why this is a problem in practice, and two ways to fix it.",
+   "s": "Once a separating hyperplane is found, every example has a positive margin $y_i z_i$, and multiplying $w$ by any factor above 1 increases every margin and lowers every $\\log(1 + e^{-y_i z_i})$ term. So the loss keeps falling toward 0 without reaching it, $\\|w\\|$ grows without bound (roughly logarithmically in the number of steps), and predicted probabilities on training points saturate at 0 and 1. The direction of $w$ settles but its scale never does. In practice the optimiser hits its iteration cap and warns about convergence, coefficients and odds ratios are meaningless, and the model is overconfident on new points near the boundary. Fixes: add an L2 (or L1) penalty, which makes the optimum finite and unique; or stop early on validation loss. Collecting more data that overlaps the classes, or merging the rare categories causing separation, also helps.",
+   "r": [
+    [
+     "Cornell CS4780 lecture notes: Logistic Regression",
+     "https://www.cs.cornell.edu/courses/cs4780/2018fa/lectures/lecturenote06.html",
+     "Logistic regression derived as MLE and MAP, with the gradient."
+    ],
+    [
+     "Stanford CS229 main notes",
+     "https://cs229.stanford.edu/main_notes.pdf",
+     "Part on classification and logistic regression, plus Newton's method and the generalised linear model view."
+    ],
+    [
+     "scikit-learn: LogisticRegression",
+     "https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LogisticRegression.html",
+     "What C means, which penalty is on by default, and which solver handles which penalty."
+    ]
+   ],
+   "k": [
+    "log-odds",
+    "cross-entropy"
+   ],
+   "x": [
+    "NumPy",
+    "scikit-learn"
+   ],
+   "p": [
+    "logistic-regression",
+    "log-loss-binary-cross-entropy",
+    "newton-s-method",
+    "sigmoid-stable",
+    "basic-autograd"
+   ]
+  },
+  {
+   "id": "02.04",
+   "t": "Multiclass classification",
+   "n": [
+    "Two routes to $K$ classes: **reduce** to binary problems (one-vs-rest with $K$ models, one-vs-one with $K(K-1)/2$), or use a natively multiclass model such as softmax regression.",
+    "One-vs-rest scores come from separately trained models, so they are not on a common scale and do not sum to 1; each subproblem is also imbalanced ($1$ class against $K-1$).",
+    "Softmax regression sets $p(y = k \\mid x) = e^{z_k}/\\sum_j e^{z_j}$ with $z = Wx + b$; the cross-entropy gradient on the logits is just $p - \\text{onehot}(y)$.",
+    "Softmax is over-parameterised (adding a vector to every row of $W$ changes nothing); with $K = 2$ it reduces exactly to logistic regression on $w_1 - w_0$.",
+    "If labels are not mutually exclusive (multi-label), use $K$ independent sigmoids, not a softmax."
+   ],
+   "a": "## Two routes to K classes\nLogistic regression and SVMs are binary. With $K > 2$ classes there are two strategies:\n- **Reduction**: train several binary classifiers and combine their outputs. Works with any binary learner, including ones that have no natural multiclass form.\n- **Native multiclass**: change the model so it scores all $K$ classes jointly. For linear models that is softmax (multinomial logistic) regression.\n\nscikit-learn does this silently: `LogisticRegression` uses the multinomial form by default with most solvers, `SVC` uses one-vs-one internally, and `LinearSVC` uses one-vs-rest. Knowing which one you got matters when you read the scores.\n\n## One-vs-rest and one-vs-one\n**One-vs-rest (OvR)** trains classifier $k$ to separate class $k$ from everything else, then predicts $\\arg\\max_k s_k(x)$. It needs $K$ models, each trained on all $n$ examples. Three weaknesses:\n- The scores come from independently trained models, so a score of 2.0 from model 3 and 1.5 from model 5 are not directly comparable, and OvR probabilities do not sum to 1.\n- Each subproblem is imbalanced: with 10 balanced classes, every binary problem is 10% positive.\n- Regions where every classifier says \"not mine\", or several say \"mine\", are resolved only by the argmax.\n\nRifkin and Klautau showed that, with each binary model well tuned and regularised, OvR is as accurate as more elaborate schemes. It is a fine default when the binary learner is strong.\n\n**One-vs-one (OvO)** trains a classifier for every pair of classes on just those two classes' data and predicts by majority vote. For $K = 10$ that is 45 models instead of 10, but each sees only about a fifth of the data. For kernel SVMs, whose training cost grows faster than linearly in $n$, many small problems can be cheaper than a few big ones, which is why libsvm uses OvO.\n\n| Property | One-vs-rest | One-vs-one | Softmax\n| Models trained | K | K(K-1)/2 | 1 (K weight vectors)\n| Data per model | all n | two classes only | all n\n| Scores sum to 1 | no | no (votes) | yes\n| Typical use | linear SVMs, any binary learner | kernel SVMs | logistic-style models, neural nets\n\n## Softmax regression\nGive each class a weight vector, stacked as $W \\in \\mathbb{R}^{K \\times d}$, compute logits $z = Wx + b$, and normalise:\n\n$$p(y = k \\mid x) = \\frac{e^{z_k}}{\\sum_{j=1}^{K} e^{z_j}}.$$\n\nThe loss is cross-entropy, the negative log-probability of the true class:\n\n$$\\ell = -\\log p_y = -z_y + \\log\\sum_j e^{z_j}.$$\n\nIts gradient with respect to the logits is $p - e_y$, where $e_y$ is the one-hot label: push the true class's logit up by $1 - p_y$ and every other logit down by its probability. The weight gradient is that vector times $x^\\top$. The loss is convex in $W$, so the fitting story from 02.03 carries over: gradient methods or L-BFGS, with L2 regularisation.\n\n```python\nimport numpy as np\ndef softmax_xent(Z, y):                 # Z: (n, K) logits, y: (n,) int labels\n    Z = Z - Z.max(axis=1, keepdims=True)              # stability: exp never overflows\n    logp = Z - np.log(np.exp(Z).sum(axis=1, keepdims=True))\n    loss = -logp[np.arange(len(y)), y].mean()\n    G = np.exp(logp); G[np.arange(len(y)), y] -= 1    # dL/dZ = p - onehot\n    return loss, G / len(y)\n```\n\nSubtracting the row maximum leaves the probabilities unchanged (softmax ignores a constant added to every logit) and keeps `exp` from overflowing; computing log-probabilities directly, the log-sum-exp trick, avoids `log(0)`. The AI Research course (lesson 02.02) covers softmax intuition and temperature in more depth.\n\nThat invariance has a second consequence: adding the same vector $c$ to every row of $W$ leaves predictions unchanged, so the unregularised model has no unique solution. Any L2 penalty pins it down. With $K = 2$, only the difference matters: $p(y = 1) = \\sigma\\big((w_1 - w_0)^\\top x\\big)$, which is exactly logistic regression.\n\n%%flow Softmax regression: one score per class, normalised jointly, so the outputs compete and sum to 1.\nFeatures x -(W x + b)-> K logits -(softmax)-> *K probabilities -(argmax)-> Predicted class\n%%\n\n**Decision regions.** Class $k$ wins where $z_k \\ge z_j$ for all $j$, an intersection of $K - 1$ half-spaces. So the regions are convex polytopes and boundaries are piecewise linear, the same for OvR and softmax, though the exact hyperplanes differ.\n\n## Multi-label is a different problem\nIf an example can carry several labels at once (a photo tagged both \"beach\" and \"dog\"), softmax is wrong: it forces the probabilities to compete and sum to 1. Use $K$ independent sigmoid outputs with binary cross-entropy on each, which is OvR with an honest name, and pick a threshold per label. For very large $K$ (thousands of products or words), the full softmax becomes the computational bottleneck; sampled and hierarchical softmax are covered in the Deep Learning and Recommender Systems material.\n\n! Example: softmax and its gradient for three classes\n! Logits $z = (2.0, 1.0, 0.1)$. Exponentials $7.389, 2.718, 1.105$, sum $11.212$, so $p = (0.659, 0.242, 0.099)$.\n! If the true class is the second one, the loss is $-\\ln 0.242 = 1.42$ and the gradient on the logits is $p - e_2 = (0.659, -0.758, 0.099)$: lower the first and third logits, raise the second.\n! Adding 100 to every logit gives the same $p$; computing $e^{102}$ directly would still work in float64 but overflows float32 near $e^{89}$, which is why the max is subtracted first.\n\n> Takeaway: reduce to binary problems when your learner is binary, but prefer softmax regression when you want comparable scores and probabilities that sum to 1. Use independent sigmoids when labels are not exclusive.\n",
+   "q": "An OvR logistic model on 4 balanced classes outputs per-class sigmoid probabilities (0.30, 0.25, 0.20, 0.10) for a test point. What does this pattern tell you, how would a softmax model trained on the same data present the same point, and which output would you rather feed into a downstream cost-sensitive decision?",
+   "s": "The four binary models each say this point is more likely not their class, and their probabilities sum to only 0.85. The point sits in a region none of them claims, near the shared boundaries or away from the training data. The argmax still predicts class 1, but by a narrow margin, and the numbers are not a distribution: rescaling them to sum to 1 (0.35, 0.29, 0.24, 0.12) is an ad hoc fix with no likelihood behind it. A softmax model is trained so its outputs form a distribution over the four classes. It would likely give a similarly flat but properly normalised vector, and because it was fitted with multiclass cross-entropy, its probabilities are usually better calibrated. For a cost-sensitive decision, which needs expected costs $\\sum_k p_k c_k$, use the softmax output (after a calibration check as in 03.04), and treat the flat profile as a signal to abstain or route for review.",
+   "r": [
+    [
+     "In Defense of One-Vs-All Classification",
+     "https://www.jmlr.org/papers/v5/rifkin04a.html",
+     "Rifkin and Klautau (JMLR 2004): well-tuned one-vs-rest matches more complex multiclass schemes."
+    ],
+    [
+     "Dive into Deep Learning: Softmax Regression",
+     "https://d2l.ai/chapter_linear-classification/softmax-regression.html",
+     "Softmax, cross-entropy and its gradient, with the information-theory view of the loss."
+    ],
+    [
+     "scikit-learn: Multiclass and multioutput algorithms",
+     "https://scikit-learn.org/stable/modules/multiclass.html",
+     "OneVsRest, OneVsOne and which estimators are inherently multiclass, plus multi-label targets."
+    ]
+   ],
+   "k": [
+    "softmax",
+    "one-vs-rest"
+   ],
+   "x": [
+    "NumPy",
+    "scikit-learn"
+   ],
+   "p": [
+    "softmax-regression",
+    "softmax-cross-entropy-gradient",
+    "cross-entropy-logits",
+    "softmax-numerical-stability-and-log-sum-exp",
+    "top-k-classification-accuracy"
+   ]
+  },
+  {
+   "id": "02.05",
+   "t": "Support vector machines",
+   "n": [
+    "Among all separating hyperplanes, the SVM picks the one with the widest **margin**; fixing the closest points at $y_i(w^\\top x_i + b) = 1$ makes the margin $1/\\|w\\|$, so maximising it means minimising $\\tfrac12\\|w\\|^2$.",
+    "The soft margin adds slack for violations; it is equivalent to minimising $\\tfrac{\\lambda}{2}\\|w\\|^2 + \\tfrac1n\\sum_i \\max(0, 1 - y_i f(x_i))$, the regularised **hinge loss**, with $\\lambda = 1/(nC)$.",
+    "Hinge loss is exactly zero beyond the margin, so only **support vectors** (points on or inside the margin) determine the solution; logistic loss is never zero, so every point contributes.",
+    "**Pegasos** solves the primal by SGD: step $\\eta_t = 1/(\\lambda t)$, shrink $w$ by $(1 - \\eta_t\\lambda)$ every step, and add $\\eta_t y_i x_i$ only when the margin is below 1.",
+    "In the dual, data enter only through dot products $x_i^\\top x_j$, which is what makes kernels (next lesson) possible."
+   ],
+   "a": "## Margins\nWhen two classes are linearly separable, infinitely many hyperplanes separate them. Logistic regression without regularisation does not even settle on one (02.03). The support vector machine makes a specific choice: the hyperplane that stays as far as possible from the nearest training points. A wide margin means small perturbations of the inputs do not flip predictions, and margin-based bounds tie a wider margin to better generalisation regardless of the number of features.\n\nFor a classifier $f(x) = w^\\top x + b$ and labels $y \\in \\{-1, +1\\}$, the **functional margin** of point $i$ is $y_i f(x_i)$, positive when correct. Its geometric distance to the hyperplane is $y_i f(x_i)/\\|w\\|$. Because $w$ and $b$ can be rescaled freely, fix the scale so that the closest points have functional margin exactly 1. The margin is then $1/\\|w\\|$ on each side, and the hard-margin SVM is\n\n$$\\min_{w,b}\\; \\tfrac12\\|w\\|^2 \\quad \\text{s.t.}\\quad y_i(w^\\top x_i + b) \\ge 1 \\;\\; \\forall i.$$\n\n## Soft margin and the hinge loss\nReal data overlap, and one mislabelled point should not dictate the boundary. Add a slack $\\xi_i \\ge 0$ per point, allow $y_i f(x_i) \\ge 1 - \\xi_i$, and pay for slack:\n\n$$\\min_{w,b,\\xi}\\; \\tfrac12\\|w\\|^2 + C\\sum_i \\xi_i.$$\n\nAt the optimum, $\\xi_i = \\max(0, 1 - y_i f(x_i))$, so the problem is the unconstrained, regularised **hinge loss** $\\tfrac{\\lambda}{2}\\|w\\|^2 + \\tfrac1n\\sum_i \\max(0, 1 - y_i f(x_i))$ with $\\lambda = 1/(nC)$. That puts the SVM into the module 01 template: a linear class, a surrogate loss, an L2 penalty. Large $C$ (small $\\lambda$) tolerates few violations, giving a narrow margin and higher variance; small $C$ gives a wide margin with more violations.\n\n| Margin m = y f(x) | 0-1 loss | Hinge max(0, 1-m) | Logistic log(1+e^-m)\n| -1 (wrong) | 1 | 2 | 1.31\n| 0 (on boundary) | 1 | 1 | 0.69\n| 1 (on margin) | 0 | 0 | 0.31\n| 2 (safe) | 0 | 0 | 0.13\n\nBoth surrogates are convex upper bounds (up to scale) on the 0-1 loss. The difference is the right tail: hinge loss is exactly zero once a point is past the margin, so those points exert no force on the solution. Logistic loss keeps rewarding larger margins, which is what makes its outputs probabilities. SVM scores are not probabilities; if you need them, calibrate (03.04).\n\n## Pegasos: SGD on the primal\nFor linear SVMs on large datasets, the simplest effective solver is stochastic subgradient descent on the hinge objective. Pegasos (Shalev-Shwartz et al.) picks one example per step and uses step size $\\eta_t = 1/(\\lambda t)$:\n\n```python\nimport numpy as np\ndef pegasos(X, y, lam=1e-3, T=100_000, seed=0):   # y in {-1,+1}\n    rng = np.random.default_rng(seed); w = np.zeros(X.shape[1])\n    for t in range(1, T + 1):\n        i = rng.integers(len(y)); eta = 1.0 / (lam * t)\n        if y[i] * (X[i] @ w) < 1:                    # inside the margin: hinge is active\n            w = (1 - eta * lam) * w + eta * y[i] * X[i]\n        else:                                        # only the regulariser acts\n            w = (1 - eta * lam) * w\n    return w\n```\n\nEvery step shrinks $w$ (the regulariser's gradient); only margin violators add to it. The number of iterations needed for accuracy $\\epsilon$ scales like $1/(\\lambda\\epsilon)$ and does not depend on $n$, which is why it suits very large data. The bias is usually handled by appending a constant feature, which regularises it slightly; with standardised features that rarely matters. Compare the perceptron: it updates only on mistakes (margin $\\le 0$), never shrinks, and stops at any separating hyperplane, not the widest one.\n\n## The dual and support vectors\nSolving the constrained problem with Lagrange multipliers $\\alpha_i$ gives the dual:\n\n$$\\max_{\\alpha}\\; \\sum_i \\alpha_i - \\tfrac12\\sum_{i,j}\\alpha_i\\alpha_j y_i y_j\\, x_i^\\top x_j \\quad \\text{s.t.}\\quad 0 \\le \\alpha_i \\le C,\\; \\sum_i \\alpha_i y_i = 0,$$\n\nwith $w = \\sum_i \\alpha_i y_i x_i$. Two things to notice. The training data appear only as dot products $x_i^\\top x_j$, so replacing them with a kernel $k(x_i, x_j)$ gives a nonlinear SVM without ever forming features (02.06). And the optimality conditions sort points into three groups:\n\n%%layers Where each training point sits decides its multiplier, and only points with a nonzero multiplier shape the boundary.\nBeyond the margin | alpha = 0; no influence, could be deleted\n*On the margin | 0 < alpha < C; free support vectors, they pin the hyperplane\nInside the margin or misclassified | alpha = C; bounded support vectors, slack is positive\n%%\n\nTypically only a fraction of points are support vectors, which keeps kernel SVM predictions cheap.\n\n**Practical notes.** Standardise features: the margin is a Euclidean distance, so a feature in large units dominates it. Tune $C$ on a log grid by cross-validation. For linear problems use liblinear (`LinearSVC`) or SGD; libsvm (`SVC`) solves the dual and scales roughly between $n^2$ and $n^3$, so it suits tens of thousands of points, not millions.\n\n! Example: two Pegasos steps\n! $\\lambda = 0.1$, step $t = 10$, so $\\eta = 1/(0.1 \\cdot 10) = 1$. Current $w = (0.5, -0.2)$.\n! Example $x = (1, 2)$, $y = +1$: margin $0.5 - 0.4 = 0.1 < 1$, so $w \\leftarrow 0.9\\,(0.5, -0.2) + (1, 2) = (1.45, 1.82)$. Its margin is now $1.45 + 3.64 = 5.09$.\n! Next step $t = 11$, $\\eta = 0.909$, example $x = (2, 1)$, $y = +1$: margin $2.9 + 1.82 = 4.72 \\ge 1$, so only the shrink applies: $w \\leftarrow (1 - 0.0909)\\,w = (1.32, 1.65)$.\n\n> Takeaway: an SVM is L2-regularised hinge loss on a linear model. The hinge's flat region makes the solution depend only on support vectors, and its dual depends only on dot products, which opens the door to kernels.\n",
+   "q": "After training a soft-margin linear SVM (fixed C), you delete every training point that is not a support vector and retrain with the same C. What happens to the solution and why? Would the same trick work for L2-regularised logistic regression?",
+   "s": "The solution is unchanged. Points strictly beyond the margin have $\\alpha_i = 0$ and zero hinge loss, so they contribute nothing to the objective's (sub)gradient at the optimum. The original $(w, b)$ is still feasible for the reduced problem and still satisfies its optimality (KKT) conditions, and because the problem is convex, it is still optimal. This holds in the $C$ form; in the $\\lambda/n$ form you would have to rescale $\\lambda$, since $n$ changes. In practice, solvers use this to shrink the working set. It does not work for logistic regression: $\\log(1 + e^{-m})$ is positive for every finite margin, so every point exerts some pull on $w$. Deleting the well-classified points removes that pull, the regulariser then shrinks $w$ more, and the boundary and probabilities shift. Logistic regression has no sparse set of support vectors.",
+   "r": [
+    [
+     "Pegasos: Primal Estimated sub-GrAdient SOlver for SVM",
+     "https://home.ttic.edu/~nati/Publications/PegasosMPB.pdf",
+     "Shalev-Shwartz, Singer, Srebro and Cotter: the algorithm, its step size and the n-independent convergence rate."
+    ],
+    [
+     "Cornell CS4780 lecture notes: Support Vector Machine",
+     "https://www.cs.cornell.edu/courses/cs4780/2018fa/lectures/lecturenote09.html",
+     "Margin derivation, soft margin and the hinge-loss view."
+    ],
+    [
+     "scikit-learn: Support Vector Machines",
+     "https://scikit-learn.org/stable/modules/svm.html",
+     "SVC vs LinearSVC, the C parameter, complexity and the warning about unscaled data."
+    ],
+    [
+     "Stanford CS229 main notes",
+     "https://cs229.stanford.edu/main_notes.pdf",
+     "The SVM chapter: functional vs geometric margin, Lagrange duality and the KKT conditions."
+    ]
+   ],
+   "k": [
+    "margin",
+    "hinge loss"
+   ],
+   "x": [
+    "NumPy",
+    "scikit-learn"
+   ],
+   "p": [
+    "svm-with-hinge-loss-sgd",
+    "perceptron",
+    "averaged-perceptron",
+    "subgradients-for-non-smooth-functions"
+   ]
+  },
+  {
+   "id": "02.06",
+   "t": "Kernels",
+   "n": [
+    "A **kernel** $k(x, x') = \\phi(x)^\\top\\phi(x')$ computes an inner product in a feature space without building $\\phi$; any algorithm that touches data only through inner products can be kernelised.",
+    "By the representer theorem, the regularised solution is $f(x) = \\sum_i \\alpha_i k(x_i, x)$: one coefficient per training point, not per feature.",
+    "The RBF kernel $e^{-\\gamma\\|x - x'\\|^2}$ corresponds to an infinite-dimensional feature space; $\\gamma$ sets the bump width, from near-linear (small) to memorising each point (large).",
+    "Kernel ridge regression solves $\\alpha = (K + \\lambda I)^{-1}y$: $O(n^3)$ time and $O(n^2)$ memory, so 50,000 points already need a 20 GB Gram matrix.",
+    "Past that scale, approximate the kernel with explicit features (random Fourier features, Nyström) and go back to a linear model."
+   ],
+   "a": "## Feature maps and their cost\nEvery model in this module is linear in its features. To get a curved boundary you expand the features: $\\phi(x)$ adds squares, products, higher powers. The cost explodes. All monomials up to degree $p$ in $d$ variables number $\\binom{d+p}{p}$; for $d = 100$ and $p = 3$ that is 176,851 features per example. Most of that work is wasted if the algorithm only ever needs inner products between examples.\n\n## The kernel trick\nLook back at the SVM dual (02.05): the data appear only as $x_i^\\top x_j$. Ridge regression can be rewritten the same way. If we replace every inner product with a function $k(x, x')$ that equals $\\phi(x)^\\top\\phi(x')$ for some $\\phi$, the algorithm runs in feature space without ever computing $\\phi$.\n\nThe polynomial case shows it concretely. For $x \\in \\mathbb{R}^2$,\n\n$$(x^\\top x')^2 = x_1^2 x_1'^2 + 2x_1x_2x_1'x_2' + x_2^2x_2'^2 = \\phi(x)^\\top\\phi(x'),\\quad \\phi(x) = (x_1^2, \\sqrt2\\,x_1x_2, x_2^2).$$\n\nOne dot product and one square replace building three features; for degree 3 in 100 dimensions, one dot product and a cube replace 176,851.\n\nTwo results make this general:\n- **Representer theorem.** For a loss on training predictions plus an L2 penalty $\\lambda\\|w\\|^2$, the minimiser lies in the span of the training points' features: $w = \\sum_i \\alpha_i\\phi(x_i)$, so $f(x) = \\sum_i \\alpha_i k(x_i, x)$. You learn $n$ coefficients no matter how many features $\\phi$ has, even infinitely many.\n- **Mercer's condition.** A symmetric function is a valid kernel exactly when every Gram matrix $K_{ij} = k(x_i, x_j)$ it produces is positive semi-definite. Sums, positive multiples and products of kernels are kernels, which lets you build new ones.\n\n%%flow Two ways to get the same nonlinear model; the kernel route costs depend on n, the explicit route on the number of features.\n[Explicit] Input x -(expand)-> Features phi(x) -(dot with w)-> Prediction\n[Kernel] Input x -(compare with each x_i)-> *k(x_i, x) for all i -(weight by alpha_i, sum)-> Prediction\n%%\n\n## Common kernels\n| Kernel | Formula | Feature space | Main knob\n| Linear | $x^\\top x'$ | the inputs themselves | none\n| Polynomial | $(\\gamma\\,x^\\top x' + c)^p$ | all monomials up to degree p | degree p, offset c\n| RBF (Gaussian) | $\\exp(-\\gamma\\|x - x'\\|^2)$ | infinite-dimensional | width gamma\n| Sigmoid | $\\tanh(\\gamma\\,x^\\top x' + c)$ | not always PSD | rarely worth it\n\nThe RBF kernel is the default nonlinear choice. It measures similarity: 1 for identical points, falling toward 0 with distance on a length scale of about $1/\\sqrt{\\gamma}$. The prediction is a weighted sum of bumps centred on training points. Small $\\gamma$ gives wide bumps and an almost linear function; large $\\gamma$ gives narrow bumps that fit each point separately. scikit-learn's default `gamma=\"scale\"` is $1/(d \\cdot \\mathrm{Var}(X))$, a sensible start on standardised data; tune $\\gamma$ and the regularisation strength together on a log grid, because they interact. Kernels are distance-based, so standardise first, exactly as for kNN (03.02).\n\n## Kernel ridge regression\nRidge regression's solution can be rewritten as $w = X^\\top(XX^\\top + \\lambda I)^{-1}y$ (multiply out both forms to check). Here $XX^\\top$ is the $n \\times n$ matrix of inner products, so with a kernel:\n\n$$\\alpha = (K + \\lambda I)^{-1}y, \\qquad f(x) = \\sum_i \\alpha_i\\, k(x_i, x).$$\n\n```python\nimport numpy as np\ndef rbf(A, B, gamma):\n    d2 = (A**2).sum(1)[:, None] + (B**2).sum(1)[None, :] - 2 * A @ B.T\n    return np.exp(-gamma * np.maximum(d2, 0))\n\ndef krr_fit(X, y, gamma, lam):\n    K = rbf(X, X, gamma)\n    return np.linalg.solve(K + lam * np.eye(len(X)), y)   # alpha; Cholesky in practice\n\ndef krr_predict(Xtr, alpha, Xnew, gamma):\n    return rbf(Xnew, Xtr, gamma) @ alpha\n```\n\nThe same formula is the posterior mean of a Gaussian process with covariance $k$ and noise variance $\\lambda$, which is why the GP literature is a good second reference. Unlike the SVM, kernel ridge's $\\alpha$ is dense: every training point participates in every prediction.\n\nThe costs are what limit kernel methods. Training is $O(n^3)$ time and $O(n^2)$ memory; prediction is $O(nd)$ per query. At $n = 50{,}000$, $K$ has $2.5 \\times 10^9$ entries, 20 GB in float64. Kernel SVMs fare somewhat better thanks to sparsity, but they too slow down past roughly $10^5$ points.\n\n## Scaling: back to explicit features\nThe way out is to approximate the kernel with a modest number of explicit features and then fit a linear model, which costs $O(nD^2)$ for $D$ features instead of $O(n^3)$.\n- **Random Fourier features** (Rahimi and Recht): draw $\\Omega \\in \\mathbb{R}^{D \\times d}$ with entries from $\\mathcal{N}(0, 2\\gamma)$ and $b$ uniform on $[0, 2\\pi]$, and set $z(x) = \\sqrt{2/D}\\cos(\\Omega x + b)$. Then $z(x)^\\top z(x') \\approx e^{-\\gamma\\|x - x'\\|^2}$, with error shrinking like $1/\\sqrt{D}$.\n- **Nyström**: pick $m$ landmark points, compute the kernel against them, and use a low-rank approximation of $K$.\n\nWith $D$ or $m$ in the low thousands, these usually match the exact kernel model closely, and they work with any linear learner from this module.\n\n! Example: checking the polynomial kernel\n! $x = (1, 2)$ and $x' = (3, 1)$. Kernel: $x^\\top x' = 3 + 2 = 5$, squared is $25$.\n! Features: $\\phi(x) = (1, 2\\sqrt2, 4)$ and $\\phi(x') = (9, 3\\sqrt2, 1)$. Their dot product is $9 + 2\\sqrt2 \\cdot 3\\sqrt2 + 4 = 9 + 12 + 4 = 25$. Same answer, without building $\\phi$.\n\n> Takeaway: kernels let linear algorithms work in huge or infinite feature spaces by replacing inner products, at a cost that scales with the number of training points. Use them on small and medium data; at scale, approximate them with explicit random or Nyström features.\n",
+   "q": "You fit RBF kernel ridge regression and set gamma to an extremely large value. What does the Gram matrix approach, what do the predictions on training points and on new test points look like, and what does the opposite extreme (gamma near zero) do?",
+   "s": "As $\\gamma \\to \\infty$, $k(x_i, x_j) = e^{-\\gamma\\|x_i - x_j\\|^2}$ goes to 0 for every distinct pair and stays 1 on the diagonal, so $K \\to I$. Then $\\alpha = (I + \\lambda I)^{-1}y = y/(1+\\lambda)$, and training predictions are $y_i/(1+\\lambda)$: near-memorisation, shrunk only by the ridge term. A new point is far, on that tiny length scale, from every training point, so all its kernel values are about 0 and it predicts about 0 (the mean, if $y$ was centred). That is a lookup table: training error near zero, test error near the variance of $y$. As $\\gamma \\to 0$, every kernel value approaches 1 and $K$ approaches the all-ones matrix, so the model can represent little beyond a constant. To second order the kernel behaves like a low-degree polynomial in $x$, so the fit becomes very smooth and underfits. The useful $\\gamma$ sits between, chosen by cross-validation jointly with $\\lambda$.",
+   "r": [
+    [
+     "Cornell CS4780 lecture notes: Kernels",
+     "https://www.cs.cornell.edu/courses/cs4780/2018fa/lectures/lecturenote13.html",
+     "Kernelising linear algorithms, well-defined kernels and kernel composition rules."
+    ],
+    [
+     "Random Features for Large-Scale Kernel Machines",
+     "https://papers.nips.cc/paper/2007/hash/013a006f03dbc5392effeb8f18fda755-Abstract.html",
+     "Rahimi and Recht (NeurIPS 2007): random Fourier features and their approximation guarantee."
+    ],
+    [
+     "scikit-learn: Kernel ridge regression",
+     "https://scikit-learn.org/stable/modules/kernel_ridge.html",
+     "KernelRidge vs SVR, with timing comparisons that show the n-squared and n-cubed costs."
+    ],
+    [
+     "Gaussian Processes for Machine Learning",
+     "https://gaussianprocess.org/gpml/",
+     "Rasmussen and Williams, chapters 2 and 4: the GP view of kernel ridge and a catalogue of kernels. Free PDF."
+    ]
+   ],
+   "k": [
+    "kernel trick",
+    "RBF kernel"
+   ],
+   "x": [
+    "NumPy",
+    "scikit-learn"
+   ],
+   "p": [
+    "rbf-kernel-matrix",
+    "euclidean-distance",
+    "cholesky-decomposition",
+    "svm-with-hinge-loss-sgd"
+   ]
+  }
+ ]
+}

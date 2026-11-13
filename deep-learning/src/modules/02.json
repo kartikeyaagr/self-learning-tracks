@@ -1,0 +1,251 @@
+{
+ "n": "02",
+ "name": "Training deep networks",
+ "lessons": [
+  {
+   "id": "02.01",
+   "t": "Batch normalisation",
+   "n": [
+    "BatchNorm standardises each channel using the mean and variance of the current mini-batch, then applies a learned scale $\\gamma$ and shift $\\beta$ so the layer can undo the normalisation if that helps.",
+    "In training it uses batch statistics and updates running averages; in eval it uses the running averages, so `model.train()` versus `model.eval()` changes the output.",
+    "It lets you use much larger learning rates and makes training far less sensitive to initialisation; the modern explanation is a smoother loss landscape, not the original \"internal covariate shift\" story.",
+    "It breaks with small batches (noisy statistics), with train/eval distribution mismatch, and whenever examples in a batch should not influence each other."
+   ],
+   "a": "## Why this module exists\nModule 01 gave you a network that can, in principle, train. This module covers what makes deep networks train **reliably**: normalisation layers (this lesson and 02.02), regularisation (02.03), the mechanics of mini-batch optimisation (02.04), and how to read the signs when training goes wrong (02.05). The optimiser update rules themselves are in ML Maths.\n\n## What BatchNorm computes\nFor a convolutional feature map of shape $(N, C, H, W)$, BatchNorm treats each channel $c$ separately and computes statistics over the batch **and** spatial dimensions, $N \\cdot H \\cdot W$ values per channel:\n\n$$\\mu_c = \\frac{1}{NHW}\\sum x_{n,c,h,w}, \\qquad \\sigma_c^2 = \\frac{1}{NHW}\\sum (x_{n,c,h,w} - \\mu_c)^2$$\n$$y = \\gamma_c \\frac{x - \\mu_c}{\\sqrt{\\sigma_c^2 + \\epsilon}} + \\beta_c$$\n\nFor an MLP activation of shape $(N, D)$ the statistics are over the batch only, one pair per feature. $\\gamma$ and $\\beta$ are learned per channel, so the layer can represent the identity if normalisation turns out to be unhelpful. Because $\\beta$ absorbs any constant offset, a convolution followed directly by BatchNorm needs no bias: set `bias=False`.\n\n%%flow Where BatchNorm sits in a typical CNN block, and the two different statistics it uses.\nConv (no bias) -(N×C×H×W)-> *BatchNorm -(γ, β per channel)-> ReLU -> Next conv\n[Train] Batch stats μ_B, σ²_B -(normalise)-> Output -(EMA update)-> Running μ, σ²\n[Eval] Running μ, σ² -(normalise)-> *Deterministic output\n%%\n\n## Train mode versus eval mode\nAt inference you may see a single example, so batch statistics are unavailable or meaningless. BatchNorm therefore keeps **running estimates** updated during training as an exponential moving average. In PyTorch, with `momentum=0.1`:\n\n$$\\hat\\mu \\leftarrow 0.9\\,\\hat\\mu + 0.1\\,\\mu_B$$\n\n(PyTorch's \"momentum\" is the weight on the new value, the opposite of the optimiser convention.) Normalisation in training uses the biased batch variance; the running variance stores the unbiased one. In `model.eval()` the layer uses the running estimates and becomes a fixed affine map, which can be folded into the preceding convolution's weights for deployment.\n\nThe most common BatchNorm bug is forgetting the mode switch. Evaluating in train mode makes predictions depend on which other examples share the batch, and updates the running stats with test data. Training in eval mode by accident freezes the statistics. Fine-tuning with tiny batches often deliberately keeps BN in eval mode (\"frozen BN\") for this reason.\n\n```python\nimport numpy as np\n\ndef batchnorm_train(x, gamma, beta, run_mu, run_var, momentum=0.1, eps=1e-5):\n    # x: (N, C, H, W); statistics per channel over N, H, W\n    mu = x.mean(axis=(0, 2, 3), keepdims=True)\n    var = x.var(axis=(0, 2, 3), keepdims=True)              # biased, used to normalise\n    n = x.size / x.shape[1]\n    run_mu[:] = (1 - momentum) * run_mu + momentum * mu.ravel()\n    run_var[:] = (1 - momentum) * run_var + momentum * var.ravel() * n / (n - 1)\n    xhat = (x - mu) / np.sqrt(var + eps)\n    return gamma[None, :, None, None] * xhat + beta[None, :, None, None]\n```\n\n## Why it helps\nThe original paper argued BN reduces **internal covariate shift**, the change in each layer's input distribution as earlier layers update. Later work (Santurkar et al., 2018) showed that injecting noise to increase that shift after BN barely hurts, and argued the real benefit is that BN makes the loss and its gradients smoother (smaller Lipschitz constants), so larger steps are safe. Other effects that are well established:\n- **Scale invariance.** The output of conv-then-BN doesn't change if you multiply the conv weights by a constant. The effective learning rate then depends on the weight norm, and weight decay interacts with it.\n- **Higher learning rates and robust init.** ResNets with BN train at learning rate 0.1 with SGD; without it they need careful init and smaller steps.\n- **Mild regularisation.** Each example is normalised with noisy batch statistics, a form of noise injection; BN networks often need less dropout.\n\n## Where it breaks\n- **Small batches.** With batch 2 per GPU the statistics are so noisy that accuracy drops sharply. Fixes: synchronised BN across devices, GroupNorm, or LayerNorm (02.02).\n- **Distribution mismatch.** If test data differ from training data, running statistics are wrong. Recomputing them on target data is a cheap adaptation trick.\n- **Sequences and autoregressive models.** Batch statistics mix information across examples and padding positions, and at generation time the batch is one token. This is why Transformers use LayerNorm.\n- **Information leakage.** In contrastive learning, BN can let the model cheat by detecting which examples share a batch.\n\n! Example: batch statistics for one channel\n! A channel holds values $[1, 3, 5, 7]$ across a batch of 4 (spatial size 1). $\\mu = 4$, biased $\\sigma^2 = (9+1+1+9)/4 = 5$, so $\\hat x = [-1.342, -0.447, 0.447, 1.342]$.\n! With $\\gamma = 2$, $\\beta = 0.5$: $y = [-2.18, -0.39, 1.39, 3.18]$.\n! Running mean starting from 0 with momentum 0.1 becomes 0.4; running variance from 1 becomes $0.9 + 0.1 \\cdot 5 \\cdot 4/3 = 1.567$, using the unbiased $20/3$. In eval mode, the same input would be normalised with these values, giving very different outputs until the running stats converge.\n\n> Takeaway: BatchNorm normalises each channel with batch statistics during training and running averages at eval, which buys larger learning rates and robustness to init; respect the train/eval switch and avoid it when batches are tiny or examples must stay independent.",
+   "q": "A model scores 92% validation accuracy when evaluated with batch size 256 but 61% when the same weights serve requests one at a time. The serving code never calls `model.eval()`. Explain what happens inside each BatchNorm layer in both settings, and why calling `eval()` fixes serving.",
+   "s": "Without `eval()` every BatchNorm layer stays in training mode and normalises with the statistics of the current batch. With 256 validation examples those statistics are close to the population statistics the network was trained against, so outputs look normal. With one example, each channel's batch mean over $N \\cdot H \\cdot W$ comes from a single image, and in an MLP layer with $N=1$ the variance is zero, so $\\hat x$ is roughly zero (or depends only on spatial variation within one image). The features the classifier sees bear little relation to training, so accuracy collapses. Training mode also keeps updating running averages with serving data. `model.eval()` makes each BN layer use the running mean and variance accumulated during training: a fixed per-channel affine transform independent of batch composition, so a single request produces the same output it would inside any batch.",
+   "r": [
+    [
+     "Ioffe & Szegedy: Batch Normalization",
+     "https://arxiv.org/abs/1502.03167",
+     "Algorithms 1 and 2 give the training transform and the inference procedure with population statistics."
+    ],
+    [
+     "Santurkar et al.: How Does Batch Normalization Help Optimization?",
+     "https://arxiv.org/abs/1805.11604",
+     "Experiments against the covariate-shift explanation and the smoothness argument."
+    ],
+    [
+     "PyTorch docs: BatchNorm2d",
+     "https://pytorch.org/docs/stable/generated/torch.nn.BatchNorm2d.html",
+     "The momentum convention, biased vs unbiased variance, and track_running_stats."
+    ],
+    [
+     "Dive into Deep Learning: Batch Normalization",
+     "https://d2l.ai/chapter_convolutional-modern/batch-norm.html",
+     "From-scratch implementation and discussion of train vs predict mode."
+    ]
+   ],
+   "k": [
+    "batch norm",
+    "normalisation"
+   ],
+   "x": [
+    "NumPy",
+    "PyTorch"
+   ],
+   "p": [
+    "batch-normalization",
+    "apply-alphago-residual-block",
+    "resnet-residual-block"
+   ]
+  },
+  {
+   "id": "02.02",
+   "t": "Layer and RMS normalisation",
+   "n": [
+    "LayerNorm normalises each example (each token in a Transformer) over its own feature dimension, so it behaves identically in training and inference and has no dependence on batch size.",
+    "RMSNorm drops the mean subtraction and the bias: $y = g \\odot x / \\sqrt{\\mathrm{mean}(x^2) + \\epsilon}$; it is cheaper and works as well in large language models.",
+    "The backward pass of a normalisation layer is not elementwise: the gradient is projected to remove components along the mean and along the normalised vector itself.",
+    "Pre-LN Transformers (normalise inside the residual branch) train stably without warmup tricks; Post-LN can have exploding gradients near the output at initialisation."
+   ],
+   "a": "## Normalise across features, not across the batch\nBatchNorm (02.01) ties each example's output to the rest of the batch. Layer normalisation removes that coupling by computing statistics over the **feature** dimension of one example. For a vector $x \\in \\mathbb{R}^D$ (one token's hidden state, for instance):\n\n$$\\mu = \\frac{1}{D}\\sum_i x_i, \\quad \\sigma^2 = \\frac{1}{D}\\sum_i (x_i - \\mu)^2, \\quad y = \\gamma \\odot \\frac{x - \\mu}{\\sqrt{\\sigma^2 + \\epsilon}} + \\beta$$\n\n$\\gamma, \\beta \\in \\mathbb{R}^D$ are learned. There are no running statistics, no train/eval difference, and a batch of one works exactly like a batch of a thousand. That is why every Transformer, RNN and most generative models use LayerNorm or a relative. For CNNs, **GroupNorm** sits in between: it normalises over groups of channels plus spatial positions within one image, and is the default in diffusion U-Nets where batches are small.\n\n| Norm | Statistics over | Batch-dependent | Typical home |\n| BatchNorm | N, H, W per channel | yes | CNN classifiers |\n| LayerNorm | features of one example | no | Transformers, RNNs |\n| RMSNorm | features, no mean | no | LLMs (Llama, Qwen, DeepSeek) |\n| GroupNorm | channel groups and H, W of one image | no | U-Nets, small-batch vision |\n\n%%layers What gets averaged together, for an activation tensor of shape (batch N, sequence T, features D).\nBatchNorm | one statistic per feature, pooled over all N × T positions\n*LayerNorm | one statistic per (n, t) token, pooled over its D features\nRMSNorm | same as LayerNorm but only the root mean square, no centring\n%%\n\n## RMSNorm\nZhang and Sennrich observed that LayerNorm's benefit comes mostly from rescaling, not recentring. RMSNorm keeps only the scale:\n\n$$r = \\sqrt{\\frac{1}{D}\\sum_i x_i^2 + \\epsilon}, \\qquad y = g \\odot \\frac{x}{r}$$\n\nThere is no $\\beta$ and no mean. It saves one reduction per call and some memory traffic, and in practice matches LayerNorm quality, so most open LLMs use it. It is usually computed in fp32 even when activations are bf16, because the sum of squares over $D = 4096$ elements can lose precision or overflow in half precision. AI Research's RMSNorm lesson and Inference Engineering's \"MLP, RMSNorm & Residual Connections\" go deeper on its role inside a decoder block.\n\n## The backward pass\nNormalisation couples all $D$ outputs to all $D$ inputs: changing one $x_j$ moves the mean and the variance, which moves every $y_i$. Let $\\hat x = (x - \\mu)/\\sigma$ with $\\sigma = \\sqrt{\\sigma^2 + \\epsilon}$, and let $\\bar{\\hat x} = \\gamma \\odot \\bar y$ be the upstream gradient after the scale. Then\n\n$$\\bar x = \\frac{1}{\\sigma}\\left(\\bar{\\hat x} - \\mathrm{mean}(\\bar{\\hat x}) - \\hat x \\cdot \\mathrm{mean}(\\bar{\\hat x} \\odot \\hat x)\\right)$$\n\nRead it as a projection: remove the component of the gradient that would only shift the mean (which normalisation undoes anyway) and the component along $\\hat x$ (which would only change the scale), then divide by $\\sigma$. For RMSNorm, with $\\hat x = x / r$, there is no mean term:\n\n$$\\bar x = \\frac{1}{r}\\left(\\bar{\\hat x} - \\hat x \\cdot \\mathrm{mean}(\\bar{\\hat x} \\odot \\hat x)\\right)$$\n\nThe parameter gradients are simple sums over the batch: $\\bar\\gamma = \\sum \\bar y \\odot \\hat x$, $\\bar\\beta = \\sum \\bar y$. A useful consequence: because the input gradient is orthogonal to $\\hat x$, scaling the input up by a constant scales the gradient down by the same constant, which is the scale invariance that keeps normalised networks stable.\n\n```python\nimport numpy as np\n\ndef layernorm_fwd_bwd(x, gamma, beta, dy, eps=1e-5):\n    mu = x.mean(-1, keepdims=True)\n    sigma = np.sqrt(x.var(-1, keepdims=True) + eps)\n    xhat = (x - mu) / sigma\n    y = gamma * xhat + beta\n    dxhat = dy * gamma\n    dx = (dxhat - dxhat.mean(-1, keepdims=True)\n          - xhat * (dxhat * xhat).mean(-1, keepdims=True)) / sigma\n    dgamma = (dy * xhat).reshape(-1, x.shape[-1]).sum(0)\n    dbeta = dy.reshape(-1, x.shape[-1]).sum(0)\n    return y, dx, dgamma, dbeta\n```\n\nCheck any hand-written version against finite differences or autograd before trusting it; sign and broadcasting slips here are common.\n\n## Pre-LN versus Post-LN\nThe original Transformer put LayerNorm **after** the residual add: $x_{l+1} = \\mathrm{LN}(x_l + F(x_l))$. Xiong et al. showed that at initialisation this places large gradients on the last layers, which is why Post-LN models needed long learning-rate warmup. Pre-LN puts it inside the branch, $x_{l+1} = x_l + F(\\mathrm{LN}(x_l))$, leaving a clean identity path from input to output (the same idea as ResNets in 03.04). Pre-LN trains stably with little warmup and is standard in GPT-style models, usually with one final norm before the output head.\n\n! Example: RMSNorm on one token\n! $x = [3, -1, 1, 1]$, $D = 4$. Mean of squares $= (9 + 1 + 1 + 1)/4 = 3$, so $r = \\sqrt{3} \\approx 1.732$ (ignoring $\\epsilon$).\n! $\\hat x = [1.732, -0.577, 0.577, 0.577]$; the root mean square of $\\hat x$ is exactly 1. With $g = 1$ this is the output.\n! LayerNorm on the same $x$: $\\mu = 1$, $\\sigma^2 = (4 + 4 + 0 + 0)/4 = 2$, so $\\hat x = [1.414, -1.414, 0, 0]$. Centring changed which features look large: the two 1s are now zero.\n\n> Takeaway: LayerNorm and RMSNorm normalise each token on its own, so they are batch-independent and identical at train and test time; their backward pass projects out the mean and scale directions, and placing them inside the residual branch (Pre-LN) keeps deep stacks stable.",
+   "q": "You switch a Transformer from LayerNorm to BatchNorm over the batch and sequence dimensions to \"normalise more data at once\". Training loss looks fine, but generation quality collapses and padded batches behave differently from unpadded ones. Explain both problems and why LayerNorm or RMSNorm avoids them.",
+   "s": "BatchNorm computes each feature's statistics over all tokens in the batch, including padding positions and tokens from other sequences. With padding, the pad embeddings enter the mean and variance, so the same real sequence gets different normalisation depending on how much padding its batch contains: outputs depend on batch composition. At generation time you decode one token at a time, often with batch size one, so the model either uses training-mode statistics of a single token (degenerate) or running averages accumulated over full teacher-forced batches, which do not match the distribution of incrementally generated states. LayerNorm and RMSNorm compute statistics over the $D$ features of each token separately. A token's output depends only on its own hidden state, so padding, batch size and decoding mode cannot change it, and training and inference run the identical computation.",
+   "r": [
+    [
+     "Ba, Kiros, Hinton: Layer Normalization",
+     "https://arxiv.org/abs/1607.06450",
+     "Motivation for per-example statistics and the comparison with batch norm in RNNs."
+    ],
+    [
+     "Zhang & Sennrich: Root Mean Square Layer Normalization",
+     "https://arxiv.org/abs/1910.07467",
+     "RMSNorm's definition, the re-centring ablation and speed measurements."
+    ],
+    [
+     "Xiong et al.: On Layer Normalization in the Transformer Architecture",
+     "https://arxiv.org/abs/2002.04745",
+     "Why Post-LN needs warmup and Pre-LN does not, via gradient norms at init."
+    ],
+    [
+     "PyTorch docs: LayerNorm",
+     "https://pytorch.org/docs/stable/generated/torch.nn.LayerNorm.html",
+     "normalized_shape semantics and elementwise affine parameters."
+    ]
+   ],
+   "k": [
+    "layer norm",
+    "RMSNorm",
+    "Pre-LN"
+   ],
+   "x": [
+    "NumPy",
+    "PyTorch"
+   ],
+   "p": [
+    "layer-normalization",
+    "layer-norm",
+    "rmsnorm-forward-pass",
+    "norm-gated-linear-transform",
+    "layernorm-backward"
+   ]
+  },
+  {
+   "id": "02.03",
+   "t": "Dropout and regularisation",
+   "n": [
+    "Dropout zeroes each activation with probability $p$ during training; inverted dropout divides survivors by $1-p$ so the expected activation is unchanged and inference needs no rescaling.",
+    "Dropout approximately trains an ensemble of thinned subnetworks that share weights, and stops units relying on specific partners (co-adaptation).",
+    "With SGD, L2 regularisation and weight decay are the same thing; with Adam they are not, because the penalty gradient gets divided by the adaptive denominator. AdamW decouples them.",
+    "Data augmentation is the strongest regulariser for vision: label-preserving transforms (crops, flips, colour jitter) and label-mixing ones (mixup, CutMix) encode invariances the data alone doesn't show."
+   ],
+   "a": "## Regularisation in deep networks\nA modern network has enough parameters to memorise its training set, even with random labels. Regularisation is anything that steers it toward solutions that generalise. The ML course covers the classical view (bias-variance, L1/L2 penalties, early stopping); this lesson covers the three tools that matter most for deep nets: dropout, weight decay done right, and data augmentation.\n\n## Dropout\nDuring training, each activation is kept with probability $1-p$ and zeroed otherwise, with a fresh random mask per example and per step. **Inverted dropout** rescales the survivors:\n\n$$\\tilde h = \\frac{m \\odot h}{1 - p}, \\qquad m_i \\sim \\mathrm{Bernoulli}(1-p)$$\n\nso $\\mathbb{E}[\\tilde h] = h$ and at inference the layer is the identity. (The original paper scaled weights by $1-p$ at test time instead; inverted dropout puts the cost in training so serving code doesn't change.) The backward pass uses the same mask: gradients flow only through kept units, multiplied by $1/(1-p)$.\n\n```python\nimport numpy as np\n\ndef dropout(h, p, training, rng):\n    if not training or p == 0:\n        return h, None\n    mask = (rng.random(h.shape) >= p) / (1 - p)   # keep with prob 1-p, pre-scaled\n    return h * mask, mask                         # backward: dh = dout * mask\n```\n\nWhy it works, in two views:\n- **Ensemble.** Each mask selects one of $2^n$ thinned networks that share weights; training samples them, and the scaled full network at test time approximates averaging their predictions.\n- **No co-adaptation.** A unit cannot rely on any specific other unit being present, so features must be useful in many contexts.\n\nPractical defaults: $p = 0.5$ on large fully connected layers (AlexNet, VGG), $0.1$ in Transformers (attention weights and residual branches), often none in CNNs with BatchNorm. For feature maps, **channel dropout** (Dropout2d) drops entire channels, since neighbouring pixels are so correlated that dropping single ones barely regularises. Dropout lengthens training (noisier gradients) and interacts badly with BatchNorm if placed before it, because BN's running variance is estimated under dropout noise that disappears at eval.\n\n## Weight decay and L2 are not the same in Adam\nL2 regularisation adds $\\frac{\\lambda}{2}\\|w\\|^2$ to the loss, adding $\\lambda w$ to the gradient. Weight decay shrinks the weights directly each step: $w \\leftarrow w - \\eta\\lambda w - \\eta g$. For plain SGD these are identical. For Adam they are not:\n\n$$\\text{Adam + L2:}\\quad w \\leftarrow w - \\eta \\frac{\\hat m(g + \\lambda w)}{\\sqrt{\\hat v} + \\epsilon}$$\n$$\\text{AdamW:}\\quad w \\leftarrow w - \\eta\\left(\\frac{\\hat m(g)}{\\sqrt{\\hat v} + \\epsilon} + \\lambda w\\right)$$\n\nWith L2 inside Adam, the decay term is divided by $\\sqrt{\\hat v}$, so weights with large historical gradients are barely regularised and weights with tiny gradients are regularised heavily, the opposite of what you want. Loshchilov and Hutter's AdamW applies the decay outside the adaptive scaling, so every weight shrinks at the same relative rate; it generalises better and makes the best $\\lambda$ largely independent of the learning rate. Typical: AdamW with $\\lambda = 0.01$ to $0.1$, and no decay on biases and normalisation parameters. ML Maths covers Adam itself.\n\n%%flow Where each regulariser acts in one training step.\nRaw batch -(augment: crop, flip, mixup)-> Model forward -(dropout masks)-> Loss -(backward)-> Gradients -(AdamW: decay applied outside Adam)-> *Updated weights\n%%\n\n## Data augmentation\nAugmentation creates new training examples by applying transforms that should not change the label. It is how you tell a vision model about invariances: a cat flipped left-right is still a cat.\n- **Geometric**: random resized crops (the single most effective ImageNet augmentation), horizontal flips, small rotations and translations.\n- **Photometric**: colour jitter, brightness, contrast, blur.\n- **Erasing**: Cutout and random erasing blank a patch so the model can't rely on one region.\n- **Label mixing**: mixup blends two images and their labels, $\\tilde x = \\lambda x_i + (1-\\lambda)x_j$ with the same $\\lambda$ on the one-hot labels; CutMix pastes a patch from one image into another and mixes labels by area.\n\nAugmentations must respect the task. Horizontal flips are fine for ImageNet and wrong for digit or text recognition; random crops can cut the object out entirely when it is small, and for detection the boxes must be transformed with the image. Augmentation is applied only to training data.\n\n| Tool | Acts on | Train/eval difference | Typical setting |\n| Dropout | activations | masks only in training | 0.1 to 0.5 |\n| Weight decay | weights | none | AdamW, 0.01 to 0.1 |\n| Augmentation | inputs | training data only | crops + flips baseline |\n| Early stopping | training length | none | stop at best validation |\n\n! Example: what inverted dropout preserves\n! A hidden vector $h = [2, 4, 6, 8]$ with $p = 0.5$. One sampled mask keeps units 1 and 4: $\\tilde h = [4, 0, 0, 16]$, sum 20, the same as the original sum of 20.\n! Another mask keeps only unit 3: $\\tilde h = [0, 0, 12, 0]$, sum 12. Individual draws vary, but averaged over masks each unit's expected value is exactly its original value, so the next layer sees the same mean at train and test time.\n\n> Takeaway: use inverted dropout where the model is over-parameterised and not already normalised, use AdamW rather than L2-in-Adam for weight decay, and treat augmentation as the main way to inject what you know about invariance.",
+   "q": "You fine-tune a model with Adam plus an L2 penalty and find that the embedding rows for rare tokens shrink much faster than the rows for frequent ones, hurting rare-token performance. Explain the mechanism, and how AdamW changes it.",
+   "s": "With L2 inside Adam, the penalty gradient $\\lambda w$ is added to the data gradient and the sum is divided by $\\sqrt{\\hat v}$, the running RMS of that weight's gradients. Frequent tokens' embedding rows receive large, frequent data gradients, so $\\hat v$ is large and the decay term is heavily damped. Rare tokens' rows receive data gradients only occasionally, so $\\hat v$ is small and the same $\\lambda w$ becomes a large normalised step that pulls the row toward zero every step, even when the token isn't in the batch. The effective regularisation strength is therefore inversely tied to gradient history. AdamW applies $w \\leftarrow w - \\eta\\lambda w$ outside the adaptive scaling, so every row decays by the same fraction per step regardless of its gradient statistics, and Adam's normalisation is applied only to the data gradient. Many setups also exclude embeddings from decay entirely.",
+   "r": [
+    [
+     "Srivastava et al.: Dropout (JMLR 2014)",
+     "https://jmlr.org/papers/v15/srivastava14a.html",
+     "The ensemble interpretation, test-time scaling, and the co-adaptation experiments."
+    ],
+    [
+     "Loshchilov & Hutter: Decoupled Weight Decay Regularization",
+     "https://arxiv.org/abs/1711.05101",
+     "Why L2 and weight decay differ for adaptive optimisers; the AdamW update."
+    ],
+    [
+     "Zhang et al.: mixup",
+     "https://arxiv.org/abs/1710.09412",
+     "The mixup recipe and its effect on generalisation and calibration."
+    ],
+    [
+     "Dive into Deep Learning: Dropout",
+     "https://d2l.ai/chapter_multilayer-perceptrons/dropout.html",
+     "Inverted dropout from scratch and where to apply it."
+    ]
+   ],
+   "k": [
+    "dropout",
+    "weight decay",
+    "augmentation"
+   ],
+   "x": [
+    "NumPy",
+    "PyTorch"
+   ],
+   "p": [
+    "dropout",
+    "dropout-2",
+    "adamw-decoupled-weight-decay",
+    "mixup-augmentation",
+    "cutmix-augmentation"
+   ]
+  },
+  {
+   "id": "02.04",
+   "t": "Mini-batch training in practice",
+   "n": [
+    "A mini-batch gradient is an unbiased estimate of the full gradient whose variance shrinks like $1/B$; past a critical batch size, larger batches stop reducing the number of steps needed.",
+    "The linear scaling rule says: multiply the batch size by $k$, multiply the learning rate by $k$; it holds up to a limit and needs warmup to survive the first steps.",
+    "Warmup ramps the learning rate up over the first few hundred to few thousand steps, because early gradients are large, Adam's second-moment estimates are unreliable, and normalised networks are fragile at init.",
+    "Schedules (step, cosine, warmup-stable-decay) lower the learning rate later to reduce gradient noise and settle into a minimum; global-norm gradient clipping caps the size of any single step."
+   ],
+   "a": "## Why mini-batches\nFull-batch gradient descent computes the exact gradient over all $N$ examples per step; stochastic gradient descent uses one. Mini-batches of $B$ examples sit between: the gradient estimate is unbiased, its variance falls like $1/B$, and a batch fills the GPU's parallel units. Batch size sets three things at once: **hardware efficiency** (too small leaves the GPU idle), **gradient noise** (which also acts as regularisation), and **memory** (activations scale linearly with $B$). The optimiser algorithms are covered in ML Maths; this lesson is about the knobs around them.\n\n## Batch size and learning rate\nIf you double $B$, the gradient noise halves, so you can take larger steps. Goyal et al.'s **linear scaling rule**: when the batch is multiplied by $k$, multiply the learning rate by $k$. They trained ResNet-50 on ImageNet with batch 8192 (learning rate $0.1 \\times 8192/256 = 3.2$) in one hour, matching batch-256 accuracy, but only with 5 epochs of warmup. The rule breaks down beyond a **critical batch size**, where noise is no longer the bottleneck and doubling $B$ no longer halves the number of steps; past it you pay twice the compute for the same progress. The critical size grows during training as the loss falls and can be estimated from the gradient noise scale (AI Research covers this for LLMs). For Adam, square-root scaling of the learning rate is often a better heuristic than linear.\n\nLarge batches have a reputation for generalising worse (\"sharp minima\", Keskar et al.); much of the gap disappears with retuned learning rate, warmup and longer schedules, but small-batch noise is a genuine regulariser for small datasets.\n\n## Warmup\nStarting at the full learning rate often diverges in the first hundred steps, especially with large batches, Adam, or Post-LN Transformers. Reasons:\n- At initialisation the loss is high and gradients can be large and poorly aligned.\n- Adam's $\\hat v$ is estimated from very few samples, so early normalised steps can be huge.\n- Normalisation layers and attention logits are most fragile before the network has settled.\n\nLinear warmup from near zero to the peak learning rate over a few hundred to a few thousand steps (often 1-5% of training) fixes this cheaply.\n\n## Schedules\nAfter warmup the learning rate should usually decrease. Large steps make fast progress but bounce around the minimum at a level set by gradient noise; small steps reduce that noise floor.\n- **Step decay**: divide by 10 at fixed epochs (classic ResNet: epochs 30, 60, 90). Loss drops sharply at each step.\n- **Cosine**: $\\eta_t = \\eta_{min} + \\tfrac{1}{2}(\\eta_{max} - \\eta_{min})(1 + \\cos(\\pi t / T))$. Smooth, one fewer hyperparameter; standard for vision and LLMs.\n- **Warmup-stable-decay (WSD)**: hold the peak, then decay quickly in the last 10-20%. You can branch off and decay at any point, which is convenient when you don't know the final step count.\n- **One-cycle**: ramp up then down within one run, found with a learning-rate range test.\n\n%%flow A typical modern schedule over one training run.\nStep 0: lr ≈ 0 -(linear warmup, about 2% of steps)-> *Peak lr -(cosine or stable phase)-> Late training -(decay)-> lr ≈ 0.1 × peak or less\n%%\n\n## Gradient clipping\nA single bad batch, or an exploding direction in an RNN or Transformer, can produce a gradient orders of magnitude larger than usual, and one such step can wreck a model. **Global-norm clipping** rescales the whole gradient when its norm exceeds a threshold $c$:\n\n$$g \\leftarrow g \\cdot \\min\\left(1, \\frac{c}{\\|g\\|_2}\\right), \\qquad \\|g\\|_2 = \\sqrt{\\textstyle\\sum_{\\text{all params}} \\|g_p\\|^2}$$\n\nIt preserves the direction and only limits the magnitude. Typical $c = 1.0$ for Transformers. Clipping per-element (value clipping) changes the direction and is rarely the right choice. Log the pre-clip norm: if clipping fires on most steps, the threshold is too low or the learning rate too high.\n\n## Gradient accumulation\nIf the batch you want doesn't fit in memory, run $k$ micro-batches, accumulate their gradients (autograd sums into `.grad`), and step once. Scale each micro-batch loss by $1/k$ so the result equals the large-batch mean, and when micro-batches have different numbers of valid tokens, weight by token count rather than averaging averages. BatchNorm still only sees micro-batch statistics, so accumulation is not exactly equivalent for BN networks.\n\n```python\nimport math, torch\n\ndef lr_at(step, peak, warmup, total, floor=0.0):\n    if step < warmup:\n        return peak * (step + 1) / warmup\n    t = (step - warmup) / max(1, total - warmup)\n    return floor + 0.5 * (peak - floor) * (1 + math.cos(math.pi * t))\n\nfor step, (x, y) in enumerate(loader):\n    for g in opt.param_groups: g[\"lr\"] = lr_at(step, 3e-4, 500, total_steps)\n    loss = loss_fn(model(x), y)\n    opt.zero_grad(set_to_none=True)\n    loss.backward()\n    gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)   # returns pre-clip norm\n    opt.step()\n```\n\n! Example: scaling a recipe from 1 GPU to 8\n! A recipe trains with batch 256 and SGD learning rate 0.1. On 8 GPUs at 256 each, the global batch is 2048, so linear scaling gives learning rate 0.8.\n! Use 5 epochs of linear warmup from 0.1 to 0.8, then the original decay schedule with epochs unchanged. Each epoch now has 8× fewer steps, so the step-based warmup length must be recomputed from epochs, not copied.\n! If the learning rate needed to keep the loss stable stops growing with batch size, you have passed the critical batch size: more GPUs will finish epochs faster but need more epochs to reach the same loss.\n\n> Takeaway: choose batch size for hardware efficiency, scale the learning rate with it (linear for SGD, closer to square-root for Adam), always warm up, decay the learning rate later in training, and clip the global gradient norm as cheap insurance.",
+   "q": "You move a Transformer from batch 64 to batch 512 by multiplying the learning rate by 8 and keeping everything else, including a 100-step warmup. Loss spikes to NaN around step 50. Give two distinct reasons this happened and the changes you would make.",
+   "s": "First, the warmup was defined in steps for the old setup and is now too short in proportion to the much larger peak learning rate: the learning rate climbs eight times faster in absolute terms while Adam's second-moment estimates are still based on few steps and gradients at init are large, so early updates overshoot. Second, linear scaling is only approximately right, and for Adam it usually overestimates: the adaptive denominator already normalises gradient size, so the effective step grows nearly linearly with the learning rate regardless of noise, and 8× is likely beyond the stable range (closer to $\\sqrt 8 \\approx 2.8\\times$ is a safer start). Fixes: lengthen warmup (e.g. 1-2k steps or a fixed fraction of training), use square-root scaling and sweep upward, add global-norm clipping at 1.0 so a single bad step can't diverge, and monitor gradient norm to see where instability starts.",
+   "r": [
+    [
+     "Goyal et al.: Accurate, Large Minibatch SGD",
+     "https://arxiv.org/abs/1706.02677",
+     "The linear scaling rule, gradual warmup, and the batch-8192 ResNet-50 results."
+    ],
+    [
+     "Loshchilov & Hutter: SGDR",
+     "https://arxiv.org/abs/1608.03983",
+     "Cosine annealing and warm restarts."
+    ],
+    [
+     "Pascanu, Mikolov, Bengio: On the difficulty of training recurrent neural networks",
+     "https://arxiv.org/abs/1211.5063",
+     "Why gradients explode and the norm-clipping remedy."
+    ],
+    [
+     "PyTorch docs: clip_grad_norm_",
+     "https://pytorch.org/docs/stable/generated/torch.nn.utils.clip_grad_norm_.html",
+     "Global-norm clipping as implemented, including the returned total norm."
+    ]
+   ],
+   "k": [
+    "batch size",
+    "learning-rate schedule",
+    "gradient clipping"
+   ],
+   "x": [
+    "PyTorch"
+   ],
+   "p": [
+    "mini-batch-training-loop",
+    "learning-rate-warmup-scheduler",
+    "gradient-clipping-global-norm-rescaling",
+    "gradient-accumulation",
+    "generate-warmup-stable-decay-schedule"
+   ]
+  },
+  {
+   "id": "02.05",
+   "t": "Diagnosing training",
+   "n": [
+    "Check the loss at step 0 before anything else: a $C$-class classifier with sensible init should start near $\\ln C$ (2.30 for 10 classes); anything far off means a bug in data, labels, init or the loss.",
+    "Overfitting a single small batch to near-zero loss is the fastest end-to-end test; if the model cannot memorise 16 examples, the bug is in the pipeline, not the hyperparameters.",
+    "Read loss curves by shape: a flat line, early divergence, oscillation, a train/validation gap and a plateau each point to a different cause.",
+    "Log per-layer gradient norms, update-to-weight ratios (around $10^{-3}$ is healthy for SGD) and the fraction of dead ReLUs; vanishing and exploding gradients show up there long before they show up in accuracy."
+   ],
+   "a": "## Training fails silently\nA buggy network usually still trains: the loss goes down a bit, accuracy is mediocre, and nothing crashes. Karpathy's summary is that neural nets \"fail silently\". The defence is a fixed routine of checks that rule out whole classes of bugs before you spend compute on tuning. This lesson collects them and ties each back to the earlier lessons in this module.\n\n## Checks before training\n1. **Look at the data after the pipeline.** Decode a batch exactly as the model receives it: images after augmentation and normalisation, tokens after padding. Mislabelled or wrongly normalised inputs are the most common bug.\n2. **Check the initial loss.** With small output logits, a $C$-class classifier predicts roughly uniform probabilities, so the loss should be about $\\ln C$: 2.303 for 10 classes, 6.908 for 1000. A starting loss of 40 means exploding init or missing softmax scaling; a loss of 0 means label leakage.\n3. **Overfit one batch.** Take 8-32 examples, turn off augmentation and regularisation, and train until loss is near zero. Failure means a wiring bug: wrong axis in the loss, detached tensors, frozen parameters, labels shuffled independently of inputs.\n4. **Gradient check custom code.** Any hand-written backward (01.04, 02.02) should match central finite differences to a relative error of about $10^{-6}$ in float64.\n5. **Set a baseline.** A linear model or a known recipe tells you what \"working\" looks like.\n\n## Reading loss curves\n| Curve shape | Likely cause | First thing to try |\n| Flat from step 0 | lr far too low, dead network, frozen params, data bug | check gradients are non-zero; lr range test |\n| Decreases, then NaN or spike | lr too high, no warmup, fp16 overflow, log(0) | lower lr, add warmup and clipping |\n| Noisy, oscillating, not improving | lr too high for batch size | lower lr or increase batch |\n| Train falls, validation rises | overfitting | augmentation, dropout, weight decay, early stop |\n| Both plateau high | underfitting or too-small lr late in training | bigger model, longer schedule, check capacity |\n| Sudden drops at fixed epochs | step lr schedule | expected, not a bug |\n\nPlot the loss on a log scale and smooth it; raw per-step loss is noisy enough to hide trends. Always plot validation alongside training, and measure validation in eval mode (02.01).\n\n%%flow A debugging order that rules out cheap bugs before expensive tuning.\nInspect batch -(inputs ok)-> Initial loss ≈ ln C -(yes)-> Overfit 16 examples -(reaches ≈ 0)-> Full run + monitors -(gap or plateau)-> *Tune regularisation, lr, capacity\n%%\n\n## Monitoring inside the network\nLoss curves tell you something is wrong; internal statistics tell you where.\n- **Per-layer gradient norms.** In a healthy network they are within an order of magnitude or two of each other. Early-layer norms 1000× smaller than late-layer norms is vanishing gradients (saturating activations, 01.02; bad init, 01.05; missing residuals, 03.04). Norms that grow over training toward the input are exploding gradients; clipping (02.04) is the bandage, normalisation and init are the fix.\n- **Update-to-weight ratio.** $\\|\\eta\\,\\Delta w\\| / \\|w\\|$ per layer. Around $10^{-3}$ is a useful rule of thumb for SGD (CS231n); $10^{-1}$ means the layer is being rewritten each step, $10^{-6}$ means it is effectively frozen.\n- **Activation statistics.** Mean and standard deviation per layer at init and during training. Collapsing standard deviations mean signal is dying; tanh/sigmoid outputs piled at the extremes mean saturation.\n- **Dead units.** Fraction of ReLU units that are zero for every example in a large batch. A few percent is normal; 40% after a learning-rate spike means you lost capacity permanently.\n\n```python\nimport torch\n\ndef grad_report(model, x, y, loss_fn, lr, relu_layers):\n    acts = {}\n    hooks = [m.register_forward_hook(lambda m, i, o, n=n: acts.__setitem__(n, o.detach()))\n             for n, m in relu_layers.items()]\n    model.zero_grad(); loss_fn(model(x), y).backward()\n    for h in hooks: h.remove()\n    for name, p in model.named_parameters():\n        if p.grad is not None:\n            print(f\"{name:30s} grad {p.grad.norm():.2e}  update/weight {lr * p.grad.norm() / p.norm():.1e}\")\n    for n, a in acts.items():                       # unit dead if zero on every example\n        dead = (a.flatten(1) <= 0).all(0).float().mean()\n        print(f\"{n}: {dead:.1%} dead units\")\n```\n\n## NaNs and infinities\nA NaN anywhere poisons everything downstream within one step. Usual sources: learning rate too high, `log` or division of zero (use the logits-based losses from 01.03, add $\\epsilon$ to normalisation variances), fp16 overflow above 65504 (use bf16 or loss scaling), and bad data such as an empty mask making a mean divide by zero. `torch.autograd.set_detect_anomaly(True)` finds the first operation that produced a NaN, at a large speed cost, so use it only to localise the bug.\n\n! Example: reading the symptoms\n! A 10-class CNN starts at loss 2.31 (good), drops to 1.2 by step 2000, then stops. Per-layer gradient norms: last layer $3 \\times 10^{-2}$, first conv layer $4 \\times 10^{-7}$. Activation standard deviation falls from 1.0 at the input to 0.003 by layer 15.\n! Diagnosis: vanishing signal through depth, not a learning-rate problem. Raising the learning rate would make the last layers unstable while the first layers stay frozen.\n! Fixes in order of effort: He init for the ReLU layers, BatchNorm after each conv, then residual connections. After adding BN the first-layer gradient norm rises to about $10^{-3}$ and the loss keeps improving.\n\n> Takeaway: verify the initial loss and that the model can overfit one batch before tuning anything, read loss curves by shape, and monitor per-layer gradient norms, update ratios and dead units to locate vanishing or exploding signal.",
+   "q": "Your new model starts at loss 0.01 on a 100-class classification problem and quickly goes to 0.0001, but validation accuracy is 1%. Walk through what the initial loss tells you, the most likely class of bug, and two concrete checks you would run.",
+   "s": "With small initial logits a 100-class model should start near $\\ln 100 \\approx 4.6$. A starting loss of 0.01 means the model is almost certain of the correct label before learning anything, so the label is effectively available in the input or the loss is computed wrongly. Likely bugs: label leakage (a feature derived from the target, e.g. the class index encoded in the filename or a one-hot target concatenated into the input), comparing predictions against themselves, or a loss with the wrong reduction or axis (e.g. cross-entropy over the batch dimension so each \"class\" is an example). Validation at 1% (chance) confirms the model learned nothing transferable. Checks: decode one batch exactly as fed to the model and confirm the targets are not present in the inputs; compute the loss by hand for one example from the logits and label and compare with the framework value; shuffle the labels and confirm the initial loss becomes about 4.6 and cannot fall quickly.",
+   "r": [
+    [
+     "Karpathy: A Recipe for Training Neural Networks",
+     "https://karpathy.github.io/2019/04/25/recipe/",
+     "The step-by-step routine: inspect data, verify init loss, overfit a batch, then regularise and tune."
+    ],
+    [
+     "CS231n: Neural Networks Part 3",
+     "https://cs231n.github.io/neural-networks-3/",
+     "Gradient checks, loss-curve shapes, update/weight ratios and activation histograms."
+    ],
+    [
+     "Google Research: Deep Learning Tuning Playbook",
+     "https://github.com/google-research/tuning_playbook",
+     "A systematic process for choosing what to tune and reading training curves."
+    ]
+   ],
+   "k": [
+    "debugging",
+    "vanishing gradients",
+    "loss curves"
+   ],
+   "x": [
+    "PyTorch"
+   ],
+   "p": [
+    "learning-rate-sweep",
+    "finite-difference-gradient-checking",
+    "early-stopping",
+    "lr-range-test-and-one-cycle-policy",
+    "gradient-clipping"
+   ]
+  }
+ ]
+}

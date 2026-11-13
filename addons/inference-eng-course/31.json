@@ -1,0 +1,343 @@
+{
+ "n": "31",
+ "name": "CUDA Kernels from First Principles",
+ "lessons": [
+  {
+   "id": "31.01",
+   "t": "Threads, blocks and grids",
+   "n": [
+    "A CUDA kernel is one function run by many threads. Threads are grouped into **blocks** (up to 1024 threads, scheduled together on one SM, able to share memory and synchronise) and blocks form a **grid**; the hardware executes threads in **warps** of 32.",
+    "Each thread computes its own work item from built-in indices: `i = blockIdx.x * blockDim.x + threadIdx.x` in 1-D, and a (row, col) pair in 2-D with `threadIdx.x` mapped to the contiguous dimension.",
+    "The grid is sized by ceiling division, `(n + B - 1) / B` blocks, so the last block usually has spare threads and **every kernel needs a bounds check**.",
+    "A **grid-stride loop** decouples grid size from problem size: launch a few blocks per SM and let each thread walk the array in steps of `gridDim.x * blockDim.x`.",
+    "Launches are asynchronous and do not report errors by themselves; check `cudaGetLastError()` after the launch and synchronise before reading results or timing."
+   ],
+   "a": "## Where this module sits\nEarlier modules of this course worked at the Triton level (\"Triton & Kernel Engineering\") and through profilers (\"Profiling & GPU Performance\"). Triton hides individual threads: one program instance processes a block of elements and the compiler decides how threads, shared memory and vector loads are used. This module goes one level down, to CUDA C++, where you control each of those decisions. That is the level at which cuBLAS, FlashAttention, vLLM's custom kernels and most PyTorch extensions are written, and reading it makes the behaviour of the higher-level tools much less mysterious. The hardware ideas (warps, SMs, memory hierarchy) were introduced in \"GPU Threads, Warps, Blocks & Memory Access\"; here they become code.\n\n## The execution hierarchy\n%%layers The CUDA execution hierarchy, from the unit you write to the unit the hardware schedules.\nGrid | all blocks of one launch; blocks run in any order, on any SM\n*Block | up to 1024 threads on one SM; shared memory and `__syncthreads()`\nWarp | 32 consecutive threads of a block, issued together (SIMT)\nThread | its own registers and indices; runs the kernel body once\n%%\n\nYou write the kernel from one thread's point of view. The hardware assigns each block to a streaming multiprocessor (an A100 has 108 SMs, an H100 SXM 132), and the block stays there until it finishes. Inside the SM, threads are issued in warps of 32 that execute the same instruction; if threads of a warp take different branches, the warp runs both paths with the inactive threads masked off (divergence). Blocks cannot synchronise with each other within a launch and may run in any order, which is what lets the same kernel scale from a laptop GPU to a data-centre part.\n\n## Indexing and launch configuration\nEvery thread has `threadIdx` (position within its block), `blockIdx` (position of the block in the grid) and the sizes `blockDim` and `gridDim`, each with `.x`, `.y`, `.z` components.\n\n```cpp\n__global__ void add(const float* a, const float* b, float* c, int n) {\n    int i = blockIdx.x * blockDim.x + threadIdx.x;\n    if (i < n) c[i] = a[i] + b[i];          // bounds check\n}\n// host\nint B = 256;\nint G = (n + B - 1) / B;                    // ceiling division\nadd<<<G, B>>>(d_a, d_b, d_c, n);\ncudaError_t e = cudaGetLastError();         // launch-configuration errors\ncudaDeviceSynchronize();                    // wait; surfaces execution errors\n```\n\nFor a matrix stored row-major with `cols` columns, a 2-D launch maps `x` to columns and `y` to rows:\n\n```cpp\nint col = blockIdx.x * blockDim.x + threadIdx.x;   // fastest-varying -> contiguous\nint row = blockIdx.y * blockDim.y + threadIdx.y;\nif (row < rows && col < cols) C[row * cols + col] = A[row * cols + col] + B[row * cols + col];\n// launch: dim3 block(32, 8); dim3 grid((cols + 31) / 32, (rows + 7) / 8);\n```\n\nPutting `threadIdx.x` on the contiguous axis matters: consecutive threads of a warp then touch consecutive addresses, which is what makes memory access efficient (next lesson). Swapping the two lines gives the same answer and several times less bandwidth.\n\n## Choosing block size\n| Constraint | Value on recent data-centre GPUs | Consequence\n| Threads per block | at most 1024 | `dim3(32, 32)` is the largest square block\n| Warp size | 32 | use block sizes that are multiples of 32, or the last warp is partly idle\n| Threads per SM | 2048 | blocks of 256 allow 8 resident blocks per SM\n| Blocks per SM | 32 | very small blocks (32 threads) cap at 1024 threads per SM\n| Grid size (x) | up to $2^{31}-1$ blocks | 1-D grids are effectively unlimited; y and z are limited to 65535\n\nStarting points: 128 or 256 threads per block for elementwise kernels, then tune. The block size also determines how many registers and how much shared memory each block uses, which sets occupancy (31.07).\n\n## Grid-stride loops\nA grid with one thread per element ties the launch to the input size. A grid-stride loop launches a fixed number of threads, typically a small multiple of the SM count, and has each thread process elements `i, i + stride, i + 2*stride, ...`:\n\n```cpp\nfor (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += gridDim.x * blockDim.x)\n    y[i] = alpha * x[i] + y[i];\n```\n\nBenefits: any `n` works with any grid; per-thread setup (loading constants, computing pointers) is amortised over several elements; and the kernel is easy to debug with `<<<1, 1>>>`, which runs it serially. Consecutive threads still touch consecutive elements in every iteration, so memory access stays coalesced.\n\n! Example: counting idle threads\n! $n = 1{,}000{,}000$ elements with 256-thread blocks needs $\\lceil 10^6/256 \\rceil = 3907$ blocks, or 1,000,192 threads. The last 192 threads fail the bounds check and do nothing. Without the check they write past the end of `c`, which may silently corrupt a neighbouring allocation rather than crash. Running under `compute-sanitizer` reports such out-of-bounds accesses.\n\n## Errors and timing\nKernel launches return immediately. A bad configuration (1025 threads per block, too much shared memory) is reported by `cudaGetLastError()`; a fault during execution (illegal address) appears at the next synchronising call, often far from the culprit. In development, wrap every runtime call in a checking macro and synchronise after each launch. For timing, use `cudaEvent` pairs recorded on the same stream, not CPU timers around an asynchronous launch, which only measure launch overhead (a few microseconds).\n\n> Takeaway: write the kernel for one thread, derive its element from block and thread indices with the contiguous axis on `threadIdx.x`, size the grid by ceiling division, guard every access, and check errors explicitly because launches are asynchronous.",
+   "q": "A colleague's 2-D kernel uses `int row = blockIdx.x * blockDim.x + threadIdx.x; int col = blockIdx.y * blockDim.y + threadIdx.y;` with `dim3 block(32, 8)` on a row-major 4096 x 4096 float matrix. Results are correct but the kernel is about 5x slower than expected. Explain why, and what else could go wrong for other matrix shapes.",
+   "s": "With `x` mapped to rows, the 32 threads of a warp (consecutive `threadIdx.x`) handle 32 different rows of the same column. In row-major storage those elements are 4096 floats apart, so each warp load touches 32 separate memory segments instead of one contiguous 128-byte span, wasting most of every memory transaction. Swapping the mapping so that `threadIdx.x` indexes columns makes each warp read contiguous memory. For other shapes, the grid must also be sized per axis with ceiling division and the bounds check must test both `row < rows` and `col < cols`; with non-square matrices, mixing up which grid dimension covers rows and which covers columns either leaves part of the matrix unprocessed or launches threads outside it. Very tall matrices can also exceed the 65535-block limit on `grid.y` if rows are mapped to y.",
+   "r": [
+    [
+     "CUDA C++ Programming Guide: Programming Model",
+     "https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html",
+     "Chapter on the thread hierarchy, kernels and the execution configuration; the reference for every limit quoted here."
+    ],
+    [
+     "NVIDIA blog: An Even Easier Introduction to CUDA",
+     "https://developer.nvidia.com/blog/even-easier-introduction-cuda/",
+     "First kernel end to end: memory, launch, timing, and the effect of adding blocks."
+    ],
+    [
+     "NVIDIA blog: CUDA Pro Tip: Write Flexible Kernels with Grid-Stride Loops",
+     "https://developer.nvidia.com/blog/cuda-pro-tip-write-flexible-kernels-grid-stride-loops/",
+     "Short, with the scalability and debugging arguments for grid-stride loops."
+    ]
+   ],
+   "k": [
+    "thread hierarchy",
+    "launch configuration"
+   ],
+   "x": [
+    "CUDA"
+   ],
+   "p": [
+    "vector-addition",
+    "matrix-addition",
+    "vector-subtraction",
+    "relu"
+   ]
+  },
+  {
+   "id": "31.02",
+   "t": "Global memory and coalescing",
+   "n": [
+    "Global memory (HBM, about 2 to 3.4 TB/s on A100/H100) is accessed in **32-byte sectors**; a warp's load is efficient only if its 32 addresses fall into as few sectors as possible.",
+    "**Coalesced**: 32 threads reading 32 consecutive 4-byte words touch 128 bytes = 4 sectors, 100% of fetched bytes used. A stride of 2 doubles the sectors (50%); a stride of 8 or more floats means 32 sectors and 12.5% efficiency.",
+    "Layout decides coalescing: map `threadIdx.x` to the contiguous dimension, prefer **structure of arrays** over arrays of structures, and stage strided accesses through shared memory when they cannot be avoided.",
+    "Alignment matters less than it used to but still costs: an access offset by one element touches 5 sectors instead of 4. `cudaMalloc` returns 256-byte-aligned pointers; vector loads such as `float4` need 16-byte alignment.",
+    "Judge memory-bound kernels by **effective bandwidth** $(\\text{bytes read} + \\text{bytes written}) / t$ against the device peak; well-written kernels reach 80 to 90% of it."
+   ],
+   "a": "## Why memory access patterns dominate\nMost kernels in ML that are not matrix multiplies (activations, normalisation, softmax, elementwise fusions, embedding gathers) do a few arithmetic operations per byte they load. For them the arithmetic is nearly free and the only question is how close they get to peak memory bandwidth. An A100 80 GB delivers about 2.0 TB/s from HBM; an H100 SXM about 3.35 TB/s. A kernel that wastes 7 of every 8 bytes it fetches runs at an eighth of that, whatever else you optimise.\n\n%%layers The memory hierarchy as seen by one kernel, fastest and smallest at the top.\nRegisters | per thread, private; ~255 x 32-bit max per thread\nShared memory / L1 | per SM, up to ~228 KB on H100; programmer-managed or cache\nL2 cache | shared by all SMs: 40 MB (A100), 50 MB (H100)\n*Global memory (HBM) | 40-80 GB; 2-3.4 TB/s; all loads and stores land here eventually\n%%\n\n## Sectors and coalescing\nThe memory system serves requests in 32-byte sectors (four sectors make a 128-byte cache line). When a warp executes a load, the hardware collects the 32 addresses and fetches every distinct sector they touch. \"Coalescing\" is just the condition that those addresses are packed: the fewer sectors per warp request, the more of each transfer is useful.\n\n| Warp access pattern (4-byte floats) | Sectors fetched | Bytes used / fetched\n| Consecutive, aligned: `a[base + tid]` | 4 | 100%\n| Consecutive, offset by one: `a[base + tid + 1]` | 5 | 80%\n| Stride 2: `a[2 * tid]` | 8 | 50%\n| Stride 4 | 16 | 25%\n| Stride 8 or more, or random gather | 32 | 12.5%\n| All threads same address | 1 | broadcast, one sector\n\nFor 8-byte or 16-byte elements (double, `float2`, `float4`) a contiguous warp access covers 256 or 512 bytes and stays fully efficient. Random gathers, such as embedding lookups with arbitrary indices, cannot be coalesced across rows, but each row should still be read by consecutive threads so that the bytes *within* a row are coalesced.\n\n## Common layout fixes\n- **Contiguous axis on `threadIdx.x`.** For a row-major matrix, a warp should walk along a row. A kernel that sums each column with one thread per column is coalesced (threads read neighbouring columns of the same row in each step); a kernel that sums each row with one thread per row is not (threads are a whole row apart). The usual fix for row reductions is one warp or block per row, with threads striding across it.\n- **Structure of arrays (SoA).** Storing particles as `struct {float x, y, z, w;} p[n]` and reading only `x` gives a stride of 4 floats (25% efficiency). Storing `float x[n], y[n], ...` makes each field contiguous.\n- **Stage through shared memory.** A transpose must read rows and write columns. Reading a tile coalesced into shared memory and writing it out coalesced along the other axis turns one strided side into two coalesced ones (31.03).\n- **Vectorised loads.** Having each thread load a `float4` (16 bytes) cuts the number of load instructions by four for the same bytes. It requires 16-byte alignment and `n` divisible by 4, so production kernels pair it with a scalar tail loop.\n\n```cpp\n// Experiment from NVIDIA's coalescing post: same bytes, different stride\n__global__ void strided_copy(const float* in, float* out, int stride, int n) {\n    int i = (blockIdx.x * blockDim.x + threadIdx.x) * stride;\n    if (i < n) out[i] = in[i];\n}\n// effective bandwidth = 2 * bytes_touched / seconds   (one read + one write)\n```\n\n## Measuring: effective bandwidth\nFor a memory-bound kernel, compute the bytes it must move and divide by measured time. Vector add on $n = 2^{26}$ floats reads 2 x 256 MB and writes 256 MB: 768 MB. At 0.44 ms that is 1.83 TB/s, about 90% of an A100 80 GB's peak, which is as good as it gets. If the same kernel took 2 ms you would look for uncoalesced access or a launch so small that the GPU never fills. Nsight Compute reports this directly (\"Memory Throughput\" and sectors per request in the memory workload analysis); a value well above 4 sectors per request for 4-byte loads is the signature of poor coalescing.\n\n! Example: a cosine-similarity layout\n! Computing pairwise cosine similarity between 4096 query vectors and 4096 keys of dimension 256, a naive kernel assigns one thread per (query, key) pair and loops over the 256 dimensions. With keys stored row-major, the 32 threads of a warp read 32 different key rows at the same dimension: 32 sectors per load. Transposing keys to dimension-major layout (`K[d][key]`) makes the same loop read 32 consecutive keys at dimension `d`: 4 sectors per load, an 8x reduction in traffic for the key side. Precomputing norms once removes a second pass entirely.\n\n## What the cache does and does not fix\nL1 and L2 can rescue some poor patterns: if neighbouring warps soon read the other bytes of the sectors you wasted, they may hit in cache. Do not rely on it. Caches hide waste only when the working set fits and the reuse comes soon, and both conditions break at production sizes. Design for coalescing first; treat cache hits as a bonus you verify in the profiler.\n\n> Takeaway: count sectors per warp request: make consecutive threads touch consecutive addresses on the contiguous axis, use SoA layouts and shared-memory staging to remove strides, and measure effective bandwidth against the device peak.",
+   "q": "A row-wise L2-normalisation kernel for a 65536 x 1024 float matrix assigns one thread per row; each thread loops over its 1024 columns to compute the norm, then again to scale. It achieves about 150 GB/s on a GPU with 2 TB/s peak. Diagnose it and describe a better mapping.",
+   "s": "With one thread per row, the 32 threads of a warp read the same column index of 32 different rows in each loop iteration. Rows are 4 KB apart, so every warp load touches 32 sectors and uses only 4 bytes of each 32-byte sector: 12.5% efficiency at best, and caches cannot absorb a working set this large. Map a warp (or a block) to each row instead: threads stride across the row's columns with step 32, so each warp load reads 128 consecutive bytes. Each thread accumulates a partial sum of squares, the warp combines partials with shuffle reductions, and then the same threads scale their elements, ideally from registers so the row is read once. Using `float4` loads further cuts instruction count. This mapping should approach 80 to 90% of peak bandwidth, around ten times faster.",
+   "r": [
+    [
+     "CUDA C++ Best Practices Guide: Coalesced Access to Global Memory",
+     "https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html#coalesced-access-to-global-memory",
+     "Diagrams of aligned, misaligned and strided warp accesses and their transactions."
+    ],
+    [
+     "NVIDIA blog: How to Access Global Memory Efficiently in CUDA C/C++ Kernels",
+     "https://developer.nvidia.com/blog/how-access-global-memory-efficiently-cuda-c-kernels/",
+     "Offset and stride experiments with measured bandwidth curves."
+    ],
+    [
+     "NVIDIA: GPU Performance Background User's Guide",
+     "https://docs.nvidia.com/deeplearning/performance/dl-performance-gpu-background/index.html",
+     "Memory versus math bound operations in DL, with A100 numbers."
+    ]
+   ],
+   "k": [
+    "coalescing",
+    "memory bandwidth"
+   ],
+   "x": [
+    "CUDA",
+    "Nsight Compute"
+   ],
+   "p": [
+    "global-memory-coalescing-counter",
+    "l1-normalization",
+    "cosine-similarity-2",
+    "matrix-vector-multiplication"
+   ]
+  },
+  {
+   "id": "31.03",
+   "t": "Shared memory and tiling",
+   "n": [
+    "**Shared memory** is on-chip memory per SM (up to ~164 KB on A100, ~228 KB on H100), allocated per block and visible to all its threads; it is a programmer-managed cache with far lower latency than HBM.",
+    "**Tiling** loads a block of data once from global memory into shared memory and reuses it many times. In a $T \\times T$ tiled matmul each global element is reused $T$ times, raising arithmetic intensity from 0.25 to $T/4$ FLOP per byte (FP32).",
+    "The tiled loop needs **two** `__syncthreads()` per phase: one after loading (so no thread reads a tile before it is complete) and one after computing (so no thread overwrites a tile others still read).",
+    "Shared memory has 32 **banks** of 4-byte words; bank $= (\\text{address}/4) \\bmod 32$. Threads of a warp hitting different addresses in the same bank serialise; padding a $32 \\times 32$ tile to $32 \\times 33$ removes the classic column-access conflict.",
+    "Tiling in shared memory is the first step; fast GEMMs add **register tiling** (each thread computes a small block of outputs) and Tensor Cores, which is why you call cuBLAS rather than writing your own."
+   ],
+   "a": "## The reuse problem\nMatrix multiply $C = AB$ with $A$ of size $M \\times K$ and $B$ of size $K \\times N$ does $2MNK$ floating-point operations on only $MK + KN$ inputs. Every element of $A$ is used $N$ times and every element of $B$ $M$ times. The question is where that reuse happens. In the naive kernel, each thread computes one $C_{ij}$ by reading row $i$ of $A$ and column $j$ of $B$ straight from global memory:\n\n```cpp\nfloat acc = 0.f;\nfor (int k = 0; k < K; ++k) acc += A[row * K + k] * B[k * N + col];\nC[row * N + col] = acc;\n```\n\nEach iteration does 2 FLOPs and loads 8 bytes: 0.25 FLOP/byte. On an A100 (19.5 TFLOPS FP32, about 2 TB/s), that intensity caps the kernel near 0.5 TFLOPS if every load went to HBM. Caches recover some of it, but the naive kernel typically reaches a few percent of cuBLAS.\n\n## Tiled matmul\nSplit $C$ into $T \\times T$ tiles, one per block of $T \\times T$ threads. To compute its tile, the block walks along $K$ in steps of $T$; in each phase it cooperatively loads one $T \\times T$ tile of $A$ and one of $B$ into shared memory, then every thread does $T$ multiply-adds from shared memory.\n\n%%flow One phase of the tiled loop; the block repeats it K/T times.\nLoad A and B tiles (coalesced) -(__syncthreads)-> *Multiply from shared memory -(__syncthreads)-> Next phase\n%%\n\n```cpp\n#define T 32\n__global__ void matmul_tiled(const float* A, const float* B, float* C, int M, int N, int K) {\n    __shared__ float As[T][T], Bs[T][T];\n    int row = blockIdx.y * T + threadIdx.y, col = blockIdx.x * T + threadIdx.x;\n    float acc = 0.f;\n    for (int k0 = 0; k0 < K; k0 += T) {\n        As[threadIdx.y][threadIdx.x] = (row < M && k0 + threadIdx.x < K) ? A[row * K + k0 + threadIdx.x] : 0.f;\n        Bs[threadIdx.y][threadIdx.x] = (k0 + threadIdx.y < K && col < N) ? B[(k0 + threadIdx.y) * N + col] : 0.f;\n        __syncthreads();                       // tile fully loaded\n        for (int k = 0; k < T; ++k) acc += As[threadIdx.y][k] * Bs[k][threadIdx.x];\n        __syncthreads();                       // done reading before overwrite\n    }\n    if (row < M && col < N) C[row * N + col] = acc;\n}\n```\n\nPer phase, the block loads $2T^2$ floats ($8T^2$ bytes) and performs $2T^3$ FLOPs, so global intensity is $T/4$ FLOP/byte: 8 for $T = 32$, a 32x improvement. Both loads are coalesced, because `threadIdx.x` walks along a row of each tile. Out-of-range elements are filled with zeros so that matrices whose sizes are not multiples of $T$ work unchanged.\n\nThe two barriers are not optional. Remove the first and a fast warp reads tile entries that a slow warp has not yet written. Remove the second and a fast warp starts loading the next phase's tile over values a slow warp is still multiplying. Both bugs give wrong answers only sometimes, which makes them painful to find; `compute-sanitizer --tool racecheck` detects them. A barrier must also be reached by all threads of the block: never place `__syncthreads()` inside a branch that only some threads take.\n\n## Bank conflicts\nShared memory is divided into 32 banks; successive 4-byte words go to successive banks. A warp's shared-memory access completes in one pass if its 32 threads hit 32 different banks, or the same word (broadcast). If $k$ threads hit different words in one bank, the access is replayed $k$ times.\n\n| Access by a warp (float tile `s[32][32]`) | Banks touched | Cost\n| Row: `s[r][tid]` | 32 distinct | 1 pass\n| Same element: `s[r][k]` for all threads | 1 word, broadcast | 1 pass\n| Column: `s[tid][c]` | all in bank `c` | 32 passes (32-way conflict)\n| Column on padded `s[32][33]`: `s[tid][c]` | 32 distinct | 1 pass\n\nIn the tiled matmul above, a warp is one row of the block (fixed `threadIdx.y`, varying `threadIdx.x`). `As[threadIdx.y][k]` is the same word for all 32 threads, a broadcast; `Bs[k][threadIdx.x]` is a row access. No conflicts. The matrix transpose is where conflicts bite: read a tile row-wise, write it out column-wise, and the column read from shared memory is a 32-way conflict unless the tile is declared `[32][33]`. The extra column shifts each row by one bank.\n\n! Example: how far tiling gets you\n! On a 4096 x 4096 FP32 matmul, the naive kernel reaches roughly 1% of cuBLAS throughput on a recent GPU, and shared-memory tiling gets to roughly 10%. The rest comes from register tiling (each thread computing a 4 x 4 or 8 x 8 output block so values loaded from shared memory are reused in registers), wider vectorised loads, double buffering that overlaps the next tile's load with the current tile's math, and, for FP16/BF16, Tensor Core instructions. Simon Boehm's step-by-step write-up measures each stage on a real GPU.\n\n## Limits and trade-offs\nShared memory per block defaults to 48 KB for static arrays; larger allocations need dynamic shared memory and an explicit opt-in attribute. Every byte a block uses reduces how many blocks fit on an SM, which lowers occupancy (31.07). Two 32 x 32 FP32 tiles use 8 KB, small. A double-buffered 128 x 32 BF16 tiling uses much more and is designed with occupancy in mind.\n\n> Takeaway: tile so that each byte fetched from global memory is reused many times from shared memory, fence each phase with two barriers, and lay out shared arrays so a warp never hits one bank with different addresses.",
+   "q": "You tile a matrix transpose with 32 x 32 blocks: each thread reads `in[y][x]` into `tile[ty][tx]`, synchronises, then writes `out[x'][y'] = tile[tx][ty]` with the output indices swapped so the global write is coalesced. It is faster than the naive transpose but still well below copy bandwidth. Why, and what one-line change fixes it?",
+   "s": "The global reads and writes are now coalesced, but the shared-memory read `tile[tx][ty]` is a column access: the 32 threads of a warp have consecutive `tx`, so they read 32 words that are each a full row (32 floats) apart. All 32 words map to the same bank, so the warp's access is replayed 32 times, serialising every shared-memory read. Declaring the tile as `__shared__ float tile[32][33]` pads each row by one word, shifting successive rows by one bank, so a column read touches 32 different banks and completes in a single pass. With the padding, the transpose typically runs close to the speed of a simple device-to-device copy.",
+   "r": [
+    [
+     "NVIDIA blog: Using Shared Memory in CUDA C/C++",
+     "https://developer.nvidia.com/blog/using-shared-memory-cuda-cc/",
+     "Shared memory declaration, synchronisation and bank conflicts with a worked example."
+    ],
+    [
+     "NVIDIA blog: An Efficient Matrix Transpose in CUDA C/C++",
+     "https://developer.nvidia.com/blog/efficient-matrix-transpose-cuda-cc/",
+     "The coalesced transpose and the one-column padding trick, with measured bandwidths."
+    ],
+    [
+     "Simon Boehm, How to Optimize a CUDA Matmul Kernel for cuBLAS-like Performance",
+     "https://siboehm.com/articles/22/CUDA-MMM",
+     "Step-by-step from naive to tiled to register-tiled kernels, each step benchmarked."
+    ]
+   ],
+   "k": [
+    "shared memory",
+    "tiling",
+    "bank conflicts"
+   ],
+   "x": [
+    "CUDA"
+   ],
+   "p": [
+    "tiled-matrix-multiplication",
+    "shared-memory-bank-conflict-analyzer",
+    "matrix-multiplication",
+    "tiled-transpose"
+   ]
+  },
+  {
+   "id": "31.04",
+   "t": "Reductions and scans",
+   "n": [
+    "A **tree reduction** combines $n$ values in $\\log_2 n$ steps; within a block it runs through shared memory and, for the last 32 values, through **warp shuffles** (`__shfl_down_sync`) that exchange registers without touching memory.",
+    "Mark Harris's classic sequence shows what matters: avoid divergent branches and bank conflicts with **sequential addressing**, do the first add while loading, and give each thread many elements so the kernel is bandwidth-bound, not instruction-bound.",
+    "Reductions across the whole grid need either a **second pass** over per-block partials or one `atomicAdd` per block; the second pass is deterministic, the atomic is not for floating point.",
+    "A **prefix sum (scan)** gives every element the sum of all before it. Hillis-Steele takes $\\log n$ steps but $O(n \\log n)$ work; Blelloch's up-sweep/down-sweep is work-efficient at $O(n)$.",
+    "Large scans are hierarchical (scan blocks, scan the block totals, add offsets back) or single-pass with **decoupled look-back**; in practice call CUB's `DeviceScan`."
+   ],
+   "a": "## Reductions are everywhere\nSums, maxima, norms, means and variances, softmax denominators, loss averages, argmax for greedy decoding: all are reductions. They are memory-bound (one add per element loaded), so a good reduction reads its input once at close to peak bandwidth. Getting there exercises every idea from the previous lessons. Inference Engineering's Triton lessons (\"Coalescing, Tiling & Reductions\") show reductions as one-line `tl.sum` calls; this lesson shows the machinery that call compiles into.\n\n## A block-level tree reduction\nEach block reduces a chunk of the input to one value. The tree halves the number of active threads at every step:\n\n%%flow Tree reduction of 8 values: log2(8) = 3 steps, each halving the active threads.\n8 partials -(add pairs)-> 4 partials -(add pairs)-> 2 partials -(add pairs)-> *1 result\n%%\n\nThe order of pairing matters a lot. Harris's NVIDIA tutorial walks through seven versions on the same problem:\n1. **Interleaved addressing with `if (tid % (2*s) == 0)`**: correct, but threads within a warp diverge and the modulo is slow.\n2. **Interleaved with a strided index**: no divergence, but shared-memory bank conflicts.\n3. **Sequential addressing**: thread `t` adds element `t + s` with `s` halving from `blockDim/2`; active threads are contiguous and conflict-free.\n4. **First add during load**: each thread loads and adds two elements before the tree, halving idle threads.\n5. to 7. **Unroll the last warp, unroll completely, and process many elements per thread**: the final kernel was around 30 times faster than the first on the hardware of the time.\n\nThe lasting lessons are 3, 4 and 7: keep active threads contiguous, and give each thread enough independent work (a grid-stride loop of loads into a register accumulator) that the tree is a small tail on a bandwidth-bound loop.\n\n## Warp shuffles\nInside a warp, threads can read each other's registers directly. `__shfl_down_sync(mask, v, offset)` returns `v` from the thread `offset` lanes higher. Five shuffles reduce 32 values:\n\n```cpp\n__device__ float warp_sum(float v) {\n    for (int off = 16; off > 0; off >>= 1)\n        v += __shfl_down_sync(0xffffffff, v, off);\n    return v;                                   // lane 0 holds the warp's total\n}\n__device__ float block_sum(float v) {           // blockDim.x multiple of 32, <= 1024\n    __shared__ float warp_part[32];\n    int lane = threadIdx.x & 31, w = threadIdx.x >> 5;\n    v = warp_sum(v);\n    if (lane == 0) warp_part[w] = v;\n    __syncthreads();\n    v = (threadIdx.x < blockDim.x / 32) ? warp_part[lane] : 0.f;\n    return w == 0 ? warp_sum(v) : 0.f;          // thread 0 holds the block's total\n}\n```\n\nNo shared memory traffic or barriers are needed within the warp, and the `_sync` mask states which lanes participate; since Volta, threads of a warp are not guaranteed to run in lockstep, so the old trick of relying on implicit warp synchrony without the mask is a bug. Cooperative groups wrap the same operations in a typed API.\n\n## Across the grid\nBlocks cannot synchronise inside a launch, so a full reduction is finished one of two ways:\n- **Two passes**: each block writes its partial to an array; a second, single-block launch reduces the partials. Deterministic: the same input always gives the same bits.\n- **Atomics**: each block does `atomicAdd(out, block_total)`. One launch, but block completion order varies, and floating-point addition is not associative, so results can differ in the last bits between runs. That is acceptable for monitoring, not for tests that compare bitwise.\n\nUse a numerically sensible accumulator too: accumulate FP16 inputs in FP32, and for mean and variance use Welford's update or combine (count, mean, M2) triples in the tree, rather than sum and sum of squares, which cancel catastrophically when the mean is large.\n\n## Prefix sums (scan)\nAn inclusive scan of $[3, 1, 7, 0, 4]$ is $[3, 4, 11, 11, 15]$; the exclusive scan shifts right and starts with 0: $[0, 3, 4, 11, 11]$. Scans look sequential but parallelise well, and they are the building block for stream compaction (where does each kept element go?), radix sort, ragged-batch offsets (where does sequence $b$ start?), and top-p sampling (cumulative probabilities).\n\n| Algorithm | Steps | Work | Notes\n| Sequential | $n$ | $n$ | baseline on one thread\n| Hillis-Steele | $\\log_2 n$ | $n \\log_2 n$ | simple; each step adds the element $2^d$ to the left\n| Blelloch | $2 \\log_2 n$ | $\\approx 2n$ | up-sweep builds a sum tree, down-sweep pushes prefixes back\n| Decoupled look-back | 1 pass | $\\approx n$ | each block publishes its total and looks back at predecessors\n\nFor arrays larger than a block, the classic approach has three phases: each block scans its chunk and records its total; a scan over the block totals gives each block its offset; each block adds its offset. That reads and writes the data twice. Merrill and Garland's decoupled look-back does it in one pass, as fast as a memory copy, by having each block publish its aggregate and inspect its predecessors' status flags. CUB (`cub::DeviceScan::InclusiveSum`) and `torch.cumsum` already implement it; write your own only to learn or to fuse the scan into another kernel.\n\n! Example: what bandwidth-bound means here\n! Summing $2^{28}$ floats (1 GiB) on a GPU with 2 TB/s peak can take no less than about 0.54 ms. A first naive kernel with interleaved addressing might take around 5 ms; a version with sequential addressing, many elements per thread and a warp-shuffle tail typically lands within 10 to 15% of the 0.54 ms floor. Beyond that, nothing helps: the kernel is limited by HBM, not by how it adds.\n\n> Takeaway: reduce with many elements per thread into registers, a shared-memory or shuffle tree for the tail, and a deterministic second pass across blocks when reproducibility matters; for scans, know the work-efficient algorithm and use the library.",
+   "q": "Your loss-averaging kernel sums 50 million FP32 values with one `atomicAdd` per thread into a single global float. It is slow and a unit test comparing the result bitwise to a reference fails intermittently. Explain both problems and the design you would use instead.",
+   "s": "Speed: every one of 50 million threads performs an atomic on the same address, and atomics to one address are serialised at the L2, so throughput collapses to that of a single memory location instead of the full bandwidth. Bitwise failures: floating-point addition is not associative, and the order in which atomics land varies between runs, so the rounding differs in the last bits. Replace it with a hierarchical reduction: each thread accumulates many elements in a register via a grid-stride loop, each block reduces its threads with warp shuffles and a small shared-memory step, and each block writes one partial to an array. A second, single-block pass reduces the partials in a fixed order. That reads the data once at near-peak bandwidth and is deterministic. If one launch matters more than determinism, one atomic per block (a few thousand) is fast but still non-deterministic.",
+   "r": [
+    [
+     "Mark Harris, Optimizing Parallel Reduction in CUDA",
+     "https://developer.download.nvidia.com/assets/cuda/files/reduction.pdf",
+     "The seven-step reduction tutorial with bandwidth after each change."
+    ],
+    [
+     "NVIDIA blog: Using CUDA Warp-Level Primitives",
+     "https://developer.nvidia.com/blog/using-cuda-warp-level-primitives/",
+     "Shuffle and vote intrinsics, masks, and why implicit warp synchrony is unsafe since Volta."
+    ],
+    [
+     "GPU Gems 3, Chapter 39: Parallel Prefix Sum (Scan) with CUDA",
+     "https://developer.nvidia.com/gpugems/gpugems3/part-vi-gpu-computing/chapter-39-parallel-prefix-sum-scan-cuda",
+     "Hillis-Steele vs Blelloch scans, bank-conflict avoidance, and multi-block scans."
+    ],
+    [
+     "Merrill and Garland, Single-pass Parallel Prefix Scan with Decoupled Look-back (2016)",
+     "https://research.nvidia.com/publication/2016-03_single-pass-parallel-prefix-scan-decoupled-look-back",
+     "The algorithm behind CUB's scan, matching memcpy throughput."
+    ]
+   ],
+   "k": [
+    "reduction",
+    "warp shuffle",
+    "prefix sum"
+   ],
+   "x": [
+    "CUDA",
+    "CUB"
+   ],
+   "p": [
+    "dot-product-2",
+    "max-of-array",
+    "mean-and-variance",
+    "argmax",
+    "vector-sum-reduction"
+   ]
+  },
+  {
+   "id": "31.05",
+   "t": "Atomics and histograms",
+   "n": [
+    "An **atomic** (`atomicAdd`, `atomicMax`, `atomicCAS`, ...) performs read-modify-write on one memory word as an indivisible operation and returns the old value; it is how independent threads safely update shared counters and bins.",
+    "Atomics to **different** addresses run in parallel; atomics to the **same** address serialise. Throughput therefore depends on the data: a histogram of uniform noise is fast, a histogram of a constant image is a queue.",
+    "**Privatisation** gives each block (or warp) its own copy of the bins in shared memory, accumulates there, then merges with one global atomic per bin per block, cutting global atomics from $n$ to $\\text{blocks} \\times \\text{bins}$.",
+    "**Warp-aggregated atomics** let one leader lane do a single atomic for all lanes that target the same address, using ballot or match intrinsics.",
+    "Floating-point atomics make results order-dependent; PyTorch flags such kernels (`scatter_add_`, `index_add_` on CUDA) as non-deterministic."
+   ],
+   "a": "## When reductions are not enough\nA reduction combines everything into one value along a fixed tree. Many kernels instead scatter updates to data-dependent locations: histograms (which bin?), gradient accumulation for embedding tables (which rows were looked up?), stream compaction with a shared output counter, MoE token counts per expert. Two threads may target the same location at the same time, and a plain `bins[b] += 1` then loses updates: both threads read 7, both write 8. Atomics fix this by making the read-modify-write indivisible.\n\n```cpp\n__global__ void hist_naive(const unsigned char* x, unsigned int* bins, int n) {\n    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += gridDim.x * blockDim.x)\n        atomicAdd(&bins[x[i]], 1u);\n}\n```\n\nSupported operations include add, sub, min, max, exchange, and/or/xor and compare-and-swap, on 32- and 64-bit integers, `float`, `double` (compute capability 6.0 and up) and `__half2`. Anything else, such as a float max with an index or a custom combine, is built from `atomicCAS` in a retry loop: read the old word, compute the new one, swap only if the word has not changed, otherwise retry. Packing (value, index) into one 64-bit word lets a single CAS update both atomically.\n\n## Contention\nGlobal atomics are executed in the L2 cache. Updates to distinct addresses proceed in parallel at high throughput; updates to the same address are serialised. For a 256-bin histogram of 8-bit pixels, throughput depends on the image: natural photos spread across bins, while a mostly-black frame sends almost every update to bin 0.\n\n%%flow Privatised histogram: most updates hit fast per-block shared memory; global memory sees one atomic per bin per block.\nInput pixels -(shared atomicAdd)-> *Per-block bins in shared memory -(__syncthreads)-> Merge -(one global atomic per bin)-> Global bins\n%%\n\n## Privatisation\nGive each block a private histogram in shared memory, initialise it to zero, accumulate with shared-memory atomics, synchronise, then add each non-zero private bin to the global histogram.\n\n```cpp\n__global__ void hist_private(const unsigned char* x, unsigned int* bins, int n) {\n    __shared__ unsigned int local[256];\n    for (int b = threadIdx.x; b < 256; b += blockDim.x) local[b] = 0;\n    __syncthreads();\n    for (int i = blockIdx.x * blockDim.x + threadIdx.x; i < n; i += gridDim.x * blockDim.x)\n        atomicAdd(&local[x[i]], 1u);               // on-chip, per SM\n    __syncthreads();\n    for (int b = threadIdx.x; b < 256; b += blockDim.x)\n        if (local[b]) atomicAdd(&bins[b], local[b]);\n}\n```\n\nShared-memory atomics have been native hardware operations since the Maxwell generation, so they are much cheaper than global ones, and contention is now limited to the threads of one block. Further steps when contention stays high: per-warp sub-histograms (several copies per block, merged at the end), having each thread pre-aggregate runs of identical values in registers before issuing an atomic, and launching only enough blocks to fill the GPU so the merge cost stays small.\n\n| Strategy | Global atomics for $n = 10^8$, 256 bins, 1024 blocks | Worst-case contention\n| Naive global | $10^8$ | all threads on one address\n| Per-block shared bins | at most $1024 \\times 256 = 262{,}144$ | threads of one block on one shared address\n| Per-warp shared bins | same global count | 32 lanes on one address\n| Warp-aggregated | up to 32x fewer than naive | one atomic per distinct address per warp\n\n## Warp-aggregated atomics\nWhen many lanes of a warp target the same address, as when appending to an output buffer through one shared counter, it is wasteful to issue 32 atomics. With `__ballot_sync` (or `__match_any_sync` for per-address groups) the lanes find out how many of them want to update, a leader lane does one `atomicAdd` of that count, broadcasts the returned base offset with a shuffle, and each lane computes its own slot from its rank among the active lanes. Recent compilers do this automatically for the simple case of a uniform address, but the pattern is worth knowing for filtering and compaction kernels.\n\n## Determinism\nInteger atomics give the same final value whatever the order. Floating-point atomics do not, because $(a + b) + c \\ne a + (b + c)$ in floating point and the order of arrival varies run to run. This is why PyTorch's reproducibility notes list CUDA `index_add_` and `scatter_add_` among operations that are non-deterministic by default; with `torch.use_deterministic_algorithms(True)` such operations either switch to slower deterministic implementations (typically sort-then-reduce) or raise an error. If a test needs bitwise reproducibility, replace float atomics with a reduction in a fixed order.\n\n! Example: contention in numbers\n! Take a 256-bin histogram over 100 million bytes. On random bytes the naive kernel spreads its atomics over 256 addresses; on an all-zero input every one of the $10^8$ updates queues on a single L2 address, and the same kernel can slow down by an order of magnitude or more. The privatised version stays close to bandwidth-bound for random data and degrades far less on constant data, because the queue now lives in each SM's shared memory and the global merge is only 262,144 atomics.\n\n> Takeaway: use atomics for scattered, data-dependent updates, expect throughput to depend on how many threads collide, and privatise into shared memory (or aggregate per warp) so that global memory sees a few atomics per block rather than one per element.",
+   "q": "You need per-expert token counts for an MoE layer with 8 experts and 1 million tokens per step, computed on the GPU. A first version does one global `atomicAdd` per token on an array of 8 integers and is surprisingly slow. Explain why, and design a faster kernel. Is the result deterministic?",
+   "s": "With only 8 counters, a million atomics are concentrated on 8 addresses, so the L2 serialises them: throughput is limited to about 8 concurrent updates, regardless of how many threads run. Use privatisation: each block keeps 8 counters in shared memory (or per warp, to cut shared contention further), threads accumulate with shared-memory atomics or, better, each thread first counts its own grid-stride elements in 8 registers and adds them once. After a barrier, each block issues at most 8 global atomics. With 1024 blocks that is 8192 global atomics instead of a million. Warp-level `__match_any_sync` or ballot-based aggregation can reduce shared atomics further when many lanes pick the same expert. The result is deterministic, because integer addition is associative and the final counts do not depend on the order of the atomics; only floating-point accumulations would vary.",
+   "r": [
+    [
+     "NVIDIA blog: GPU Pro Tip: Fast Histograms Using Shared Atomics on Maxwell",
+     "https://developer.nvidia.com/blog/gpu-pro-tip-fast-histograms-using-shared-atomics-maxwell/",
+     "Privatised histograms and how contention depends on the input image."
+    ],
+    [
+     "NVIDIA blog: CUDA Pro Tip: Optimized Filtering with Warp-Aggregated Atomics",
+     "https://developer.nvidia.com/blog/cuda-pro-tip-optimized-filtering-warp-aggregated-atomics/",
+     "The leader-lane pattern for stream compaction with a shared counter."
+    ],
+    [
+     "CUDA C++ Programming Guide: Atomic Functions",
+     "https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#atomic-functions",
+     "Semantics, supported types and the atomicCAS recipe for custom operations."
+    ],
+    [
+     "PyTorch: Reproducibility",
+     "https://pytorch.org/docs/stable/notes/randomness.html",
+     "Which CUDA operations are non-deterministic and what use_deterministic_algorithms changes."
+    ]
+   ],
+   "k": [
+    "atomics",
+    "privatisation"
+   ],
+   "x": [
+    "CUDA",
+    "PyTorch"
+   ],
+   "p": [
+    "sum-of-array",
+    "argmin",
+    "max-of-array",
+    "min-of-array"
+   ]
+  },
+  {
+   "id": "31.06",
+   "t": "Convolution and ML primitives",
+   "n": [
+    "Most ML kernels outside matmul are **memory-bound**; the goal is to read each input once and write each output once, which usually means **fusing** several framework ops into one kernel.",
+    "A 1-D convolution with a $K$-tap filter reuses each input $K$ times; a shared-memory tile of $B$ outputs needs $B + K - 1$ inputs (the **halo**), and the filter sits in `__constant__` memory, which broadcasts to a warp reading the same tap.",
+    "Deep-learning convolutions with many channels are run as **implicit GEMM** (im2col without materialising it), FFT or Winograd; cuDNN picks per shape, which is what `torch.backends.cudnn.benchmark` tunes.",
+    "Row softmax maps a warp or block to each row and does two reductions (max, then sum of $e^{x-m}$); the **online** form keeps a running max and rescales the running sum, fusing both into one pass.",
+    "LayerNorm and RMSNorm are per-row reductions in FP32 followed by an elementwise scale; fusing the residual add and saving mean and $1/\\sigma$ for the backward pass are the standard optimisations."
+   ],
+   "a": "## The common shape of ML kernels\nOutside matrix multiplies and attention, most work in a network is elementwise (activations, residual adds, dropout) or row-wise (softmax, normalisation, cross-entropy). These kernels do a handful of FLOPs per element, so they are bandwidth-bound (31.02) and their speed is set by bytes moved. A GELU on 64 MB of FP16 activations reads 64 MB and writes 64 MB; at 2 TB/s that is 64 microseconds whatever the arithmetic. Running GELU, bias add and dropout as three separate kernels moves 384 MB; fused, 128 MB. Compilers (torch.compile, Triton, covered in \"torch.compile & Kernel Fusion\") do much of this fusion automatically; custom CUDA kernels are written when they cannot.\n\n## 1-D and 2-D convolution\nA 1-D convolution with a filter of $K = 2r + 1$ taps computes $y_i = \\sum_{k=-r}^{r} w_k\\, x_{i+k}$. One thread per output works and is coalesced. Two improvements:\n- **Constant memory for the filter.** `__constant__ float w[K]` lives in a small cached space that broadcasts a value to all threads of a warp reading the same address in one transaction, exactly the pattern here (all threads read tap $k$ at the same time).\n- **Shared-memory tiling with a halo.** Each input is read by $K$ different threads. A block producing $B$ outputs loads the $B + 2r$ inputs it needs into shared memory once (the extra $2r$ are the halo, zero-filled at array edges), synchronises, then computes from shared memory.\n\n%%flow Tiled convolution: each block loads its tile plus a halo once, then every output reads its neighbourhood from shared memory.\nGlobal input -(load tile + halo, coalesced)-> *Shared tile -(__syncthreads)-> K-tap sums per thread -(coalesced store)-> Output\n%%\n\nIn 2-D, a $B \\times B$ output tile needs a $(B + K - 1)^2$ input tile. For $B = 16$ and $K = 5$, that is 400 loads for 256 outputs which each need 25 inputs: global traffic drops from 6400 to 400 element loads, a 16x reduction. Larger filters raise reuse; tiny filters (3 x 3) make the halo a large fraction of the tile.\n\nConvolutions in CNNs, with $C_{in}$ input and $C_{out}$ output channels, are a different regime: they have the reuse structure of matrix multiply. cuDNN lowers them to **implicit GEMM**: conceptually, unfold each $K \\times K \\times C_{in}$ input patch into a column (im2col), giving a matrix of size $(C_{in}K^2) \\times (H_{out}W_{out})$ that multiplies the $C_{out} \\times (C_{in}K^2)$ filter matrix. The \"implicit\" version computes patch addresses on the fly instead of materialising the $K^2$-times-larger matrix, then runs on Tensor Cores. For some shapes FFT or Winograd transforms (which trade multiplies for adds on 3 x 3 filters) are faster; cuDNN benchmarks candidates per shape when `cudnn.benchmark` is on.\n\n## Softmax\nRow softmax $y_j = e^{x_j - m} / \\sum_k e^{x_k - m}$ with $m = \\max_k x_k$ (subtracting the max prevents overflow). The standard kernel maps one warp to each row for rows up to a few thousand elements, or one block for longer rows:\n1. Each thread scans its strided slice of the row for a local max; a warp-shuffle reduction gives $m$.\n2. Each thread sums $e^{x_j - m}$ over its slice; a second reduction gives the denominator $d$.\n3. Each thread writes $e^{x_j - m}/d$.\n\nIf the row fits in registers (each of 32 lanes holding, say, 32 values for a 1024-wide row), the input is read once and the kernel is optimal. Otherwise the naive version reads the row three times. The **online softmax** (Milakov and Gimelshein) fuses steps 1 and 2: keep a running max $m$ and running sum $d$, and on each new value $x$ update $m' = \\max(m, x)$, $d' = d\\, e^{m - m'} + e^{x - m'}$. Pairs $(m, d)$ from different threads combine the same way, so it fits a tree reduction. That cuts the passes to two, and it is the key step that lets FlashAttention compute softmax tile by tile (\"Tiled Attention & Online Softmax\" covers it in detail).\n\n```cpp\n__device__ void online_combine(float& m, float& d, float m2, float d2) {\n    float mn = fmaxf(m, m2);\n    d = d * __expf(m - mn) + d2 * __expf(m2 - mn);\n    m = mn;\n}\n```\n\n## LayerNorm and RMSNorm\nLayerNorm normalises each row: $y = \\gamma \\odot (x - \\mu)/\\sqrt{\\sigma^2 + \\epsilon} + \\beta$. The kernel is a row reduction for $\\mu$ and $\\sigma^2$ followed by an elementwise pass. Practical points:\n- Accumulate in FP32 even for FP16/BF16 inputs; use Welford or a two-level (count, mean, M2) combine for the variance to avoid cancellation.\n- Save $\\mu$ and $1/\\sigma$ per row for the backward pass rather than recomputing them.\n- Fuse the residual add that precedes the norm in a transformer block: read $x$ and the residual, write the sum (needed later) and the normalised output in one kernel.\n- RMSNorm drops the mean: $y = \\gamma \\odot x / \\sqrt{\\frac{1}{d}\\sum x^2 + \\epsilon}$, one reduction instead of two.\n\nThe backward pass is harder than the forward: the gradients for $\\gamma$ and $\\beta$ are column sums over all rows, a reduction in the other direction. Deterministic implementations write per-block partial column sums and reduce them in a second kernel.\n\n! Example: bytes for a fused norm\n! A transformer layer with hidden size 4096 and 8192 tokens in BF16 holds 64 MiB per activation tensor. Unfused: residual add (read 2, write 1), then LayerNorm (read 1, write 1) is 5 x 64 MiB = 320 MiB of traffic. Fused add+norm reads the two inputs and writes the sum and the output: 4 x 64 MiB = 256 MiB, and one kernel launch instead of two. At 3 TB/s that is about 90 microseconds against 112, a 20% saving on a kernel that runs twice per layer.\n\n> Takeaway: treat convolution, softmax and normalisation as data-movement problems: tile with halos for small filters, lean on implicit GEMM for channel-heavy convolutions, use one warp or block per row with shuffle reductions, and fuse neighbouring ops so each tensor crosses HBM once.",
+   "q": "A softmax kernel for attention scores of shape (batch x heads x 2048 queries) x 2048 keys in FP16 uses one thread per row and three passes over each row. Profiling shows 15% of peak bandwidth. Redesign it and estimate the best achievable time if the score tensor has 2^28 elements on a 2 TB/s GPU.",
+   "s": "One thread per row makes a warp read 32 different rows at the same column: uncoalesced, with 32 sectors per request. Three passes also triple the reads. Assign one warp per row instead: each lane takes elements lane, lane+32, ... (or uses 16-byte vector loads of 8 FP16 values for coalescing), keeps its 64 values in registers, computes the max and the sum of exponentials with warp-shuffle reductions (or a single online-softmax reduction carrying (max, sum) pairs), then writes the normalised values from registers. The row is read once and written once. Traffic is 2^28 elements x 2 bytes x 2 (read + write) = 1 GiB, so the floor is about 1.07 GB / 2 TB/s = 0.54 ms; a good kernel reaches roughly 85 to 90% of peak, around 0.6 ms. Better still is to avoid materialising the scores at all by fusing softmax into attention, as FlashAttention does.",
+   "r": [
+    [
+     "Chetlur et al., cuDNN: Efficient Primitives for Deep Learning (2014)",
+     "https://arxiv.org/abs/1410.0759",
+     "How convolution is lowered to an implicit GEMM, and the performance arguments for it."
+    ],
+    [
+     "Milakov and Gimelshein, Online Normalizer Calculation for Softmax (2018)",
+     "https://arxiv.org/abs/1805.02867",
+     "The single-pass (max, sum) recurrence and measured speedups."
+    ],
+    [
+     "Triton tutorial: Layer Normalization",
+     "https://triton-lang.org/main/getting-started/tutorials/05-layer-norm.html",
+     "Forward and backward LayerNorm kernels, including the parallel reduction for weight gradients."
+    ],
+    [
+     "Lavin and Gray, Fast Algorithms for Convolutional Neural Networks (2015)",
+     "https://arxiv.org/abs/1509.09308",
+     "Winograd minimal filtering for 3x3 convolutions."
+    ]
+   ],
+   "k": [
+    "convolution",
+    "softmax",
+    "kernel fusion"
+   ],
+   "x": [
+    "CUDA",
+    "cuDNN"
+   ],
+   "p": [
+    "1d-convolution",
+    "2d-convolution-2",
+    "softmax-2",
+    "rms-normalization",
+    "layernorm-forward"
+   ]
+  },
+  {
+   "id": "31.07",
+   "t": "Occupancy and performance",
+   "n": [
+    "GPUs hide memory latency by switching between resident warps; **occupancy** is active warps per SM divided by the maximum (64 on A100 and H100).",
+    "Occupancy is capped by whichever resource runs out first: threads (2048 per SM), blocks (32 per SM), **registers** (65,536 per SM) or **shared memory** per SM. At 64 registers per thread, a 256-thread block uses 16,384 registers, so only 4 blocks fit: 50% occupancy.",
+    "More occupancy is not always faster: kernels with lots of **instruction-level parallelism** (several independent loads in flight per thread, register tiling) often peak at 25 to 50% occupancy.",
+    "The **roofline** bounds attainable throughput by $\\min(\\text{peak FLOP/s},\\; I \\times \\text{bandwidth})$ with arithmetic intensity $I$ in FLOP/byte; the ridge point (about 10 FLOP/byte for FP32 on A100, roughly 300 for BF16 Tensor Cores on H100) separates memory-bound from compute-bound kernels.",
+    "Work in a loop: compute the kernel's intensity, measure achieved bandwidth or FLOP/s against the relevant roof in Nsight Compute, and only then tune occupancy, layout or fusion."
+   ],
+   "a": "## Latency hiding\nA load from HBM takes several hundred cycles. A GPU does not wait: each SM keeps many warps resident and, every cycle, its schedulers issue an instruction from any warp that is ready. If enough warps (or enough independent instructions within each warp) are in flight, some are always ready and the memory pipeline stays busy. **Occupancy** measures the first of those two sources:\n\n$$\\text{occupancy} = \\frac{\\text{active warps per SM}}{\\text{maximum warps per SM}}$$\n\nOn A100 and H100 the maximum is 64 warps (2048 threads). How many warps are active depends on how many of your blocks fit on an SM at once, which is limited by whichever resource each block consumes most.\n\n## Computing occupancy\n| Resource per SM (A100) | Limit | A block of 256 threads using... | Blocks that fit\n| Threads | 2048 | 256 threads | 8\n| Blocks | 32 | 1 block | 32\n| Registers | 65,536 | 64 regs/thread = 16,384 | 4\n| Shared memory | ~164 KB usable | 48 KB | 3\n\nThe binding limit is the minimum: here shared memory allows 3 blocks, so 24 warps are active, 37.5% occupancy. Drop to 32 registers per thread and 16 KB of shared memory, and threads become the limit at 8 blocks: 64 warps, 100%. Two details make hand calculations slightly off: registers are allocated per warp in chunks of 256, and each block reserves a little extra shared memory (1 KB on A100). The CUDA occupancy calculator, the runtime API and Nsight Compute all apply these rules for you.\n\n```cpp\nint blocks_per_sm = 0;\ncudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks_per_sm, my_kernel, 256, smem_bytes);\nint min_grid, best_block;\ncudaOccupancyMaxPotentialBlockSize(&min_grid, &best_block, my_kernel, smem_bytes, 0);\n// nvcc -Xptxas -v  prints registers and shared memory per kernel\n// __launch_bounds__(256, 2) asks the compiler to fit 2 blocks of 256 per SM\n```\n\nForcing fewer registers (`-maxrregcount`, `__launch_bounds__`) raises occupancy but can cause **spills** to local memory, which lives in global memory behind the caches. Spills often cost more than the occupancy gains; check the `-Xptxas -v` output for spill stores.\n\n## Occupancy is a means, not a goal\nVolkov's GTC 2010 talk, \"Better Performance at Lower Occupancy\", made the point that has held ever since: latency can be hidden either by many warps (thread-level parallelism) or by each warp having several independent operations in flight (instruction-level parallelism). A matmul thread that computes an 8 x 8 output tile in registers issues many independent FMAs and loads; it uses many registers, so occupancy falls, and it is faster anyway. Fast GEMM and attention kernels commonly run at 12 to 50% occupancy. Low occupancy is worth fixing when a kernel is latency-bound: Nsight Compute shows warps mostly stalled on memory dependencies with too few eligible warps per cycle, and neither bandwidth nor compute anywhere near peak.\n\n## The roofline\nThe roofline model bounds a kernel's attainable throughput from two numbers: the device's peak compute rate $P$ and peak memory bandwidth $\\beta$, and the kernel's arithmetic intensity $I$ = FLOPs performed / bytes moved to and from DRAM.\n\n$$\\text{attainable FLOP/s} = \\min(P,\\; I \\cdot \\beta)$$\n\n%%flow Classify a kernel with the roofline before tuning it.\nCount FLOPs and bytes -(intensity I)-> Compare with ridge P/β -(I below ridge)-> *Memory-bound: cut bytes -(I above ridge)-> Compute-bound: use Tensor Cores\n%%\n\n| Kernel (A100 80 GB; FP32 ridge ~9.6, BF16 Tensor Core ridge ~153 FLOP/B) | Intensity | Bound by\n| Vector add, FP32 | 1 FLOP / 12 B = 0.08 | memory\n| Softmax or LayerNorm, BF16 | ~2-5 | memory\n| Tiled FP32 matmul, 32 x 32 tiles (global traffic) | 8 | memory, near the FP32 ridge\n| Square GEMM, BF16, N = 4096 | $2N^3 / (3 \\cdot 2N^2) = N/3 \\approx 1365$ | compute\n| Decode-time GEMV, BF16 weights, batch 1 | ~1 | memory\n\nInference Engineering's \"Compute-Bound vs Memory-Bound & the Roofline Model\" applies this to prefill and decode; at the kernel level it gives a target. A memory-bound kernel is done when it reaches 80 to 90% of $\\beta$; making its arithmetic faster is pointless, and the remaining options are reducing bytes (fusion, lower precision, avoiding re-reads). A compute-bound kernel is done when it approaches $P$ for the instruction type it uses, which for FP16/BF16 means Tensor Cores; an FP32 CUDA-core matmul on an H100 can never exceed about 7% of the BF16 Tensor Core peak, however well it is tiled.\n\n## A tuning loop\n1. Profile end to end first (Nsight Systems) and pick the kernels that dominate time.\n2. For each, compute intensity by hand and read Nsight Compute's \"Speed of Light\" section: achieved percentage of memory and compute peaks.\n3. If neither is high, read the stall reasons and occupancy: uncoalesced access (sectors per request), bank conflicts, too few eligible warps, or a grid too small to fill all SMs (fewer blocks than SMs leaves hardware idle; aim for several waves).\n4. Change one thing, re-measure, keep a log.\n\n! Example: a kernel that is already done\n! An RMSNorm kernel on 8192 x 4096 BF16 reads 64 MiB and writes 64 MiB in 46 microseconds on an H100 SXM: 128 MiB / 46 µs = 2.9 TB/s, about 87% of 3.35 TB/s. Its occupancy is 50% and Nsight flags it. Raising occupancy will not help, because there is almost no bandwidth left to gain; only fusing it with the preceding residual add (31.06) or the following matmul's prologue would make the layer faster.\n\n> Takeaway: compute occupancy from registers, shared memory and block size to know what limits residency, but judge a kernel by where it sits under the roofline: push memory-bound kernels towards peak bandwidth by moving fewer bytes, and compute-bound ones towards the Tensor Core roof.",
+   "q": "A custom attention-score kernel uses 128 registers per thread with 256-thread blocks and no shared memory. Nsight Compute reports 25% occupancy, 35% of peak memory bandwidth and 20% of peak compute, with warps mostly stalled waiting on global loads. Explain the occupancy figure and give two different ways to improve performance.",
+   "s": "At 128 registers per thread, a 256-thread block needs 32,768 registers, so only 2 blocks (16 warps) fit within an SM's 65,536 registers: 16 of 64 warps is 25% occupancy. With neither memory nor compute near its roof and warps stalled on loads, the kernel is latency-bound: there are too few loads in flight to cover HBM latency. One fix is to increase thread-level parallelism: cap registers with `__launch_bounds__(256, 4)` or restructure to use fewer, aiming for 4 blocks per SM, and check that this does not cause spills. The other is to increase instruction-level parallelism and reuse without raising occupancy: issue several independent loads per thread before using them (unrolling, vectorised 16-byte loads), stage tiles in shared memory with double buffering so loads for the next tile overlap computation on the current one, and reuse loaded data across several outputs per thread. Either way, re-measure against the roofline after each change.",
+   "r": [
+    [
+     "CUDA C++ Best Practices Guide: Occupancy",
+     "https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html#occupancy",
+     "How registers, shared memory and block size limit residency, and the occupancy APIs."
+    ],
+    [
+     "Volkov, Better Performance at Lower Occupancy (GTC 2010)",
+     "https://www.nvidia.com/content/gtc-2010/pdfs/2238_gtc2010.pdf",
+     "Slides showing instruction-level parallelism hiding latency at low occupancy."
+    ],
+    [
+     "Williams, Waterman and Patterson, Roofline (UC Berkeley tech report, 2008)",
+     "https://www2.eecs.berkeley.edu/Pubs/TechRpts/2008/EECS-2008-134.pdf",
+     "The original roofline model: arithmetic intensity, ridge points and ceilings."
+    ],
+    [
+     "Horace He, Making Deep Learning Go Brrrr From First Principles",
+     "https://horace.io/brrr_intro.html",
+     "Compute-, memory- and overhead-bound regimes in PyTorch with worked numbers."
+    ]
+   ],
+   "k": [
+    "occupancy",
+    "roofline"
+   ],
+   "x": [
+    "CUDA",
+    "Nsight Compute"
+   ],
+   "p": [
+    "gpu-occupancy-calculator",
+    "analyze-prefill-and-decode-with-roofline-model",
+    "measure-kernel-timeline-utilization"
+   ]
+  }
+ ]
+}

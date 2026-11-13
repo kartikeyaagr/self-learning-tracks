@@ -475,3 +475,60 @@ textarea{border-radius:10px;background:var(--card)}
 .hm i{aspect-ratio:auto;height:16px}
 .stp span span{display:none}
 .stp{padding:9px 10px}
+
+/* ---- interactive figures ---- */
+.wg .wbody{display:flex;flex-direction:column;gap:14px;font-size:14px;line-height:1.45}
+.wg .wtag{font:600 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--accent);display:flex;align-items:center;gap:6px}
+.wg .wtag::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent)}
+.wc{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px 18px}
+.wc label{display:flex;flex-direction:column;gap:4px;font:500 12px var(--mono);color:var(--muted);min-width:0}
+.wc label b{color:var(--ink);font-weight:600}
+.wc input[type=range]{width:100%;accent-color:var(--accent)}
+.wc select,.wc input[type=text],.wg textarea{font:14px var(--body);padding:7px 9px;border-radius:8px;border:1px solid var(--line2);background:var(--card);color:var(--ink);width:100%;min-height:0}
+.wg textarea{min-height:70px}
+.wbtns{display:flex;gap:8px;flex-wrap:wrap}
+.wb{font:500 12.5px var(--mono);padding:6px 11px;border-radius:7px;border:1px solid var(--line2);background:var(--card);color:var(--ink);cursor:pointer}
+.wb:hover{border-color:var(--accent);color:var(--accent)}
+.wb.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.wout{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+.wout>div{background:var(--panel);border-radius:9px;padding:9px 12px;min-width:0}
+.wout span{display:block;font:500 10.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.wout b{display:block;font:600 19px/1.25 var(--body);letter-spacing:-.02em;margin-top:2px;overflow-wrap:anywhere}
+.wout b.hot{color:var(--accent)}
+.wnote{font-size:13px;color:var(--muted)}
+.wsvg{width:100%;height:auto;display:block;color:var(--ink);font-family:var(--body);overflow:visible}
+.wsvg text{font-size:11px;fill:var(--muted)}
+.wsvg .ax{stroke:var(--line2);stroke-width:1}
+.wsvg .gr{stroke:var(--line);stroke-width:1}
+.wscroll{overflow-x:auto}
+.wtok{display:flex;flex-wrap:wrap;gap:3px}
+.wtok span{font:500 13px var(--mono);padding:2px 4px;border-radius:4px;white-space:pre}
+.wgrid{display:grid;gap:2px}
+.wgrid i{display:block;aspect-ratio:1;border-radius:2px;background:var(--panel)}
+.wtbl{width:100%;border-collapse:collapse;font-size:13px}
+.wtbl td,.wtbl th{padding:5px 8px;border-top:1px solid var(--line);text-align:left;vertical-align:top}
+.wtbl th{font:600 10.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);border-top:0}
+.wtbl tr.hot td{background:var(--accent-soft)}
+.wtbl td.n{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.wbar{height:10px;border-radius:3px;background:var(--accent);min-width:1px}
+.wrow{display:grid;grid-template-columns:110px 1fr 58px;gap:8px;align-items:center;font-size:13px}
+.wrow .l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:12.5px}
+.wrow .v{font:500 12px var(--mono);text-align:right;color:var(--muted)}
+.wrow.off{opacity:.35}
+.wrow.hot .l{color:var(--accent);font-weight:600}
+.wchips{display:flex;flex-wrap:wrap;gap:6px}
+.wchip{font:500 12.5px var(--mono);padding:4px 9px;border-radius:999px;border:1px solid var(--line2);background:var(--card);cursor:pointer;color:var(--ink)}
+.wchip.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.wlog{font:12.5px/1.55 var(--mono);background:var(--panel);border-radius:9px;padding:10px 12px;max-height:220px;overflow:auto;white-space:pre-wrap}
+/* stepping diagrams */
+.dgc{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.dgc .wb{padding:4px 10px}
+.dgc .st{font:500 12px var(--mono);color:var(--muted);margin-left:auto}
+.dg .nd,.dg .ed,.dg .lay,.dg .lay-arr{transition:opacity .25s}
+.dg.stepping .nd,.dg.stepping .ed,.dg.stepping .lay,.dg.stepping .lay-arr{opacity:.18}
+.dg.stepping .nd.on,.dg.stepping .ed.on,.dg.stepping .lay.on{opacity:1}
+.dg .nd{cursor:pointer}
+.dg .nd:hover rect:last-of-type{stroke-width:2.2}
+.dg .lay{cursor:pointer}
+.dg .lay.on{border-color:var(--accent);box-shadow:0 3px 0 var(--accent)}
+@media (max-width:640px){.wrow{grid-template-columns:80px 1fr 50px}.wout b{font-size:16px}}

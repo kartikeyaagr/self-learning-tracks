@@ -1,0 +1,70 @@
+{
+ "id": "inference-engineering",
+ "group": "Systems and GPU Programming",
+ "title": "Inference Engineering Drills",
+ "blurb": "Build the pieces of an LLM serving engine in code: attention variants that shrink the KV cache, tiled attention, sampling and MoE routing, a paged and prefix-shared cache, speculative decoding, low-bit weight formats, and the schedulers, metrics and capacity models that decide what a deployment costs.",
+ "prereq": "Comfortable with PyTorch tensor code and with how causal attention in a Transformer works; knowing what a KV cache stores is a good starting point.",
+ "next": "Write the GPU kernels behind these components with the Triton plan, or follow a full model from training to serving in the LLM from-scratch plan.",
+ "sections": [
+  {
+   "name": "Attention architectures",
+   "problems": [
+    "scaled-dot-product-attention-3",
+    "multi-head-attention-mha",
+    "multi-query-attention-mqa",
+    "grouped-query-attention-gqa",
+    "multi-head-latent-attention-mla"
+   ]
+  },
+  {
+   "name": "Efficient transformer components",
+   "problems": [
+    "rotary-position-embeddings-for-decoding",
+    "flashattention-with-online-softmax",
+    "temperature-top-k-and-top-p-sampling",
+    "sparse-moe-top-k-expert-routing",
+    "moe-token-dispatch-and-expert-aggregation"
+   ]
+  },
+  {
+   "name": "KV cache and decoding",
+   "problems": [
+    "autoregressive-decoding-with-kv-cache",
+    "kv-cache-memory-for-mha-mqa-gqa-and-mla",
+    "pagedattention-block-allocation",
+    "prefix-cache-matching-and-reuse",
+    "speculative-decoding-and-token-verification"
+   ]
+  },
+  {
+   "name": "Quantization and GPU performance",
+   "problems": [
+    "int8-symmetric-quantize",
+    "per-channel-weight-quantization",
+    "group-wise-int4-quantization",
+    "block-wise-fp8-quantization",
+    "analyze-prefill-and-decode-with-roofline-model"
+   ]
+  },
+  {
+   "name": "Batching and serving metrics",
+   "problems": [
+    "p50-p95-and-p99-inference-latency",
+    "ttft-tpot-itl-and-token-throughput",
+    "dynamic-request-batching",
+    "simulate-continuous-batching",
+    "simulate-chunked-prefill-scheduling"
+   ]
+  },
+  {
+   "name": "Distributed inference systems",
+   "problems": [
+    "estimate-model-memory-and-minimum-gpu-count",
+    "tensor-parallel-communication-cost",
+    "expert-parallel-routing-across-gpus",
+    "simulate-disaggregated-prefill-and-decode-servin",
+    "optimize-throughput-and-cost-under-latency-slo"
+   ]
+  }
+ ]
+}

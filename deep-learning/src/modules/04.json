@@ -1,0 +1,258 @@
+{
+ "n": "04",
+ "name": "Computer vision",
+ "lessons": [
+  {
+   "id": "04.01",
+   "t": "Images as arrays",
+   "n": [
+    "An image is a tensor with conventions: `uint8` HWC on disk, `float32` NCHW in most training code. Most silent bugs are convention mismatches (RGB vs BGR, HWC vs CHW, 0-255 vs 0-1), not model bugs.",
+    "Normalise with the statistics the model was trained with: divide by 255, then subtract the per-channel mean and divide by the per-channel std, computed on the training set only.",
+    "Classic filters (box, Gaussian, Sobel) are fixed convolutions. They explain what early CNN layers learn and are still useful for preprocessing and debugging.",
+    "Augmentation must preserve the label. Geometric transforms must also move the boxes or masks, and some (horizontal flip on text, rotation on digits like 6/9) change the label itself.",
+    "Train-time augmentation is random; eval-time preprocessing is deterministic (resize, centre crop, normalise) and must match what the model saw in training."
+   ],
+   "a": "## Where this module sits\nModule 03 built the convolutional network itself. This module is about what goes in and out of it for real vision tasks: how pixels become tensors, how detectors and segmenters frame their outputs, and how transformers replaced convolutions in many backbones. This first lesson is the unglamorous part, and it is where a surprising share of production accuracy gets lost.\n\n## An image is a tensor with conventions\nA decoded JPEG is an array of shape $(H, W, 3)$ with dtype `uint8`, values 0 to 255. PyTorch layers expect `float32` in $(N, C, H, W)$ order; TensorFlow and JAX code often keeps channels last, $(N, H, W, C)$. A single 224×224 RGB image is 150,528 numbers; a batch of 256 in `float32` is about 154 MB before the network touches it, which is why data loaders keep images as `uint8` until the last moment.\n\nThree conventions cause most silent failures:\n- **Channel order.** OpenCV decodes to BGR; PIL and torchvision use RGB. Feeding BGR to an RGB-trained model does not crash; it just loses several points of accuracy because red and blue statistics are swapped.\n- **Axis order.** Converting HWC to CHW needs `transpose(2, 0, 1)`. Using `reshape(3, H, W)` has the right shape but scrambles pixels into stripes. Nothing errors.\n- **Value range.** Some pipelines expect 0-1 floats, some expect 0-255, some expect -1 to 1. Normalising twice or not at all both \"work\" and both hurt.\n\n## Colour spaces\nRGB is what cameras and screens use, but it entangles brightness with colour. Other spaces separate them:\n\n| Space | Channels | Typical use |\n| RGB | red, green, blue | model input, display |\n| Grayscale | luma $Y = 0.299R + 0.587G + 0.114B$ | edge detection, cheap models |\n| HSV | hue, saturation, value | colour jitter (shift hue without changing brightness) |\n| YCbCr | luma plus two chroma | JPEG compression, which stores chroma at lower resolution |\n\nThe grayscale weights are not equal because the eye is most sensitive to green. A second subtlety: stored pixel values are gamma-encoded (sRGB), so averaging two pixel values is not the same as averaging light intensities. For learning this rarely matters; for resizing and blending high-contrast edges it can.\n\n## Normalisation\nThe standard recipe is: convert to float, divide by 255, then for each channel $c$ compute $x' = (x - \\mu_c)/\\sigma_c$. The ImageNet statistics, $\\mu = (0.485, 0.456, 0.406)$ and $\\sigma = (0.229, 0.224, 0.225)$, are baked into almost every pretrained torchvision model. If you train from scratch on your own data, compute $\\mu$ and $\\sigma$ over the training split only; using validation images leaks information, mildly but measurably.\n\n```python\nimport numpy as np\nMEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)\nSTD  = np.array([0.229, 0.224, 0.225], dtype=np.float32)\n\ndef to_model_input(img_hwc_uint8):           # (H, W, 3) RGB uint8\n    x = img_hwc_uint8.astype(np.float32) / 255.0\n    x = (x - MEAN) / STD                      # broadcasts over the last axis\n    return x.transpose(2, 0, 1)               # (3, H, W), never reshape\n```\n\nWhy normalise at all? Zero-centred, unit-scale inputs keep the first layer's pre-activations in a sensible range at initialisation, so the variance-preserving init from module 01 actually holds.\n\n! Example: normalising one pixel\n! A red channel value of 200 becomes $200/255 = 0.784$, then $(0.784 - 0.485)/0.229 = 1.31$.\n! A pure black pixel (0) in the blue channel becomes $(0 - 0.406)/0.225 = -1.80$. So normalised inputs live roughly in $[-2.1, 2.6]$, not $[0, 1]$.\n\n## Filtering\nBefore CNNs, vision was hand-designed filters. They are worth knowing because first-layer CNN kernels learn very similar shapes:\n- **Box blur**: every weight $1/k^2$. Cheap, but produces ringing artefacts.\n- **Gaussian blur**: weights from $e^{-(x^2+y^2)/2\\sigma^2}$. It is separable, so a $k \\times k$ blur becomes a $k$-tap horizontal pass then a $k$-tap vertical pass: $2k$ multiplies per pixel instead of $k^2$.\n- **Sobel**: two 3×3 kernels that approximate $\\partial I/\\partial x$ and $\\partial I/\\partial y$; the gradient magnitude $\\sqrt{G_x^2 + G_y^2}$ highlights edges.\n\nBoundary handling (zero, reflect, replicate padding) changes the outputs at the border; this matters more for small images. Module 03 covers learned convolution, stride and padding in detail.\n\n## Augmentation\nAugmentation creates new training examples that the label should be invariant to. Common families:\n- **Geometric**: random resized crop (sample 8% to 100% of the area, then resize to 224), horizontal flip, small rotations and translations.\n- **Photometric**: brightness, contrast, saturation and hue jitter; blur; noise.\n- **Mixing**: mixup blends two images and their labels with weight $\\lambda \\sim \\text{Beta}(\\alpha, \\alpha)$; CutMix pastes a patch from one image into another and mixes labels by the pasted area.\n- **Policies**: RandAugment picks $N$ random operations at a shared magnitude $M$, reducing a large search space to two knobs.\n\n%%flow One image's path from disk to the network; augmentation runs on the cheap uint8 form, normalisation last.\nJPEG bytes -(decode)-> uint8 HWC -(random crop, flip, jitter)-> augmented -(to float, /255)-> *normalise -(transpose, batch)-> NCHW float32\n%%\n\nThe rule that matters is label preservation. Horizontal flips are fine for cats and wrong for text or for left-vs-right medical scans. For detection, every geometric transform must also transform the boxes; for segmentation it must transform the mask with nearest-neighbour interpolation so class ids stay integers. At evaluation time, use a fixed pipeline, typically resize the short side to 256 and centre crop 224, so results are reproducible.\n\n> Takeaway: treat preprocessing as part of the model. Channel order, axis order, value range, normalisation statistics and eval-time resizing must exactly match training, and every augmentation must keep the label true.\n",
+   "q": "A ResNet pretrained on ImageNet reports 76% top-1 accuracy, but in your pipeline (images loaded with OpenCV, converted with `reshape`, normalised with mean 0.5 and std 0.5) it gets 61%. List the likely causes, in the order you would check them, and how you would confirm each.",
+   "s": "First, axis order: `reshape` to (3, H, W) scrambles pixels without an error; confirm by converting a tensor back to an image and viewing it, then switch to `transpose(2, 0, 1)`. Second, channel order: OpenCV gives BGR, the model expects RGB; confirm by swapping channels (`img[..., ::-1]`) and re-running a small validation slice. Third, normalisation statistics: the model was trained with ImageNet means and stds, not 0.5/0.5; the shift is small per pixel but systematic. Fourth, eval resizing: check you resize the short side to 256 and centre crop 224 with the same interpolation as the reference. Change one thing at a time on a fixed 1,000-image slice so each fix's effect is visible.",
+   "r": [
+    [
+     "torchvision: Transforming and augmenting images",
+     "https://pytorch.org/vision/stable/transforms.html",
+     "Reference for the standard train and eval pipelines, including how boxes and masks are transformed alongside images."
+    ],
+    [
+     "Dive into Deep Learning: Image Augmentation",
+     "https://d2l.ai/chapter_computer-vision/image-augmentation.html",
+     "Runnable walkthrough of flips, crops and colour jitter and their effect on training."
+    ],
+    [
+     "RandAugment (Cubuk et al., 2019)",
+     "https://arxiv.org/abs/1909.13719",
+     "How a two-parameter augmentation policy matches searched policies; read the method section."
+    ],
+    [
+     "mixup: Beyond Empirical Risk Minimization",
+     "https://arxiv.org/abs/1710.09412",
+     "The original mixup paper; short, and explains why mixing labels regularises."
+    ]
+   ],
+   "k": [
+    "preprocessing",
+    "augmentation"
+   ],
+   "x": [
+    "NumPy",
+    "torchvision"
+   ],
+   "p": [
+    "image-normalize",
+    "per-channel-mean-and-std",
+    "rgb-to-grayscale",
+    "gaussian-blur-2d",
+    "transform-pipeline"
+   ]
+  },
+  {
+   "id": "04.02",
+   "t": "Object detection basics",
+   "n": [
+    "A detector outputs a variable-size set of (box, class, score). Dense detectors predict at every feature-map location and then prune.",
+    "IoU, intersection over union, is the yardstick for everything: matching anchors to ground truth, deciding duplicates in NMS, and scoring at evaluation (mAP at IoU 0.5 to 0.95).",
+    "Anchors are reference boxes tiled over the feature map at several scales and aspect ratios. The network predicts a class and a small correction for each one.",
+    "Boxes are regressed as encoded offsets: centre shift divided by anchor size, and log of the size ratio. This makes targets scale-invariant and keeps widths positive.",
+    "Non-maximum suppression keeps the highest-scoring box and removes others that overlap it beyond a threshold. It is greedy and can delete real objects in crowds."
+   ],
+   "a": "## The detection problem\nClassification answers \"what is in this image\". Detection answers \"what is where\": a list of boxes, each with a class and a confidence. The list has variable length, which is awkward for a network with fixed-size outputs. The standard trick is to predict far too many candidates at fixed positions and then prune.\n\nTwo families do this:\n- **Two-stage** (Faster R-CNN): a region proposal network suggests about 1,000-2,000 boxes, then a second head crops features for each (RoIAlign) and classifies and refines it. Accurate, slower.\n- **One-stage** (SSD, RetinaNet, YOLO): a single dense head predicts class scores and box offsets at every feature-map cell. Faster and simpler; with a good loss (next lesson) as accurate.\n\nAnchor-free detectors such as FCOS skip anchors and predict, at each location, the distances to the four box edges. The rest of this lesson still applies: IoU, encoding and NMS.\n\n%%flow A one-stage detector: dense predictions everywhere, then decode and prune.\nImage -> Backbone + FPN -(per cell)-> *Dense head -(decode offsets)-> Candidate boxes -(score > 0.05)-> NMS -> Detections\n%%\n\n## Box formats and IoU\nBoxes appear as corners $(x_1, y_1, x_2, y_2)$, as corner plus size $(x, y, w, h)$, or as centre plus size $(c_x, c_y, w, h)$, in pixels or normalised to $[0, 1]$. Mixing formats is a top-three detection bug, so convert at the edges and keep one format inside.\n\nIoU between boxes $A$ and $B$ is $|A \\cap B| / |A \\cup B|$. The intersection's corners are the max of the top-left corners and the min of the bottom-right corners, clamped at zero width and height when the boxes do not overlap. For $N$ predictions and $M$ ground-truth boxes, compute the full $N \\times M$ matrix with broadcasting; it feeds both matching and evaluation.\n\n! Example: IoU of two offset squares\n! $A = (0, 0, 10, 10)$ and $B = (5, 5, 15, 15)$. Intersection corners: $(5, 5)$ to $(10, 10)$, area 25.\n! Union: $100 + 100 - 25 = 175$. IoU $= 25/175 = 0.143$. Half-overlapping on each axis gives a low IoU, which is why 0.5 is already a demanding threshold.\n\n## Anchors and matching\nAt each cell of a feature map with stride $s$, place $A$ anchors centred on the cell, for example 3 scales × 3 aspect ratios (1:2, 1:1, 2:1). RetinaNet uses 9 anchors per location on pyramid levels with strides 8 to 128. On an 800×800 image the stride-8 level alone is 100×100 cells × 9 = 90,000 anchors; the whole pyramid has about 120,000.\n\nDuring training each anchor gets a target by IoU with the ground truth:\n- IoU ≥ 0.5 with some box: positive, assigned to the box it overlaps most.\n- IoU < 0.4 with every box: negative (background).\n- In between: ignored, so ambiguous anchors do not send noisy gradients.\n- Each ground-truth box is also matched to its single best anchor, so small or oddly shaped objects are never left without a positive.\n\nThe result is extreme imbalance: a typical image has a handful of objects and tens of thousands of background anchors. The next lesson's focal loss exists because of this.\n\n## Encoding box targets\nRather than predicting raw coordinates, the head predicts offsets relative to its anchor $(x_a, y_a, w_a, h_a)$:\n\n$$t_x = \\frac{x - x_a}{w_a}, \\quad t_y = \\frac{y - y_a}{h_a}, \\quad t_w = \\log\\frac{w}{w_a}, \\quad t_h = \\log\\frac{h}{h_a}$$\n\nDividing by anchor size makes a 4-pixel shift on a 16-pixel anchor and a 32-pixel shift on a 128-pixel anchor the same target, so one regression head works across scales. The log makes widths positive after decoding ($w = w_a e^{t_w}$) and turns \"twice as wide\" and \"half as wide\" into symmetric targets $\\pm 0.69$. Implementations often divide by fixed variances such as $(0.1, 0.1, 0.2, 0.2)$ so targets have roughly unit scale, and clamp $t_w, t_h$ at about $\\log(1000/16) \\approx 4.1$ before `exp` so a bad prediction cannot overflow.\n\n## Non-maximum suppression\nA good detector fires on many neighbouring anchors for the same object. NMS turns that cluster into one box:\n1. Sort candidates by score.\n2. Take the highest, keep it.\n3. Remove every remaining candidate whose IoU with it exceeds a threshold (commonly 0.5).\n4. Repeat until no candidates remain.\n\n```python\nimport numpy as np\ndef nms(boxes, scores, thr=0.5):           # boxes: (N, 4) x1, y1, x2, y2\n    order, keep = scores.argsort()[::-1], []\n    while order.size:\n        i, rest = order[0], order[1:]\n        keep.append(i)\n        tl = np.maximum(boxes[i, :2], boxes[rest, :2])\n        br = np.minimum(boxes[i, 2:], boxes[rest, 2:])\n        inter = np.prod(np.clip(br - tl, 0, None), axis=1)\n        area = lambda b: (b[:, 2] - b[:, 0]) * (b[:, 3] - b[:, 1])\n        iou = inter / (area(boxes[[i]]) + area(boxes[rest]) - inter)\n        order = rest[iou <= thr]\n    return keep\n```\n\nRun it per class; a common trick is to offset each class's boxes by a large class-dependent constant so one call handles all classes without cross-class suppression. Worst case is $O(N^2)$, so detectors keep only the top 1,000 candidates per level before NMS.\n\nNMS is greedy and blind: two people standing shoulder to shoulder can have IoU above 0.5, and the lower-scoring one is deleted. Soft-NMS decays overlapping scores instead of zeroing them; set-prediction detectors (DETR, next lesson) avoid NMS entirely.\n\n> Takeaway: dense detectors predict a correction for every anchor, label anchors by IoU, regress scale-invariant offsets, and rely on NMS to remove duplicates. Most detection bugs are box-format, encoding or threshold mistakes, not architecture.\n",
+   "q": "Your detector misses one of two people standing shoulder to shoulder, even though before NMS both had high-scoring boxes. Explain what happened and give two fixes with their costs.",
+   "s": "The two people's boxes overlap with IoU above the NMS threshold (say 0.5). NMS keeps the higher-scoring box and deletes every candidate overlapping it beyond the threshold, including the correct box for the second person, because NMS cannot tell a duplicate from a neighbour. Fix 1: raise the threshold (0.6-0.7). This keeps neighbours but lets more true duplicates survive, lowering precision on isolated objects. Fix 2: Soft-NMS, which multiplies overlapping scores by a decay (linear or Gaussian in IoU) instead of zeroing them, so the second box survives with a reduced score and can still be ranked; costs a little more compute and a new hyperparameter. A structural fix is a set-prediction detector (DETR) trained with one-to-one matching, which needs no NMS but trains much more slowly.",
+   "r": [
+    [
+     "Faster R-CNN (Ren et al., 2015)",
+     "https://arxiv.org/abs/1506.01497",
+     "Introduces anchors and the region proposal network; section 3.1 defines the box encoding used almost everywhere."
+    ],
+    [
+     "Dive into Deep Learning: Anchor Boxes",
+     "https://d2l.ai/chapter_computer-vision/anchor.html",
+     "Code for generating anchors, IoU matrices, labelling anchors and NMS."
+    ],
+    [
+     "FCOS: Fully Convolutional One-Stage Object Detection",
+     "https://arxiv.org/abs/1904.01355",
+     "The anchor-free alternative; useful contrast for what anchors actually buy you."
+    ],
+    [
+     "torchvision.ops.nms",
+     "https://pytorch.org/vision/stable/generated/torchvision.ops.nms.html",
+     "The production NMS interface and its box-format expectations."
+    ]
+   ],
+   "k": [
+    "object detection",
+    "IoU"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "iou-matrix",
+    "non-maximum-suppression",
+    "box-encode-and-decode",
+    "anchor-box-generation",
+    "soft-non-maximum-suppression"
+   ]
+  },
+  {
+   "id": "04.03",
+   "t": "Detection losses and matching",
+   "n": [
+    "Dense detectors see roughly 1,000 background anchors per object. Plain cross-entropy is dominated by easy negatives; focal loss multiplies each term by $(1-p_t)^\\gamma$ so confident, correct predictions contribute almost nothing.",
+    "Initialise the classification bias to a prior of about 0.01 foreground, or the first iterations produce a huge loss from 100k anchors all predicting 0.5.",
+    "L1 loss on box coordinates does not track IoU. IoU-based losses do, but plain $1 - \\text{IoU}$ has zero gradient when boxes do not overlap; GIoU, DIoU and CIoU add terms that still pull disjoint boxes together.",
+    "DETR treats detection as set prediction: a fixed set of queries is matched one-to-one to ground truth with the Hungarian algorithm, and unmatched queries learn to predict 'no object'. One-to-one matching is why it needs no NMS."
+   ],
+   "a": "## Two problems the previous lesson left open\nThe anchor recipe from the last lesson produces two training problems. Classification is wildly imbalanced: about 100,000 anchors per image, of which perhaps 50 are positive. And box regression with L1 or smooth-L1 on encoded offsets optimises something only loosely related to what evaluation measures, which is IoU. This lesson covers the loss that fixed the first problem, the family that fixed the second, and the matching scheme that removed NMS altogether. Module 01 introduced focal loss as a general loss; here is why detection needed it.\n\n## Focal loss\nWrite $p_t$ for the predicted probability of the true class (so $p_t = p$ for positives and $1-p$ for negatives). Cross-entropy is $-\\log p_t$. An easy negative with $p_t = 0.99$ costs only 0.01, but 100,000 of them sum to 1,000, swamping 50 hard positives.\n\nFocal loss adds a modulating factor:\n\n$$\\text{FL}(p_t) = -\\alpha_t (1 - p_t)^{\\gamma} \\log p_t$$\n\nWith $\\gamma = 2$, the easy negative's weight is $(0.01)^2 = 10^{-4}$; a hard example with $p_t = 0.3$ keeps weight $0.49$. The paper's defaults are $\\gamma = 2$, $\\alpha = 0.25$ for positives (it looks backwards but compensates for the down-weighting of negatives), and the total is divided by the number of positive anchors, not the number of anchors.\n\nThe other half of the trick is initialisation. If the final classification bias starts at zero, every anchor predicts $p = 0.5$ and the first loss is enormous and unstable. Setting the bias to $b = -\\log((1-\\pi)/\\pi)$ with $\\pi = 0.01$ gives $b \\approx -4.6$, so every anchor starts by predicting \"background, probably\".\n\n! Example: how much each anchor counts\n! Easy negative, $p_t = 0.99$: CE $= 0.010$, FL with $\\gamma = 2$ and $\\alpha_t = 0.75$ $\\approx 0.75 \\times 10^{-4} \\times 0.010 = 7.5 \\times 10^{-7}$.\n! Hard positive, $p_t = 0.2$: CE $= 1.61$, FL $= 0.25 \\times 0.64 \\times 1.61 = 0.26$.\n! The ratio of hard to easy contribution goes from about 160× under CE to about 340,000× under focal loss.\n\n## IoU-based box losses\nTwo predictions with the same L1 error can have very different IoU, because L1 treats the four coordinates independently and ignores scale. Optimising IoU directly fixes that, but $1 - \\text{IoU}$ is flat (gradient zero) whenever the boxes do not overlap, which is common early in training.\n\n| Loss | Extra term | What it fixes |\n| IoU | none | aligns training with the metric; no gradient when disjoint |\n| GIoU | $-\\,\\lvert C \\setminus (A \\cup B)\\rvert / \\lvert C\\rvert$, $C$ the smallest enclosing box | gives gradient when disjoint; range $[-1, 1]$ |\n| DIoU | $-\\,\\rho^2(b, b^{gt}) / c^2$, centre distance over enclosing diagonal | pulls centres together directly; converges faster than GIoU |\n| CIoU | DIoU plus $\\alpha v$, $v = \\frac{4}{\\pi^2}(\\arctan\\frac{w^{gt}}{h^{gt}} - \\arctan\\frac{w}{h})^2$ | also matches aspect ratio |\n\nThe loss is $1 - \\text{(G/D/C)IoU}$. GIoU has a known weakness: when one box contains the other, the enclosing box equals the larger box, the extra term vanishes, and GIoU degenerates to IoU; DIoU's centre term still pushes. In practice detectors combine an IoU-family loss with an L1 term on the boxes.\n\n## Set prediction with Hungarian matching\nDETR reframes detection. A transformer decoder takes $N = 100$ learned query vectors and outputs 100 (class, box) predictions, where the class set includes \"no object\". Training needs to decide which prediction is responsible for which ground-truth box, and DETR uses a one-to-one assignment that minimises total cost:\n\n$$\\hat\\sigma = \\arg\\min_{\\sigma} \\sum_i \\Big[-\\hat p_{\\sigma(i)}(c_i) + \\lambda_{L1}\\lVert b_i - \\hat b_{\\sigma(i)}\\rVert_1 + \\lambda_{giou}\\big(1 - \\text{GIoU}(b_i, \\hat b_{\\sigma(i)})\\big)\\Big]$$\n\nwith $\\lambda_{L1} = 5$ and $\\lambda_{giou} = 2$. The Hungarian algorithm solves this in $O(N^3)$, cheap for 100 queries. Matched predictions get the classification and box losses; the remaining queries are trained to output \"no object\", with that class's weight reduced to 0.1 to offset the imbalance.\n\n```python\nfrom scipy.optimize import linear_sum_assignment\n# cost: (num_queries, num_gt) built from class prob, L1 and GIoU terms\nrows, cols = linear_sum_assignment(cost)   # query rows[k] <-> gt cols[k]\n```\n\n%%flow Many-to-one matching needs NMS at test time; one-to-one matching does not.\n[Dense detector] Anchors -(IoU > 0.5)-> Many anchors per object -> *NMS at test time\n[DETR] 100 queries -(Hungarian, one-to-one)-> One query per object -> *No NMS\n%%\n\nWhy no NMS? With IoU matching, several anchors are trained to fire on the same object, so duplicates are the intended behaviour and must be pruned. With one-to-one matching, a second query firing on an already-claimed object is penalised as a false positive, so the model learns (via self-attention between queries) to suppress its own duplicates. The cost: the original DETR needed about 500 epochs on COCO versus about 36 for Faster R-CNN, because matching is unstable early on. Deformable DETR and later variants cut this substantially.\n\n> Takeaway: focal loss handles foreground-background imbalance, IoU-family losses align box regression with the evaluation metric, and one-to-one Hungarian matching turns detection into set prediction so the model learns to avoid duplicates instead of relying on NMS.\n",
+   "q": "Why does DETR not need NMS while RetinaNet does? What would you expect if you trained DETR with RetinaNet-style matching (every query whose box has IoU above 0.5 with a ground truth is a positive for it)?",
+   "s": "RetinaNet's matching is many-to-one: every anchor with IoU above 0.5 is a positive for that object, so the network is explicitly trained to produce several high-scoring boxes per object, and NMS is required to collapse them. DETR's Hungarian matching is one-to-one: exactly one query is positive for each object and every other query is trained toward 'no object', so a duplicate prediction is a penalised false positive and the decoder learns to suppress duplicates through query-to-query self-attention. If you switched DETR to IoU-threshold matching, several queries would be rewarded for the same object, duplicates would reappear at test time, and you would need NMS again. You would also lose the clean set-prediction loss, since the 'no object' targets would depend on arbitrary thresholds.",
+   "r": [
+    [
+     "Focal Loss for Dense Object Detection (Lin et al., 2017)",
+     "https://arxiv.org/abs/1708.02002",
+     "RetinaNet and focal loss; section 3 for the loss and section 4.1 for the prior-based bias initialisation."
+    ],
+    [
+     "Generalized Intersection over Union (Rezatofighi et al., 2019)",
+     "https://arxiv.org/abs/1902.09630",
+     "Defines GIoU and shows why IoU is a better regression target than L1."
+    ],
+    [
+     "Distance-IoU Loss (Zheng et al., 2019)",
+     "https://arxiv.org/abs/1911.08287",
+     "DIoU and CIoU, with the containment failure case of GIoU illustrated."
+    ],
+    [
+     "End-to-End Object Detection with Transformers (DETR)",
+     "https://arxiv.org/abs/2005.12872",
+     "Set prediction and the Hungarian matching cost; section 3.1."
+    ]
+   ],
+   "k": [
+    "focal loss",
+    "bipartite matching"
+   ],
+   "x": [
+    "NumPy",
+    "SciPy"
+   ],
+   "p": [
+    "sigmoid-focal-loss",
+    "hungarian-matching",
+    "generalized-iou-loss",
+    "complete-iou-loss"
+   ]
+  },
+  {
+   "id": "04.04",
+   "t": "Segmentation and U-Net",
+   "n": [
+    "Semantic segmentation predicts a class for every pixel; the output is a $C \\times H \\times W$ logit map at input resolution.",
+    "Encoder-decoder networks downsample to gain context and upsample to recover resolution. Detail lost in downsampling cannot be recovered by upsampling alone.",
+    "U-Net's skip connections concatenate encoder features into the decoder at each resolution, so the decoder gets both coarse 'what' and fine 'where'.",
+    "Pixel cross-entropy is dominated by the majority class when foreground is tiny. Dice loss measures overlap directly, so it is insensitive to how many background pixels there are; most recipes combine the two.",
+    "Evaluate with per-class IoU averaged over classes (mIoU), not pixel accuracy."
+   ],
+   "a": "## Three segmentation tasks\n- **Semantic segmentation**: one class per pixel. Two touching cars are one \"car\" region.\n- **Instance segmentation**: separate masks for each object (Mask R-CNN adds a mask head to the detector from the previous lessons).\n- **Panoptic segmentation**: both at once: instances for countable things, semantic regions for stuff like road and sky.\n\nThis lesson covers the semantic case and the U-Net architecture, which remains the default for medical imaging and is also the backbone of the diffusion models in module 07.\n\n## From classifier to dense predictor\nA classification CNN ends with global pooling and a fully connected layer, throwing away spatial layout. The fully convolutional network (FCN) idea is to keep everything convolutional so the output is a spatial map, then upsample it to input size. A ResNet with total stride 32 turns a 512×512 image into a 16×16 map; upsampling that 32× gives blobby masks, because fine boundaries were lost when the features were downsampled. Upsampling alone cannot recover information that is no longer there.\n\nTwo ways to upsample, both from module 03:\n- **Transposed convolution**: learned, but prone to checkerboard artefacts when kernel size is not divisible by stride.\n- **Bilinear or nearest resize followed by a 3×3 convolution**: fixed interpolation, then learned refinement; fewer artefacts and the common modern choice.\n\n## U-Net\nU-Net (2015) has a contracting path and a symmetric expanding path. At each resolution the encoder applies two 3×3 conv layers and then downsamples 2×, doubling channels. The decoder upsamples 2×, **concatenates** the encoder feature map from the same resolution, and applies two more 3×3 convolutions. The final 1×1 convolution maps to $C$ class logits per pixel.\n\n%%layers A four-level U-Net on a 256×256 input. Each encoder level's output is copied across to the decoder level at the same resolution.\nLevel 1 | 256×256, 64 channels, skip to decoder level 1\nLevel 2 | 128×128, 128 channels, skip to decoder level 2\nLevel 3 | 64×64, 256 channels, skip to decoder level 3\n*Bottleneck | 32×32, 512 channels: widest context, coarsest position\nDecoder | upsample, concatenate skip, two 3×3 convs, repeat to 256×256, then 1×1 conv to C logits\n%%\n\nWhy concatenation and not addition? Concatenation lets the decoder learn how to combine the two sources; addition (as in FPN or ResNets) forces them into the same feature space. The cost is more channels in the first decoder convolution: at level 3 it sees 512 upsampled plus 256 skip = 768 input channels.\n\n%%flow One decoder step.\nDecoder 32×32×512 -(upsample ×2)-> 64×64×512 -(concat skip)-> 64×64×768 -(two 3×3 convs)-> *64×64×256\n%%\n\nA practical detail: the original paper used unpadded convolutions, so a 572×572 input produced a 388×388 output and skips had to be centre-cropped to align. Modern implementations use `padding=1`, but if the input side is not divisible by $2^{\\text{levels}}$ (say 250 with four levels), the upsampled map and the skip differ by a pixel. Pad the input to a multiple of 16, or pad or crop the upsampled tensor before concatenating.\n\n## Losses for imbalanced masks\nThe natural loss is cross-entropy at every pixel, averaged. It fails when foreground is rare: if a lesion covers 0.3% of pixels, predicting \"background\" everywhere gets 99.7% pixel accuracy and a low loss. Class-weighted cross-entropy helps; Dice loss attacks the problem directly.\n\nThe Dice coefficient between predicted set $P$ and ground truth $G$ is\n\n$$D = \\frac{2\\lvert P \\cap G\\rvert}{\\lvert P\\rvert + \\lvert G\\rvert}$$\n\nThe soft version replaces sets with probabilities: $D = (2\\sum p_i g_i + \\epsilon)/(\\sum p_i + \\sum g_i + \\epsilon)$, and the loss is $1 - D$, averaged over classes. Background pixels where both $p$ and $g$ are near zero contribute nothing to either numerator or denominator, so the loss is scale-free with respect to the amount of background. The $\\epsilon$ (around 1) keeps the loss defined for images where a class is absent. Dice gradients can be noisy when objects are tiny, so a common recipe is cross-entropy plus Dice with equal weight.\n\n```python\nimport numpy as np\ndef soft_dice_loss(probs, onehot, eps=1.0):        # both (C, H, W)\n    inter = (probs * onehot).sum(axis=(1, 2))\n    denom = probs.sum(axis=(1, 2)) + onehot.sum(axis=(1, 2))\n    return 1 - ((2 * inter + eps) / (denom + eps)).mean()\n```\n\n! Example: Dice versus IoU on one mask\n! Ground truth has 100 foreground pixels, the prediction has 80, and 60 overlap.\n! Dice $= 2 \\times 60 / (80 + 100) = 0.667$. IoU (Jaccard) $= 60 / (80 + 100 - 60) = 0.5$.\n! They are monotonically related, $D = 2J/(1+J)$: $2 \\times 0.5 / 1.5 = 0.667$. Dice is always at least IoU, so do not compare a Dice number from one paper with an IoU number from another.\n\n## Evaluation\nReport mean IoU: build a $C \\times C$ confusion matrix over all pixels of the validation set, compute per class $\\text{IoU}_c = TP_c / (TP_c + FP_c + FN_c)$, then average over classes. Accumulating over the whole set (rather than averaging per-image IoUs) avoids undefined values on images where a class is absent; state which convention you use.\n\n> Takeaway: segmentation needs both context and resolution. Encoders provide context, skip connections restore spatial detail, and overlap-based losses like Dice keep tiny foreground classes from being drowned out by background.\n",
+   "q": "You train a U-Net to segment small lesions that cover about 0.3% of pixels, using pixel-wise cross-entropy. Validation pixel accuracy is 99.7%, but almost every predicted mask is empty. Explain why, and what you would change in the loss and the evaluation.",
+   "s": "Predicting background everywhere is already 99.7% accurate, and with plain cross-entropy the gradient is averaged over all pixels, so the few lesion pixels contribute almost nothing; the model settles at the trivial solution. Change the loss so overlap with the rare class drives training: add soft Dice loss (whose value ignores true-negative background pixels), or use class-weighted or focal cross-entropy, typically CE plus Dice. Sampling crops that contain lesions also raises the foreground fraction. Change evaluation from pixel accuracy to per-class IoU or Dice on the lesion class (and mIoU), accumulated over the validation set; an all-background predictor scores 0 there, which exposes the failure immediately.",
+   "r": [
+    [
+     "U-Net (Ronneberger et al., 2015)",
+     "https://arxiv.org/abs/1505.04597",
+     "The original architecture; figure 1 is the canonical diagram and section 3 covers the overlap-tile and weighting tricks."
+    ],
+    [
+     "Fully Convolutional Networks for Semantic Segmentation",
+     "https://arxiv.org/abs/1411.4038",
+     "How classifiers become dense predictors, and the skip-fusion idea U-Net builds on."
+    ],
+    [
+     "V-Net (Milletari et al., 2016)",
+     "https://arxiv.org/abs/1606.04797",
+     "Introduced the soft Dice loss for volumetric medical segmentation; section 3 derives the gradient."
+    ],
+    [
+     "Dive into Deep Learning: Fully Convolutional Networks",
+     "https://d2l.ai/chapter_computer-vision/fcn.html",
+     "Hands-on FCN with transposed-convolution upsampling."
+    ]
+   ],
+   "k": [
+    "segmentation",
+    "U-Net",
+    "Dice"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "tiny-u-net-forward-pass",
+    "u-net-skip-connection",
+    "dice-loss",
+    "mean-iou-for-segmentation",
+    "transposed-convolution"
+   ]
+  },
+  {
+   "id": "04.05",
+   "t": "Vision Transformers",
+   "n": [
+    "ViT cuts an image into non-overlapping patches (16×16 on a 224 image gives 196), flattens and linearly projects each one, and feeds the sequence to a standard transformer encoder.",
+    "The patch projection is exactly a convolution with kernel size and stride equal to the patch size.",
+    "A learned class token is prepended and its final state feeds the classifier; learned position embeddings are added because attention by itself ignores order. Changing resolution means interpolating them.",
+    "With weaker built-in assumptions than CNNs, ViTs need either very large pretraining sets or strong augmentation and distillation (DeiT) to match CNNs.",
+    "Global attention costs $O(N^2)$ in tokens. Swin restricts attention to 7×7 windows, shifts the windows every other layer, and merges patches between stages, giving linear cost and a CNN-like feature pyramid."
+   ],
+   "a": "## Images as token sequences\nLesson 05.04 and the AI Engineering course cover how a transformer block works. The question here is narrower: how do you turn an image into the token sequence a transformer expects, and what changes because the tokens are patches rather than words?\n\nThe Vision Transformer (ViT, 2020) answer is blunt. Split a $224 \\times 224 \\times 3$ image into $16 \\times 16$ patches: $224/16 = 14$ per side, 196 patches, each with $16 \\times 16 \\times 3 = 768$ values. Flatten each patch and multiply by a learned $768 \\times D$ matrix. That linear map on non-overlapping patches is identical to a convolution with kernel size 16 and stride 16, and that is how it is usually implemented.\n\n%%flow ViT-B/16 input pipeline, shapes per image.\nImage 224×224×3 -(16×16 patches)-> 196 × 768 -(linear)-> 196 × D -(+ CLS, + positions)-> 197 × D -> *Encoder × 12 -(CLS state)-> Class head\n%%\n\n```python\nimport numpy as np\ndef patchify(img, p=16):                       # img: (H, W, C)\n    H, W, C = img.shape\n    x = img.reshape(H // p, p, W // p, p, C)   # split both spatial axes\n    x = x.transpose(0, 2, 1, 3, 4)             # (rows, cols, p, p, C)\n    return x.reshape(-1, p * p * C)            # (num_patches, p*p*C), row-major order\n```\n\nThe transpose is the important line: reshaping straight to `(-1, p*p*C)` would mix rows from different patches, the same class of silent bug as the HWC/CHW mix-up in lesson 04.01.\n\n## Class token and position embeddings\nViT prepends a learned vector, the class token, giving 197 tokens. After the last layer, the class token's state goes through a small head to produce logits. It works because the class token attends to every patch in every layer, so it can act as a learned pooling. Global average pooling over the patch tokens works about as well and is common in later models.\n\nSelf-attention is permutation-equivariant: shuffle the patches and the outputs shuffle the same way. Position information must be injected, and ViT adds a learned embedding per position (197 vectors of size $D$). Fixed 2-D sine-cosine embeddings, which encode row and column separately, perform similarly and need no training.\n\nLearned position embeddings tie the model to a grid size. Fine-tuning at 384×384 with the same patch size gives a 24×24 grid (576 patches) instead of 14×14. The standard fix is to reshape the 196 patch embeddings to a 14×14×$D$ grid, resize bilinearly or bicubically to 24×24, flatten, and keep the class token's embedding unchanged.\n\n## Data appetite and inductive bias\nA CNN builds in locality (small kernels) and translation equivariance (weight sharing). A ViT builds in very little: only the patch grid, and the MLP layers acting per token. It has to learn from data that nearby patches are related. The original paper found ViT trailed ResNets when trained on ImageNet-1k alone (1.3M images) and overtook them only with pretraining on 14M to 300M images. DeiT then showed a data-efficient recipe for ImageNet-1k alone: heavy augmentation (RandAugment, mixup, CutMix from lesson 04.01), stochastic depth, repeated augmentation, and distillation from a CNN teacher through an extra distillation token.\n\n| Model | Width $D$ | Layers | Heads | Params |\n| ViT-S/16 | 384 | 12 | 6 | 22M |\n| ViT-B/16 | 768 | 12 | 12 | 86M |\n| ViT-L/16 | 1024 | 24 | 16 | 307M |\n\n## Cost and windowed attention\nAttention cost grows with the square of the token count. Halving the patch size from 16 to 8 on a 224 image quadruples the tokens (196 to 784) and multiplies attention cost by 16. Dense tasks like detection and segmentation want high resolution and fine patches, so global attention becomes the bottleneck.\n\nThe Swin Transformer's fixes:\n- **Window attention**: tokens attend only within non-overlapping $M \\times M$ windows ($M = 7$, so 49 tokens), making cost linear in image area.\n- **Shifted windows**: every other layer shifts the window grid by $M/2$ so information crosses window borders; a cyclic shift plus a mask keeps the window count constant.\n- **Patch merging**: between stages, concatenate each 2×2 group of tokens and project, halving resolution and doubling channels. The four stages have strides 4, 8, 16 and 32, the same pyramid a ResNet provides, so Swin drops into FPN-based detectors and U-Net-style segmenters directly.\n\n! Example: global versus window attention at Swin's first stage\n! A 224 image with 4×4 patches gives a 56×56 grid, 3,136 tokens. Global attention scores $3136^2 \\approx 9.8$ million pairs per head per layer.\n! With 7×7 windows there are $8 \\times 8 = 64$ windows of 49 tokens: $64 \\times 49^2 = 153{,}664$ pairs, 64 times fewer. Doubling the image side multiplies the window cost by 4 but the global cost by 16.\n\n> Takeaway: a ViT is a standard transformer encoder on patch tokens, a class token and position embeddings. It trades CNN inductive bias for flexibility, so it needs data or strong regularisation, and windowed variants like Swin restore linear cost and a multi-scale pyramid for dense tasks.\n",
+   "q": "You have a ViT-B/16 pretrained at 224×224 and want to fine-tune it on 384×384 images. What breaks if you just feed the larger images, what do you change, and roughly how much more attention compute does each layer need?",
+   "s": "The patch embedding itself still works, since it is a stride-16 convolution, but the token count changes from 14×14 = 196 to 24×24 = 576 patches, and the learned position embedding table only has entries for 196 patch positions plus the class token, so the addition fails or misaligns. Fix it by reshaping the 196 patch position embeddings into a 14×14 grid, interpolating (bicubic) to 24×24, flattening, and keeping the class token's embedding as it is. Everything else (attention weights, MLPs) is resolution-agnostic. Attention cost scales with tokens squared: (577/197)² ≈ 8.6× per layer, while the MLP cost scales linearly, about 2.9×. Expect better accuracy from finer effective detail, at much higher memory and compute.",
+   "r": [
+    [
+     "An Image is Worth 16x16 Words (Dosovitskiy et al., 2020)",
+     "https://arxiv.org/abs/2010.11929",
+     "The ViT paper; section 3.1 for the architecture and 3.2 for resolution changes and position-embedding interpolation."
+    ],
+    [
+     "Training data-efficient image transformers (DeiT)",
+     "https://arxiv.org/abs/2012.12877",
+     "How to train ViTs on ImageNet-1k alone; the ablation table shows which augmentations matter."
+    ],
+    [
+     "Swin Transformer (Liu et al., 2021)",
+     "https://arxiv.org/abs/2103.14030",
+     "Shifted-window attention and patch merging; figure 2 explains the shift."
+    ],
+    [
+     "Dive into Deep Learning: Transformers for Vision",
+     "https://d2l.ai/chapter_attention-mechanisms-and-transformers/vision-transformer.html",
+     "Compact ViT implementation from patch embedding to classifier."
+    ]
+   ],
+   "k": [
+    "vision transformer",
+    "patch embedding"
+   ],
+   "x": [
+    "NumPy",
+    "PyTorch"
+   ],
+   "p": [
+    "vit-patchify",
+    "vision-transformer-patch-embedding",
+    "2d-sinusoidal-positional-embedding",
+    "window-partition-and-reverse",
+    "vit-multi-head-self-attention"
+   ]
+  }
+ ]
+}

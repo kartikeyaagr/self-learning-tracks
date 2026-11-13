@@ -1,0 +1,75 @@
+{
+  "id": "cuda",
+  "group": "Systems and GPU Programming",
+  "title": "CUDA Kernels",
+  "blurb": "Write GPU kernels from scratch with Numba CUDA: map threads to data, keep memory accesses coalesced, reduce across a block with shared memory and barriers, and finish with tiled convolutions and matrix multiplication.",
+  "prereq": "You should be comfortable with Python loops and NumPy arrays; no previous GPU experience is assumed, since the first section starts from a single element-wise kernel.",
+  "next": "Carry these ideas up a level with Triton and into model serving in Inference Engineering, where the same reductions and tiles show up as softmax, normalisation and attention kernels.",
+  "sections": [
+    {
+      "name": "Threads, blocks and element-wise kernels",
+      "problems": [
+        "vector-addition",
+        "vector-subtraction",
+        "relu",
+        "sigmoid",
+        "tanh",
+        "leaky-relu",
+        "softmax-2",
+        "gelu",
+        "swish"
+      ]
+    },
+    {
+      "name": "2-D grids and matrix kernels",
+      "problems": [
+        "matrix-addition",
+        "matrix-transpose",
+        "matrix-multiplication",
+        "outer-product",
+        "hadamard-product",
+        "layer-normalization",
+        "matrix-vector-multiplication",
+        "rms-normalization"
+      ]
+    },
+    {
+      "name": "Reductions",
+      "problems": [
+        "dot-product-2",
+        "sum-of-array",
+        "l1-normalization",
+        "l2-normalization",
+        "mean-and-variance",
+        "max-of-array",
+        "min-of-array",
+        "argmax",
+        "argmin"
+      ]
+    },
+    {
+      "name": "Convolutions and stencils",
+      "problems": [
+        "1d-convolution",
+        "2d-convolution-2",
+        "3d-convolution",
+        "max-pool-2d"
+      ]
+    },
+    {
+      "name": "Fused ML primitives",
+      "problems": [
+        "cross-entropy-loss",
+        "dropout-2",
+        "scaled-dot-product-attention-2",
+        "cosine-similarity-2"
+      ]
+    },
+    {
+      "name": "Performance: tiling",
+      "problems": [
+        "tiled-matrix-multiplication"
+      ]
+    }
+  ]
+}

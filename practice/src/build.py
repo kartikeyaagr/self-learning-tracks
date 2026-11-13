@@ -1,6 +1,6 @@
 # /// script
 # requires-python = "==3.13.*"
-# dependencies = ["numpy==2.2.*", "pandas==2.3.*", "torch>=2.6"]
+# dependencies = ["numpy==2.2.*", "pandas==2.3.*", "torch>=2.6", "jax[cpu]>=0.6", "numba>=0.61", "numba-cuda>=0.10"]
 # ///
 # Versions match the browser runtime (Pyodide 0.29.5: Python 3.13, numpy 2.2, pandas 2.3) so expected outputs agree.
 """Build the Practice track: verify every problem, then write the site files.
@@ -14,7 +14,9 @@ Expected outputs are computed from SOLUTION here, so a problem only ships if:
   - tags, related slugs and lesson links all resolve.
 Writes ../index.html (the app, data inlined), ../data/<slug>.json (one per problem), ../nb/<slug>.ipynb (Colab runtimes).
 """
-import copy, importlib.util, json, re, sys
+import copy, importlib.util, json, os, re, sys
+# CUDA problems are Numba kernels: verified on the CPU simulator here, run on a real GPU in Colab.
+os.environ.setdefault("NUMBA_ENABLE_CUDASIM", "1"); os.environ.setdefault("NUMBA_CUDA_USE_NVIDIA_BINDING", "0")
 from pathlib import Path
 
 SRC = Path(__file__).parent
@@ -42,7 +44,12 @@ PARTS = [
 TAGS = [t for _, ts in PARTS for t in ts]
 DIFFS = {'Easy': 10, 'Medium': 20, 'Hard': 30}            # minutes, shown like a lesson's reading time
 BROWSER = {'python': [], 'numpy': [], 'pandas': ['pandas'], 'sql': ['sqlite3']}   # runtime -> extra Pyodide packages
-COLAB = {'torch'}                                          # run in Colab; jax/cuda/triton join when they have problems
+COLAB = {'torch', 'jax', 'cuda', 'triton'}                 # run in Colab (notebook with the same tests)
+# Triton needs an NVIDIA GPU, which the build machine doesn't have: expected outputs come from the problem's
+# REFERENCE (a NumPy/PyTorch-CPU implementation of the same spec) and SOLUTION is only syntax-checked here.
+GPU_ONLY = {'triton'}
+SETUP = {'cuda': '!pip -q install "numba-cuda[cu12]"', 'jax': '', 'torch': '', 'triton': ''}
+NEEDS_GPU = {'cuda', 'triton'}
 slugify = lambda s: re.sub(r'[^a-z0-9]+', '-', s.lower()).strip('-')
 
 
@@ -63,7 +70,8 @@ def lesson_index():
     """'trackkey:lessonid' -> link, from hub-data.js (the hub's own export of every course)."""
     s = (ROOT / 'hub-data.js').read_text(encoding='utf-8')
     out = {}
-    for t in json.loads(s[s.index('['):s.rindex(';')]):
+    tracks = json.JSONDecoder().raw_decode(s, s.index('const TRACKS = ') + len('const TRACKS = '))[0]
+    for t in tracks:
         if t['key'] == 'practice':
             continue
         for m in t['modules']:
@@ -99,19 +107,29 @@ def build_one(path, lessons):
         call = lambda f, a: harness.run_sql(f, a[0])
     else:
         fn_name = re.search(r'^def (\w+)\(', m.STARTER, re.M).group(1)
-        ns = compile_fn(m.SOLUTION, f'{slug}:SOLUTION')
-        assert fn_name in ns, f'{where} SOLUTION must define {fn_name}()'
-        target, starter_target = ns[fn_name], compile_fn(m.STARTER, f'{slug}:STARTER').get(fn_name)
+        if rt in GPU_ONLY:                                  # can't import or run here: syntax-check, grade REFERENCE instead
+            import ast
+            ast.parse(m.STARTER); ast.parse(m.SOLUTION)
+            assert re.search(rf'^def {fn_name}\(', m.SOLUTION, re.M), f'{where} SOLUTION must define {fn_name}()'
+            assert hasattr(m, 'REFERENCE'), f'{where} {rt} problems need REFERENCE (code defining {fn_name}() without a GPU)'
+            ref = compile_fn(m.REFERENCE, f'{slug}:REFERENCE')
+            assert fn_name in ref, f'{where} REFERENCE must define {fn_name}()'
+            target, starter_target = ref[fn_name], None
+        else:
+            ns = compile_fn(m.SOLUTION, f'{slug}:SOLUTION')
+            assert fn_name in ns, f'{where} SOLUTION must define {fn_name}()'
+            target, starter_target = ns[fn_name], compile_fn(m.STARTER, f'{slug}:STARTER').get(fn_name)
         assert all(isinstance(t, tuple) for t in m.TESTS), f'{where} each test is a tuple of args'
         args_list = m.TESTS
-        call = lambda f, a: f(*copy.deepcopy(harness.prep(list(a), rt)))
+        prt = 'torch' if rt in GPU_ONLY else rt                 # reference runs on CPU tensors
+        call = lambda f, a: harness.plain(f(*copy.deepcopy(harness.prep(list(a), prt))))
 
     tol = meta.get('tol', [1e-6, 1e-8])
     tests = [{'a': harness.enc(list(a)), 'e': harness.enc(call(target, a))} for a in args_list]
     tests = json.loads(json.dumps(tests))                  # exactly what the browser will receive
     again = [{'a': t['a'], 'e': harness.enc(call(target, harness.dec(t['a'])))} for t in tests]
     assert json.loads(json.dumps(again)) == tests, f'{where} SOLUTION is not deterministic'
-    res = harness.grade(target, tests, rt, *tol)
+    res = harness.grade(target, tests, 'torch' if rt in GPU_ONLY else rt, *tol)
     assert all(r['ok'] for r in res), f'{where} SOLUTION fails its own tests: {[r for r in res if not r["ok"]][:1]}'
     if starter_target is not None:
         res = harness.grade(starter_target, tests, rt, *tol)
@@ -124,7 +142,11 @@ def build_one(path, lessons):
          'tests': tests, 'nex': nex,
          'shown': [{'in': harness.show_args(harness.dec(t['a']), rt), 'out': harness.short(harness.dec(t['e']), 600)}
                    for t in tests[:nex]],
-         'lessons': links, 'related': meta.get('related', [])}
+         'lessons': links, 'lesson_refs': meta.get('lessons', []), 'related': meta.get('related', [])}
+    if rt in GPU_ONLY:
+        p['gpu_only'] = True                                # UI: "solution checked on a GPU only"
+    if rt in NEEDS_GPU:
+        p['gpu'] = True
     if rt in COLAB:
         p['colab'] = f'https://colab.research.google.com/github/{REPO}/blob/main/practice/nb/{slug}.ipynb'
     return p
@@ -136,7 +158,10 @@ def notebook(p):
     harness_src = (OUT / 'harness.py').read_text(encoding='utf-8')
     return {'nbformat': 4, 'nbformat_minor': 5, 'metadata': {'kernelspec': {'name': 'python3', 'display_name': 'Python 3'}},
             'cells': [
-                cell('markdown', f"# {p['t']}\n\n{p['st']}\n\nWrite your solution in the next cell, then run the test cell."),
+                cell('markdown', f"# {p['t']}\n\n{p['st']}\n\n"
+                     + ("**Runtime → Change runtime type → GPU** before running.\n\n" if p.get('gpu') else '')
+                     + "Write your solution in the next cell, then run the test cell."),
+                *([cell('code', SETUP[p['rt']])] if SETUP.get(p['rt']) else []),
                 cell('code', p['starter']),
                 cell('code', '# Tests (same harness and cases as the website)\n'
                      + f"_HARNESS = {harness_src!r}\n_TESTS = {json.dumps(p['tests'])!r}\n"
@@ -147,22 +172,80 @@ def notebook(p):
             ]}
 
 
+CACHE = SRC / '.cache'                                     # verified problems, keyed by source + harness + VERIFY
+VERIFY = b'verify-v1'   # bump when build_one's checks or output fields change, to force re-verification of every problem
+
+
+def build_cached(f, lessons):
+    """build_one, skipped when the problem, the harness and this build script are unchanged since it last passed.
+    CUDA problems run on a slow CPU simulator, so a full rebuild without this takes over an hour."""
+    import hashlib, time
+    h = hashlib.sha256(f.read_bytes() + (OUT / 'harness.py').read_bytes() + VERIFY).hexdigest()[:16]
+    c = CACHE / f'{f.stem}.json'
+    if c.exists():
+        hit = json.loads(c.read_text(encoding='utf-8'))
+        if hit.get('hash') == h:
+            p = hit['p']
+            p['lessons'] = [lessons[r] for r in p.get('lesson_refs', []) if r in lessons]   # lesson titles may change
+            return p
+    t0 = time.time()
+    p = build_one(f, lessons)
+    if time.time() - t0 > 20:
+        print(f'  slow: {f.stem} took {time.time() - t0:.0f}s')
+    CACHE.mkdir(exist_ok=True)
+    c.write_text(json.dumps({'hash': h, 'p': p}, ensure_ascii=False), encoding='utf-8')
+    return p
+
+
+# Add-on modules (addons/<export dir>/) belong to these exported courses.
+ADDON_COURSES = {'ml-maths-course': ('mlmaths', 'ML Maths'), 'inference-eng-course': ('ieng', 'Inference Engineering'),
+                 'ai-research-track-web': ('air-fanout-v1', 'AI Research')}
+
+
+def course_modules():
+    """(module file, course dir, track key, course title) for engine courses and add-on modules."""
+    for f in sorted(ROOT.glob('*/src/modules/*.json')):
+        cfg = json.loads((f.parent.parent / 'course.json').read_text(encoding='utf-8'))
+        yield f, f.parent.parent.parent.name, cfg['key'], cfg['title']
+    for f in sorted(ROOT.glob('addons/*/*.json')):
+        key, title = ADDON_COURSES[f.parent.name]
+        yield f, f.parent.name, key, title
+
+
 def main():
     lessons = lesson_index()
-    probs = [build_one(f, lessons) for f in sorted((SRC / 'problems').glob('*.py'))]
+    probs = [build_cached(f, lessons) for f in sorted((SRC / 'problems').glob('*.py'))]
     ids = {p['id'] for p in probs}
     for p in probs:
         bad = [r for r in p['related'] if r not in ids]
         assert not bad, f"{p['id']}: unknown related {bad}"
+
+    # Course lessons can list practice problems ("p"); show those lessons on the problem page too ("Learn the idea").
+    byid = {p['id']: p for p in probs}
+    curated = {}                                            # "trackkey:lessonid" -> slugs the lesson picked, best first
+    for f, cdir, ckey, ctitle in course_modules():
+        for L in json.loads(f.read_text(encoding='utf-8'))['lessons']:
+            curated[f"{ckey}:{L['id']}"] = [x for x in L.get('p', []) if x in byid]
+            for slug in L.get('p', []):
+                p = byid.get(slug)
+                href = f"../{cdir}/index.html#l{L['id'].replace('.', '-', 1)}"
+                if p and all(x['href'] != href for x in p['lessons']):
+                    p['lessons'].append({'href': href, 't': L['t'], 'c': ctitle})
 
     data_dir, nb_dir = OUT / 'data', OUT / 'nb'
     data_dir.mkdir(exist_ok=True); nb_dir.mkdir(exist_ok=True)
     for f in [*data_dir.glob('*.json'), *nb_dir.glob('*.ipynb')]:
         f.unlink()                                          # drop files of renamed/removed problems
     for p in probs:
-        (data_dir / f"{p['id']}.json").write_text(json.dumps(p, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
         if 'colab' in p:
             (nb_dir / f"{p['id']}.ipynb").write_text(json.dumps(notebook(p), indent=1), encoding='utf-8')
+        # The page gets tests only as JSON text (Python must see 3.0 as a float), and Colab problems get none:
+        # their tests live in the notebook. This keeps every problem file small.
+        page = {k: v for k, v in p.items() if k not in ('tests', 'lesson_refs')}
+        page['ntests'] = len(p['tests'])
+        if 'colab' not in p:
+            page['tj'] = json.dumps(p['tests']); page['tj_ex'] = json.dumps(p['tests'][:p['nex']])
+        (data_dir / f"{p['id']}.json").write_text(json.dumps(page, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
 
     # DATA follows the course contract (modules -> lessons) so build_hub.py reads it like any course.
     # A problem lives in the module of its first tag; its other tags show as filters.
@@ -179,6 +262,14 @@ def main():
     app = app.replace('__DATA__', js(data)).replace('__PARTS__', js([pn for pn, _ in PARTS])).replace('__PLANS__', js(plans))
     app = app.replace('__TOTAL__', str(len(probs)))
     (OUT / 'index.html').write_text(app, encoding='utf-8')
+
+    # practice/links.json: "trackkey:lessonid" -> [[slug, title, difficulty]], read by course builds and the hub
+    refs = {k: [[x, byid[x]['t'], byid[x]['d']] for x in v] for k, v in curated.items() if v}
+    for p in sorted(probs, key=lambda p: (list(DIFFS).index(p['d']), p['t'])):
+        for ref in p['lesson_refs']:
+            if all(x[0] != p['id'] for x in refs.get(ref, [])):
+                refs.setdefault(ref, []).append([p['id'], p['t'], p['d']])
+    (OUT / 'links.json').write_text(json.dumps(refs, ensure_ascii=False, indent=0), encoding='utf-8')
 
     by_rt = {}
     for p in probs:

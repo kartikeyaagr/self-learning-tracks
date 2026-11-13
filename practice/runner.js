@@ -23,7 +23,7 @@ onmessage = async ({data: m}) => {
     if (need.length) { postMessage({type: 'status', text: `Loading ${need.join(', ')}…`}); await py.loadPackage(need); need.forEach(p => loaded.add(p)); }
     out = [];
     const g = py.globals.get('dict')();
-    g.set('_code', m.code); g.set('_fn', m.fn); g.set('_tests', JSON.stringify(m.tests)); g.set('_rt', m.runtime);
+    g.set('_code', m.code); g.set('_fn', m.fn); g.set('_tests', typeof m.tests === 'string' ? m.tests : JSON.stringify(m.tests)); g.set('_rt', m.runtime);
     g.set('_tol', py.toPy(m.tol || [1e-6, 1e-8]));
     const res = py.runPython(`
 import json, harness

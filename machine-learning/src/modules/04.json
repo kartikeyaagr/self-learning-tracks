@@ -1,0 +1,291 @@
+{
+ "n": "04",
+ "name": "Trees and ensembles",
+ "lessons": [
+  {
+   "id": "04.01",
+   "t": "Decision trees",
+   "n": [
+    "A decision tree partitions feature space into axis-aligned boxes with a sequence of yes/no questions like $x_j \\le \\theta$, and predicts a constant in each box: the majority class or the mean target.",
+    "Splits are chosen greedily: at each node, try every feature and threshold and keep the one that most reduces **impurity**, weighted by the number of samples sent each way.",
+    "Gini impurity $1-\\sum_k p_k^2$ and entropy $-\\sum_k p_k \\log_2 p_k$ both peak at a 50/50 mix and are zero for a pure node; they pick the same split most of the time.",
+    "Regression trees use squared error: a leaf predicts the mean, and the best split maximises the drop in sum of squared errors. Sorting plus prefix sums makes one feature scan $O(n \\log n)$.",
+    "Trees need no scaling, handle mixed feature types and interactions, but are high-variance, axis-bound and cannot extrapolate beyond the target values they saw."
+   ],
+   "a": "## What a tree computes\nThis module covers the most widely used family of models for tabular data: trees and the ensembles built from them. It starts with a single tree, because every later lesson (forests, boosting, importance) reuses the same splitting machinery.\n\nA decision tree is a sequence of questions. Each internal node asks one thing about one feature, such as \"is `income` at most 42,000?\", and sends the sample left or right. Each leaf holds a constant prediction. Geometrically, the tree carves the feature space into axis-aligned rectangles and paints each one a single value.\n\n%%flow One root-to-leaf path. Every sample follows exactly one path; the leaf it lands in decides the prediction.\nSample x -(income ≤ 42k?)-> Node: age -(age > 30?)-> *Leaf: p(default) = 0.08\n%%\n\nThis structure explains most of a tree's personality. A single feature is compared with a threshold, so monotone transformations of a feature (log, rank, standardisation) do not change the tree at all, and there is no need to scale inputs. Interactions come for free: a split on `age` below a split on `income` only applies to low-income customers. And because each leaf predicts a constant learned from training targets, a regression tree can never predict above the largest or below the smallest target in its training data.\n\n## Impurity: Gini and entropy\nTo grow a tree you need a score for how mixed a node is. With class proportions $p_k$ in a node, the two standard choices are:\n\n$$G = 1 - \\sum_k p_k^2 \\qquad H = -\\sum_k p_k \\log_2 p_k$$\n\nGini is the probability that two samples drawn at random from the node (with replacement) have different labels. Entropy is the expected number of bits needed to encode a label. Both are zero for a pure node and maximal for a uniform mix: for two classes, Gini peaks at 0.5 and entropy at 1 bit.\n\nA split sends $n_L$ of the node's $n$ samples left and $n_R$ right. Its quality is the impurity decrease\n\n$$\\Delta = I(\\text{parent}) - \\frac{n_L}{n} I(L) - \\frac{n_R}{n} I(R)$$\n\nWith entropy this decrease is called information gain. In practice the two criteria agree on the chosen split in the large majority of cases; Gini is slightly cheaper (no logarithm) and is the default in scikit-learn. Misclassification error, $1-\\max_k p_k$, is a poor splitting criterion because it is not strictly concave: many useful splits leave it unchanged.\n\n! Example: Gini vs entropy on one node\n! A node holds 10 samples: 6 positive, 4 negative. Gini = 1 − (0.36 + 0.16) = 0.48; entropy = 0.971 bits.\n! Split A sends 4 positives left (pure) and 2 positive / 4 negative right. Right Gini = 1 − (1/9 + 4/9) = 0.444, weighted 0.6 × 0.444 = 0.267, so the decrease is 0.213. Right entropy = 0.918, weighted 0.551, information gain 0.420.\n! Split B sends 4+/1− left and 2+/3− right. Weighted Gini = 0.5 × 0.32 + 0.5 × 0.48 = 0.40, decrease only 0.08.\n! Both criteria prefer A: it creates one pure child, which is exactly what concave impurity rewards.\n\n## Greedy splitting\nFinding the globally optimal tree is NP-hard, so CART (Classification and Regression Trees) grows the tree greedily, top down:\n1. At the current node, for each feature, sort the samples by that feature.\n2. Evaluate every threshold between consecutive distinct values (midpoints).\n3. Keep the (feature, threshold) pair with the largest impurity decrease.\n4. Split, then recurse on each child until a stopping rule fires (pure node, too few samples, maximum depth).\n\nSorting costs $O(n \\log n)$ per feature, and with running class counts each candidate threshold is scored in $O(1)$, so one node costs $O(d\\, n \\log n)$ for $d$ features. Summed over a balanced tree's levels this gives roughly $O(d\\, n \\log^2 n)$. Libraries such as LightGBM and scikit-learn's `HistGradientBoosting*` replace sorting with a histogram of at most 255 bins per feature, which turns each scan into $O(\\text{bins})$ after one pass over the data.\n\nGreedy means myopic. The classic failure is XOR: with two features where the label is $x_1 \\oplus x_2$, no single split reduces impurity, so a greedy tree with a minimum-gain rule may refuse to split at all even though a depth-2 tree is perfect.\n\n## Regression trees\nFor a continuous target, a leaf predicts the mean of its training targets, and impurity becomes the sum of squared errors (SSE). The best split maximises the drop in SSE, which is the same as maximising variance reduction. The prefix-sum trick makes this fast, because $\\text{SSE} = \\sum y^2 - (\\sum y)^2 / n$ for any contiguous block of sorted samples:\n\n```python\nimport numpy as np\n\ndef best_split(x, y):\n    # Best threshold on one feature for squared error. O(n log n).\n    o = np.argsort(x); x, y = x[o], y[o]\n    n = len(y); cs, cs2 = np.cumsum(y), np.cumsum(y * y)\n    nl = np.arange(1, n)                            # left size if we cut after i\n    sse_l = cs2[:-1] - cs[:-1] ** 2 / nl\n    sse_r = (cs2[-1] - cs2[:-1]) - (cs[-1] - cs[:-1]) ** 2 / (n - nl)\n    cost = np.where(x[1:] != x[:-1], sse_l + sse_r, np.inf)   # only between distinct values\n    i = int(np.argmin(cost))\n    return (x[i] + x[i + 1]) / 2, cost[i]\n```\n\nOther losses swap the leaf statistic: absolute error uses the median, Poisson deviance a mean on the log scale.\n\n## Strengths and failure modes\n| Property | Consequence |\n| Threshold splits | No feature scaling; robust to monotone transforms and outliers in inputs |\n| Axis-aligned boxes | A diagonal boundary like $x_1 > x_2$ needs a staircase of many splits |\n| Greedy, data-dependent | Small changes in data can change the root split and the whole tree (high variance) |\n| Constant leaves | Piecewise-constant predictions; no extrapolation outside the training target range |\n| Deep trees memorise | A fully grown tree reaches zero training error; lesson 04.02 deals with this |\n\nThose last three rows are the reason single trees are rarely the final model. Bagging (lesson 04.03) attacks the variance, and boosting (04.04 and 04.05) builds accurate models from many shallow trees.\n\n> Takeaway: a tree is greedy recursive partitioning: at each node, pick the feature and threshold that most reduce weighted impurity (Gini, entropy or SSE), and predict a constant in each leaf.",
+   "q": "You have a two-class problem where the label is 1 exactly when $x_1$ and $x_2$ have the same sign, with both features uniform on $[-1, 1]$. Will a CART tree with `min_impurity_decrease=0.01` learn it? What happens without that rule, and why?",
+   "s": "No. The label is an XOR pattern of the signs. Any single threshold on $x_1$ or on $x_2$ leaves each child with about half positives, so the expected Gini decrease at the root is close to zero (only sampling noise). A rule requiring a decrease of at least 0.01 will usually stop at the root and predict the majority class, giving about 50% accuracy. Without the rule, the tree splits on whichever threshold happens to look best through noise; once it has split near zero on one feature, the next split on the other feature near zero becomes very informative, so a depth-2 tree recovers the pattern. The lesson is that greedy splitting judges each split only by its immediate gain, so early stopping can block splits whose value appears only one level deeper. This is one argument for growing large and pruning afterwards.",
+   "r": [
+    [
+     "scikit-learn User Guide: Decision Trees",
+     "https://scikit-learn.org/stable/modules/tree.html",
+     "Section 1.10.7 gives the exact impurity formulas and complexity; read the tips on practical use."
+    ],
+    [
+     "The Elements of Statistical Learning (Hastie, Tibshirani, Friedman)",
+     "https://hastie.su.domains/ElemStatLearn/",
+     "Free PDF. Section 9.2 covers CART regression and classification trees and why misclassification error is a poor split criterion."
+    ],
+    [
+     "An Introduction to Statistical Learning",
+     "https://www.statlearning.com/",
+     "Free PDF. Chapter 8.1 is a gentle walk through regression and classification trees with figures."
+    ]
+   ],
+   "k": [
+    "CART",
+    "Gini impurity",
+    "information gain"
+   ],
+   "x": [
+    "NumPy",
+    "scikit-learn"
+   ],
+   "p": [
+    "decision-tree-classifier-cart",
+    "decision-tree-regressor"
+   ]
+  },
+  {
+   "id": "04.02",
+   "t": "Controlling tree complexity",
+   "n": [
+    "A tree grown until every leaf is pure has zero training error and very high variance; its complexity must be controlled either while growing (pre-pruning) or afterwards (post-pruning).",
+    "Pre-pruning knobs: `max_depth`, `min_samples_split`, `min_samples_leaf`, `max_leaf_nodes`, `min_impurity_decrease`. `min_samples_leaf` is usually the most robust single knob.",
+    "Cost-complexity pruning minimises $R_\\alpha(T) = R(T) + \\alpha\\,|T|$; weakest-link pruning produces a nested sequence of subtrees, one per range of $\\alpha$, and cross-validation picks $\\alpha$.",
+    "Post-pruning avoids the horizon effect of early stopping: a split with little immediate gain can enable valuable splits below it.",
+    "How much to control depends on the role of the tree: prune single trees, grow forest trees deep, keep boosting trees shallow."
+   ],
+   "a": "## Why a full tree overfits\nLesson 04.01 grew a tree until a stopping rule fired. Without any rule, CART keeps splitting until every leaf is pure or holds identical feature values. With $n$ distinct training points that can mean close to $n$ leaves, each predicting the label of a single sample. Training error is zero, and the model is a lookup table with rectangular cells.\n\nIn bias-variance terms (module 01, lesson 02), a deep tree has very low bias and very high variance. Leaves with one or two samples copy label noise directly into predictions, and the greedy root split can change if a handful of samples move. The cure is to limit the number of leaves, which is the tree's measure of capacity. There are two ways to do that: stop early, or grow fully and cut back.\n\n## Pre-pruning: stopping rules\nStopping rules are cheap because they prevent the work from being done at all. The common ones in scikit-learn:\n\n| Parameter | Effect | Typical range |\n| `max_depth` | Caps the number of questions on any path; at most $2^{\\text{depth}}$ leaves | 3-12 for single trees |\n| `min_samples_split` | A node needs this many samples to be considered for a split | 2-50 |\n| `min_samples_leaf` | Every child must keep at least this many samples | 1-100, or a fraction like 0.01 |\n| `max_leaf_nodes` | Grows best-first and stops at this many leaves | 8-256 |\n| `min_impurity_decrease` | A split must reduce weighted impurity by at least this | 0-0.01 |\n\n`min_samples_leaf` is usually the most useful single knob. It directly limits how much a leaf can rely on a few noisy labels, it smooths regression trees (a leaf mean over 20 samples is far less noisy than over 1), and unlike `max_depth` it adapts to the data: dense regions can still be split finely while sparse regions stay coarse.\n\nThe weakness of every stopping rule is the horizon effect. A rule judges a split by its immediate gain, but some splits are only valuable because of what they enable below. The XOR example from lesson 04.01 is the extreme case. Post-pruning sidesteps this by looking at whole subtrees.\n\n## Cost-complexity pruning\nBreiman's CART book proposed growing a large tree $T_0$ and then pruning it with a penalty on size. For a subtree $T$ with $|T|$ leaves and training error (or impurity) $R(T)$, define\n\n$$R_\\alpha(T) = R(T) + \\alpha\\,|T|$$\n\nFor $\\alpha = 0$ the best subtree is $T_0$ itself; as $\\alpha$ grows, smaller trees win; for large enough $\\alpha$ only the root survives. The key result is that the optimal subtrees for increasing $\\alpha$ are nested, and they can be found by weakest-link pruning. For each internal node $t$ with subtree $T_t$, compute the penalty at which collapsing $t$ into a leaf breaks even:\n\n$$g(t) = \\frac{R(t) - R(T_t)}{|T_t| - 1}$$\n\nHere $R(t)$ is the error if $t$ were a leaf, and $|T_t| - 1$ is the number of leaves saved. Collapse the node with the smallest $g(t)$, recompute, and repeat until only the root is left. Each collapse gives the next tree in the sequence and the $\\alpha$ at which it becomes optimal.\n\n%%flow Cost-complexity pruning: grow big, generate a nested sequence of subtrees, and let validation pick one.\nGrow full tree T0 -(weakest link)-> Subtrees T1 ⊃ T2 ⊃ … -(CV score per α)-> *Pick α -(refit)-> Final tree\n%%\n\n! Example: one weakest-link step\n! Errors are weighted by the share of all training samples. Node A has a 3-leaf subtree with R(T_A) = 0.05; as a single leaf it would have R(A) = 0.11. So g(A) = (0.11 − 0.05) / (3 − 1) = 0.03.\n! Node B has a 2-leaf subtree with R(T_B) = 0.02 and R(B) = 0.04, so g(B) = 0.02 / 1 = 0.02.\n! B is the weakest link: it buys the least error reduction per extra leaf. It is collapsed first, at α = 0.02. A survives until α reaches 0.03 (after recomputing, since collapsing B can change other values).\n\n## Doing it in practice\nscikit-learn exposes the full pruning path and a `ccp_alpha` parameter. A standard recipe:\n\n```python\nfrom sklearn.tree import DecisionTreeClassifier\nfrom sklearn.model_selection import cross_val_score\nimport numpy as np\n\npath = DecisionTreeClassifier(random_state=0).cost_complexity_pruning_path(X_tr, y_tr)\nalphas = path.ccp_alphas[:-1]                     # last alpha prunes to the root\nscores = [cross_val_score(DecisionTreeClassifier(ccp_alpha=a, random_state=0),\n                          X_tr, y_tr, cv=5).mean() for a in alphas]\nbest = alphas[int(np.argmax(scores))]\n```\n\nA common refinement is the one-standard-error rule: pick the largest $\\alpha$ (smallest tree) whose CV score is within one standard error of the best. It trades a statistically invisible amount of accuracy for a simpler, more stable tree. Cross-validation strategies themselves are covered in module 06.\n\nTwo cautions. First, `ccp_alpha` is on the scale of impurity, not of accuracy, so values like 0.001-0.02 are typical and a grid must be data-driven (the pruning path gives it). Second, pruning a tree that is going to be bagged or boosted is usually wasted effort, as the next section explains.\n\n## Complexity depends on the job\nThe right amount of control depends on what the tree is for:\n- **Single interpretable tree**: prune hard; a tree with 8-20 leaves can be read and checked by a domain expert.\n- **Random forest member**: grow deep (default `max_depth=None`), maybe with a small `min_samples_leaf`. Averaging (lesson 04.03) removes variance, so you want each tree to have low bias.\n- **Boosting member**: keep shallow (depth 3-8, or 15-63 leaves). Each tree only needs to fit a small correction, and deep trees make boosting overfit quickly (lesson 04.05).\n\n> Takeaway: control tree size with `min_samples_leaf`-style stopping rules or, better for a single tree, grow fully and pick a cost-complexity $\\alpha$ by cross-validation; ensembles change the target, with deep trees for bagging and shallow ones for boosting.",
+   "q": "Two configurations reach the same validation accuracy on a dataset with noisy labels: (a) `max_depth=6` and (b) `min_samples_leaf=25` with unlimited depth. The dataset has a dense region with 90% of samples and a sparse tail. Which would you expect to generalise better to next month's data, and why?",
+   "s": "Usually (b). `max_depth=6` caps every path at six questions regardless of how many samples a region holds. In the dense region that may be too coarse, and in the sparse tail it still allows leaves with just one to three samples, which copy label noise. `min_samples_leaf=25` ties capacity to the data: the dense region can be split finely because each leaf still has 25 or more samples, while the sparse tail stays coarse because no leaf may drop below 25 samples. Every leaf prediction is therefore an average over at least 25 labels, which bounds its variance. With noisy labels that is the property that matters for new data. Equal validation accuracy can hide this, so I would also compare the scores' variance across CV folds or bootstrap resamples, where (a) should look less stable.",
+   "r": [
+    [
+     "scikit-learn example: Post pruning decision trees with cost complexity pruning",
+     "https://scikit-learn.org/stable/auto_examples/tree/plot_cost_complexity_pruning.html",
+     "Shows the pruning path, how leaves and depth shrink with alpha, and train vs test accuracy."
+    ],
+    [
+     "scikit-learn User Guide: Decision Trees",
+     "https://scikit-learn.org/stable/modules/tree.html",
+     "Section on minimal cost-complexity pruning gives the exact definition of the effective alpha."
+    ],
+    [
+     "The Elements of Statistical Learning",
+     "https://hastie.su.domains/ElemStatLearn/",
+     "Section 9.2.2 derives weakest-link pruning and cross-validating the penalty."
+    ]
+   ],
+   "k": [
+    "pruning",
+    "overfitting"
+   ],
+   "x": [
+    "scikit-learn"
+   ],
+   "p": [
+    "decision-tree-classifier-cart",
+    "decision-tree-regressor",
+    "k-fold-cross-validation"
+   ]
+  },
+  {
+   "id": "04.03",
+   "t": "Bagging and random forests",
+   "n": [
+    "Averaging $B$ predictors with variance $\\sigma^2$ and pairwise correlation $\\rho$ gives variance $\\rho\\sigma^2 + (1-\\rho)\\sigma^2/B$: more trees kill the second term, only decorrelation shrinks the first.",
+    "Bagging trains each tree on a bootstrap sample (size $n$, with replacement). Each sample contains about 63.2% of the distinct points, because $(1-1/n)^n \\to e^{-1} \\approx 0.368$.",
+    "Random forests also sample a random subset of features at every split (classically $\\sqrt{d}$ for classification), which decorrelates trees that would otherwise all split on the same strong feature.",
+    "Out-of-bag (OOB) error scores each point using only trees that did not see it: a nearly free validation estimate.",
+    "Adding trees never causes overfitting in the usual sense, but returns diminish quickly; `max_features` and leaf size are the knobs that matter."
+   ],
+   "a": "## Why averaging helps\nLesson 04.02 ended with a tension: deep trees have low bias but high variance. Bagging resolves it by averaging many deep trees. The arithmetic is worth knowing exactly. If each of $B$ predictors has variance $\\sigma^2$ and every pair has correlation $\\rho$, the variance of their average is\n\n$$\\operatorname{Var}\\Big(\\frac{1}{B}\\sum_{b=1}^{B} f_b(x)\\Big) = \\rho\\,\\sigma^2 + \\frac{1-\\rho}{B}\\,\\sigma^2$$\n\nThe second term goes to zero as you add trees. The first does not: it is a floor set by how similar the trees are. Bias is unchanged by averaging, since each tree has the same expected prediction. So an ensemble of averaged trees wants members that are individually low-bias (deep) and mutually as different as possible.\n\n! Example: why decorrelation beats more trees\n! Take σ² = 1 for a single deep tree's prediction at some point.\n! Plain bagging, trees correlated at ρ = 0.5, B = 100: variance = 0.5 + 0.5/100 = 0.505. Going to B = 1000 only reaches 0.5005.\n! A random forest that cuts correlation to ρ = 0.2, still B = 100: variance = 0.2 + 0.8/100 = 0.208.\n! Decorrelation more than halved the variance; a tenfold increase in trees bought almost nothing.\n\n## Bootstrap aggregation\nBreiman's bagging (1996) creates diversity by giving each tree a different dataset. Each tree is trained on a bootstrap sample: $n$ draws with replacement from the $n$ training points. The chance that a given point is never drawn is $(1 - 1/n)^n$, which tends to $e^{-1} \\approx 0.368$. So each bootstrap sample contains about 63.2% of the distinct points, some of them several times, and leaves out roughly a third.\n\nFor classification the ensemble either takes a majority vote or, better, averages the trees' class-probability estimates (scikit-learn does the latter). For regression it averages predictions.\n\n%%flow Random forest training and prediction. Trees are independent, so training is embarrassingly parallel.\nTraining set -(bootstrap b)-> Sample b -(random √d features per split)-> Deep tree b -(average over b)-> *Forest prediction\n%%\n\nBagging helps unstable learners: those whose output changes a lot when the data changes, such as deep trees. It does little for stable ones like linear regression or k-NN with large $k$, because their bootstrap replicas are nearly identical ($\\rho$ close to 1).\n\n## Random forests: feature subsampling\nBagged trees remain highly correlated when one or two features dominate: almost every bootstrap tree puts the same strong feature at the root and grows similar structure beneath it. Breiman's random forest (2001) adds a second source of randomness. At every split, only a random subset of `max_features` = $m$ features is considered. Classic defaults are $m = \\sqrt{d}$ for classification and $m = d/3$ for regression. In current scikit-learn, `RandomForestClassifier` uses `\"sqrt\"` but `RandomForestRegressor` defaults to all features (`1.0`), which makes it plain bagging unless you change it.\n\nSmaller $m$ lowers $\\rho$ but raises each tree's bias and variance, because trees sometimes have to split on weak features. The best $m$ is data-dependent and worth tuning. One failure mode is a dataset with a few informative features buried among hundreds of noise features: with $m = \\sqrt{d}$, many splits see only noise candidates, and the forest degrades. There, larger $m$ helps.\n\nExtremely randomised trees (Extra-Trees) push further: they also draw the threshold at random for each candidate feature and usually skip bootstrapping. They are faster to train and often equally accurate.\n\n## Out-of-bag error\nBecause each tree skipped about 37% of the data, each training point has roughly $0.37B$ trees that never saw it. Predicting each point with only those trees and scoring the result gives the out-of-bag (OOB) error. It behaves much like a cross-validation estimate, comes nearly free during training (`oob_score=True`), and is a convenient way to choose the number of trees or `max_features` on moderately sized data. With very few trees it is noisy, and some points may have no OOB trees at all.\n\n```python\nfrom sklearn.ensemble import RandomForestClassifier\nrf = RandomForestClassifier(n_estimators=500, max_features=\"sqrt\",\n                            min_samples_leaf=1, oob_score=True, n_jobs=-1, random_state=0)\nrf.fit(X_tr, y_tr)\nprint(rf.oob_score_)        # accuracy on out-of-bag predictions\n```\n\n## Practical behaviour and limits\n- **Number of trees**: error falls fast then flattens; 200-1000 is typical. More trees never make test error worse in expectation, but cost memory and latency linearly.\n- **Leaf size and depth**: defaults (fully grown) are strong; raise `min_samples_leaf` for noisy regression targets and smaller models.\n- **No extrapolation**: like single trees, a forest's predictions stay inside the training target range, which matters for trending time series.\n- **Size**: 500 deep trees on a million rows can occupy gigabytes. Capping `max_leaf_nodes` or depth shrinks models with little loss.\n- **Probabilities**: averaged leaf frequencies are typically under-confident near 0 and 1; calibrate if you need probabilities (module 03).\n\nRandom forests are a strong default baseline for tabular data: few critical hyperparameters, little tuning, and OOB error for free. Boosting (next two lessons) usually wins on accuracy once tuned.\n\n> Takeaway: averaging deep trees removes variance only down to the floor $\\rho\\sigma^2$, so random forests add per-split feature sampling to lower $\\rho$; bootstrapping also gives OOB error as a free validation estimate.",
+   "q": "A colleague's random forest regressor on 40 features barely beats a single tuned tree, and adding trees from 100 to 2000 changes nothing. They used scikit-learn defaults. What is the likely cause, and what would you change first?",
+   "s": "The flat curve with more trees says the variance term $(1-\\rho)\\sigma^2/B$ is already negligible; what remains is the correlation floor $\\rho\\sigma^2$ plus bias. With scikit-learn's `RandomForestRegressor`, the default `max_features=1.0` considers all 40 features at every split, so the model is plain bagging: if one or two features dominate, almost every tree has the same top splits and the trees are highly correlated. I would first lower `max_features`, trying values such as 0.33 (the classic $d/3$), `\"sqrt\"` and 0.5, and compare by OOB score. If that does not help, I would check `min_samples_leaf` (noisy targets favour larger leaves) and whether the problem needs extrapolation or a smooth trend, which no tree ensemble provides.",
+   "r": [
+    [
+     "Breiman (2001): Random Forests",
+     "https://www.stat.berkeley.edu/~breiman/randomforest2001.pdf",
+     "The original paper: strength vs correlation bound, feature subsampling, OOB estimates."
+    ],
+    [
+     "Breiman (1996): Bagging Predictors",
+     "https://www.stat.berkeley.edu/~breiman/bagging.pdf",
+     "Why bagging helps unstable procedures and does little for stable ones."
+    ],
+    [
+     "scikit-learn User Guide: Ensembles (forests)",
+     "https://scikit-learn.org/stable/modules/ensemble.html",
+     "Section on random forests and Extra-Trees, including current max_features defaults and parameter advice."
+    ],
+    [
+     "scikit-learn example: OOB errors for random forests",
+     "https://scikit-learn.org/stable/auto_examples/ensemble/plot_ensemble_oob.html",
+     "OOB error as a function of the number of trees for different max_features."
+    ]
+   ],
+   "k": [
+    "bagging",
+    "random forest",
+    "OOB error"
+   ],
+   "x": [
+    "scikit-learn"
+   ],
+   "p": [
+    "random-forest",
+    "bagging-classifier",
+    "bootstrap-confidence-interval"
+   ]
+  },
+  {
+   "id": "04.04",
+   "t": "Boosting and AdaBoost",
+   "n": [
+    "Bagging trains strong learners in parallel to reduce variance; boosting trains weak learners in sequence, each focused on what the ensemble so far gets wrong, to reduce bias.",
+    "AdaBoost keeps a weight per sample. After each weak learner with weighted error $\\varepsilon_m$, it gives the learner a vote $\\alpha_m = \\tfrac12 \\ln\\frac{1-\\varepsilon_m}{\\varepsilon_m}$ and multiplies the weights of misclassified points by $e^{\\alpha_m}$.",
+    "After reweighting, the last learner has weighted error exactly 0.5, so the next learner is forced to find something new.",
+    "AdaBoost is forward stagewise additive modelling with exponential loss $e^{-yF(x)}$, whose minimiser is half the log-odds. That view generalises to gradient boosting.",
+    "Exponential loss punishes confident mistakes exponentially, so AdaBoost is fragile under label noise."
+   ],
+   "a": "## From averaging to correcting\nBagging (lesson 04.03) builds many strong, independent models and averages away their variance. Boosting takes the opposite route: it builds many weak models in sequence, each one trained to fix the mistakes of the ensemble so far. A weak learner is anything slightly better than chance, and the canonical one is a decision stump, a tree with a single split. One stump is a terrible classifier; a weighted vote of a few hundred well-chosen stumps can be excellent. Boosting reduces bias first, and because the learners are dependent, it can also overfit if run too long, unlike bagging.\n\n| | Bagging / random forest | Boosting |\n| Base learner | Deep, low-bias tree | Shallow, high-bias tree or stump |\n| Training | Parallel, independent | Sequential, each depends on the last |\n| Main effect | Reduces variance | Reduces bias (and some variance) |\n| Too many rounds | Harmless, just slower | Can overfit; needs a stopping rule |\n| Label noise | Robust | AdaBoost in particular is sensitive |\n\n## The AdaBoost algorithm\nFreund and Schapire's AdaBoost (1997) for labels $y_i \\in \\{-1, +1\\}$:\n1. Start with uniform weights $w_i = 1/n$.\n2. For $m = 1, \\dots, M$: fit a weak learner $h_m$ to the weighted data, and compute its weighted error $\\varepsilon_m = \\sum_i w_i\\, [h_m(x_i) \\ne y_i]$.\n3. Give it a vote $\\alpha_m = \\tfrac12 \\ln\\big((1-\\varepsilon_m)/\\varepsilon_m\\big)$, which is positive whenever $\\varepsilon_m < 0.5$ and grows without bound as $\\varepsilon_m \\to 0$.\n4. Update $w_i \\leftarrow w_i \\exp(-\\alpha_m y_i h_m(x_i))$, then renormalise so the weights sum to 1. Misclassified points are multiplied by $e^{\\alpha_m}$, correct ones by $e^{-\\alpha_m}$.\n5. Predict with $\\operatorname{sign}\\big(F(x)\\big)$ where $F(x) = \\sum_m \\alpha_m h_m(x)$.\n\n%%flow One AdaBoost round. The sample weights carry all the information from previous rounds.\nWeights w -(fit stump)-> h_m -(weighted error ε)-> Vote α_m -(upweight mistakes)-> *New weights\n%%\n\nIf the weak learner cannot take weights directly, resample the training set in proportion to $w$ instead.\n\n! Example: one round in numbers\n! A stump has weighted error ε = 0.3. Its vote is α = ½ ln(0.7 / 0.3) = ½ ln 2.333 = 0.424.\n! Misclassified weights are multiplied by e^0.424 = 1.528 and correct ones by e^−0.424 = 0.655. Total misclassified weight becomes 0.3 × 1.528 = 0.458, total correct weight 0.7 × 0.655 = 0.458.\n! After normalisation each group holds exactly half the weight. The stump just fitted now has weighted error 0.5 on the new weights, so it is useless for the next round, which must find a different split.\n\nThat equalisation is the mechanism in one line: AdaBoost always moves the weights so that the newest learner looks like a coin flip.\n\n## Why it works: exponential loss\nFriedman, Hastie and Tibshirani (2000) showed that AdaBoost is forward stagewise additive modelling. At each round, it adds the term $\\alpha h$ that most reduces the exponential loss\n\n$$L(F) = \\sum_i \\exp\\big(-y_i F(x_i)\\big)$$\n\nholding earlier terms fixed. Writing $w_i \\propto \\exp(-y_i F_{m-1}(x_i))$, minimising over $h$ is exactly fitting the weighted classifier, and minimising over $\\alpha$ gives the formula above. The weights are just the current loss of each point.\n\nTwo consequences follow. First, the population minimiser of exponential loss is $F^*(x) = \\tfrac12 \\ln\\frac{P(y=1\\mid x)}{P(y=-1\\mid x)}$, half the log-odds, so $F$ can be turned into probabilities with $p = 1/(1+e^{-2F})$, although those probabilities are often poorly calibrated. Second, the training error is bounded by $\\prod_m 2\\sqrt{\\varepsilon_m(1-\\varepsilon_m)}$, which falls exponentially fast as long as every learner beats chance by some margin.\n\nPractitioners noticed that AdaBoost's test error often kept falling after training error hit zero. The margin explanation (Schapire et al.) is that later rounds keep increasing $y_i F(x_i)$, the confidence of correct predictions, and larger margins give better generalisation bounds. It does eventually overfit on noisy data.\n\n## Failure modes and variants\n- **Label noise**: a mislabelled point is misclassified round after round, its weight grows exponentially, and later learners contort themselves around it. Losses that grow linearly in the margin (log-loss, used by gradient boosting) are much more forgiving.\n- **Weak learner too weak or too strong**: if $\\varepsilon_m \\ge 0.5$, boosting stalls; if a learner reaches $\\varepsilon_m = 0$, $\\alpha_m$ is infinite, so implementations clip it. Deep trees overfit the weighted data and make boosting unstable.\n- **Multiclass**: requiring error below 0.5 is too strict with $K$ classes. SAMME uses $\\alpha_m = \\ln\\frac{1-\\varepsilon_m}{\\varepsilon_m} + \\ln(K-1)$, which only needs accuracy above $1/K$; this is what scikit-learn's `AdaBoostClassifier` implements.\n- **Learning rate**: scaling every $\\alpha_m$ by $\\nu < 1$ and using more rounds usually generalises better, as with gradient boosting.\n\n```python\nimport numpy as np\ndef adaboost(X, y, fit_stump, M=200):          # y in {-1, +1}\n    w = np.full(len(y), 1 / len(y)); model = []\n    for _ in range(M):\n        h = fit_stump(X, y, w); pred = h(X)\n        eps = np.clip(w[pred != y].sum(), 1e-10, 1 - 1e-10)\n        a = 0.5 * np.log((1 - eps) / eps)\n        w *= np.exp(-a * y * pred); w /= w.sum()\n        model.append((a, h))\n    return lambda Z: np.sign(sum(a * h(Z) for a, h in model))\n```\n\nStacking is a third ensemble pattern worth knowing: instead of fixed weights, a second-level model learns how to combine base models from their out-of-fold predictions. Lesson 04.05 generalises AdaBoost's idea to any differentiable loss.\n\n> Takeaway: AdaBoost fits weak learners in sequence, each on data reweighted towards current mistakes; it is greedy minimisation of exponential loss, which makes it powerful on clean data and fragile on noisy labels.",
+   "q": "Your AdaBoost model's training error reaches 0 after 50 rounds. On a dataset you know contains about 5% flipped labels, test error starts rising after round 200. Explain the mechanism, and give two changes that would help.",
+   "s": "Each flipped label sits in a region where the correct rule says the opposite, so most stumps misclassify it. Under exponential loss its weight is multiplied by $e^{\\alpha_m}$ almost every round, so after many rounds a few noisy points hold a large share of the total weight. Later stumps are then chosen mainly to classify those points, carving small regions around them that do not generalise, and test error rises. Two fixes: (1) switch to a loss that grows only linearly with negative margin, such as log-loss gradient boosting or LogitBoost, so a persistent mistake gains weight far more slowly; (2) regularise the existing model by using a learning rate below 1 together with early stopping on a validation set, which stops before the noise-chasing phase. Cleaning the labels or capping sample weights also helps.",
+   "r": [
+    [
+     "Freund and Schapire (1997): A Decision-Theoretic Generalization of On-Line Learning and an Application to Boosting",
+     "https://doi.org/10.1006/jcss.1997.1504",
+     "The original AdaBoost paper and its training-error bound."
+    ],
+    [
+     "Friedman, Hastie, Tibshirani (2000): Additive Logistic Regression",
+     "https://web.stanford.edu/~hastie/Papers/AdditiveLogisticRegression/alr.pdf",
+     "Shows AdaBoost is stagewise fitting of exponential loss; introduces LogitBoost."
+    ],
+    [
+     "Schapire: Explaining AdaBoost",
+     "https://rob.schapire.net/papers/explaining-adaboost.pdf",
+     "Short survey of the different explanations, including margins and the noise problem."
+    ],
+    [
+     "Zhu, Zou, Rosset, Hastie: Multi-class AdaBoost (SAMME)",
+     "https://hastie.su.domains/Papers/samme.pdf",
+     "The multiclass variant used by scikit-learn."
+    ]
+   ],
+   "k": [
+    "boosting",
+    "AdaBoost",
+    "exponential loss"
+   ],
+   "x": [
+    "NumPy",
+    "scikit-learn"
+   ],
+   "p": [
+    "adaboost",
+    "stacking-ensemble",
+    "bagging-classifier"
+   ]
+  },
+  {
+   "id": "04.05",
+   "t": "Gradient boosting",
+   "n": [
+    "Gradient boosting is gradient descent in function space: each new tree fits the negative gradient of the loss with respect to the current predictions (the pseudo-residuals), and is added with a small step size.",
+    "For squared error the pseudo-residuals are ordinary residuals $y - F$; for log-loss they are $y - p$. The same algorithm handles any differentiable loss.",
+    "Shrinkage (learning rate 0.01-0.1) plus many trees plus early stopping is the main regulariser; row and column subsampling add more.",
+    "XGBoost uses a second-order expansion: a leaf's weight is $w^* = -G/(H+\\lambda)$ and a split's gain compares $G^2/(H+\\lambda)$ before and after, with a penalty $\\gamma$ per leaf.",
+    "LightGBM and scikit-learn's HistGradientBoosting bin features into at most 255 bins and grow trees leaf-wise, which makes training on millions of rows fast."
+   ],
+   "a": "## Boosting as gradient descent\nAdaBoost (lesson 04.04) turned out to be stagewise minimisation of one particular loss. Friedman (2001) asked the general question: for any differentiable loss $L(y, F)$, how do you add one tree at a time to reduce $\\sum_i L(y_i, F(x_i))$?\n\nThink of the vector of predictions $(F(x_1), \\dots, F(x_n))$ as the parameters. Gradient descent would move it along the negative gradient, whose $i$-th component is\n\n$$r_i = -\\frac{\\partial L(y_i, F(x_i))}{\\partial F(x_i)}$$\n\nBut we need a function that also works on new inputs, not just $n$ numbers. So we fit a regression tree $h_m$ to the targets $r_i$ (the pseudo-residuals), which gives the gradient direction as a function of $x$, and take a step:\n\n$$F_m(x) = F_{m-1}(x) + \\nu\\, h_m(x)$$\n\nThe learning rate (shrinkage) $\\nu$ is typically 0.01-0.1. After fitting the tree's structure, each leaf's value is usually re-optimised for the actual loss (a line search per leaf), since the tree was fitted to gradients with squared error.\n\n%%flow Gradient boosting loop. The tree only ever sees pseudo-residuals, so the loss can be anything differentiable.\nCurrent F -(gradient of loss)-> Pseudo-residuals r -(fit small tree)-> h_m -(F += ν·h_m)-> *Updated F\n%%\n\n## Losses and their residuals\n| Loss | $L(y, F)$ | Pseudo-residual $r$ | Initial $F_0$ |\n| Squared error | $\\tfrac12 (y-F)^2$ | $y - F$ | mean of $y$ |\n| Absolute error | $\\lvert y - F\\rvert$ | $\\operatorname{sign}(y - F)$ | median of $y$ |\n| Log-loss, $y \\in \\{0,1\\}$ | $-y\\ln p - (1-y)\\ln(1-p)$, $p = \\sigma(F)$ | $y - p$ | log-odds of base rate |\n| Huber | quadratic near 0, linear in tails | clipped residual | median |\n\nFor log-loss, $F$ is the log-odds, and the optimal leaf value is a Newton step: $\\sum r_i / \\sum p_i(1-p_i)$ over the leaf's samples. Robust losses limit the influence of outliers, which addresses the noise sensitivity of exponential loss.\n\n! Example: two rounds with squared error\n! Targets y = [3, 5, 10]. Start at F0 = mean = 6, so residuals are [−3, −1, 4].\n! A stump separates the third point: leaf values are the mean residuals, −2 for the first two and 4 for the third.\n! With ν = 0.1, F1 = [6 − 0.2, 6 − 0.2, 6 + 0.4] = [5.8, 5.8, 6.4]. New residuals [−2.8, −0.8, 3.6] are only slightly smaller.\n! It takes many small steps to fit the data. That slowness is the point: each tree contributes a little, so no single tree's errors dominate.\n\n## Regularisation\nGradient boosting overfits if run for too long, so its knobs interact:\n- **Learning rate and number of trees** trade off almost exactly: halving $\\nu$ roughly doubles the trees needed. Smaller $\\nu$ almost always generalises a little better, at the cost of training time.\n- **Early stopping**: hold out a validation set and stop when its loss has not improved for, say, 50 rounds. This makes the number of trees a fitted quantity rather than a guess.\n- **Tree size**: depth 3-8 or 15-63 leaves. Depth controls the order of interactions the model can represent per tree.\n- **Subsampling**: fitting each tree on a random 50-80% of rows (stochastic gradient boosting, Friedman 2002) and a fraction of columns both reduce variance and speed training.\n- **Leaf constraints**: minimum samples or minimum hessian sum per leaf, and L2 penalties on leaf values.\n\n## XGBoost: a second-order view\nXGBoost (Chen and Guestrin, 2016) writes the objective at round $m$ with a second-order Taylor expansion. Let $g_i$ and $h_i$ be the first and second derivatives of the loss at the current prediction, and add a penalty $\\gamma T + \\tfrac12 \\lambda \\sum_j w_j^2$ for a tree with $T$ leaves and leaf weights $w_j$. For a fixed structure, with $G_j = \\sum_{i \\in j} g_i$ and $H_j = \\sum_{i \\in j} h_i$, the optimum is closed form:\n\n$$w_j^* = -\\frac{G_j}{H_j + \\lambda} \\qquad \\text{Gain} = \\frac12\\Big[\\frac{G_L^2}{H_L+\\lambda} + \\frac{G_R^2}{H_R+\\lambda} - \\frac{(G_L+G_R)^2}{H_L+H_R+\\lambda}\\Big] - \\gamma$$\n\nSplits are scored with this gain, and a split that does not beat $\\gamma$ is not made. For squared error, $h_i = 1$ and $H$ is the sample count, so $\\lambda$ shrinks small leaves towards zero: a leaf with one residual of 4 gets weight $4/(1+1) = 2$ when $\\lambda = 1$, not 4. For log-loss, $h_i = p_i(1-p_i)$, recovering the Newton step above.\n\n## Making it fast: histograms and leaf-wise growth\nThe expensive part is split finding. Modern libraries bucket each feature into at most 255 quantile bins once, then build per-node histograms of $(G, H)$ and scan bins instead of sorted values. A useful trick: a child's histogram equals the parent's minus its sibling's, so only the smaller child needs a pass over data.\n\n| Library | Distinctive ideas |\n| XGBoost | Second-order objective with $\\lambda$, $\\gamma$; sparsity-aware default directions for missing values; `hist` tree method |\n| LightGBM | Histograms; leaf-wise (best-first) growth capped by `num_leaves`; GOSS keeps large-gradient rows and samples small ones; bundles mutually exclusive sparse features |\n| CatBoost | Symmetric (oblivious) trees; ordered boosting and ordered target statistics to avoid target leakage with categorical features |\n| scikit-learn `HistGradientBoosting*` | LightGBM-style histograms, native missing values and categoricals, built-in early stopping |\n\nLeaf-wise growth reaches lower loss with the same number of leaves than depth-wise growth, but can grow deep, narrow branches on small data; cap `num_leaves` and set `min_child_samples`. All four handle missing values natively by learning which side of each split they go to.\n\n> Takeaway: gradient boosting adds small trees fitted to the negative gradient of any differentiable loss; tune the learning rate, tree size and subsampling, and let early stopping pick the number of trees.",
+   "q": "You train LightGBM with `learning_rate=0.3`, `num_leaves=255` on 20,000 rows and see validation loss bottom out at round 40 and then climb. Your manager suggests reducing the number of trees to 40. Is that the best fix? What would you change and why?",
+   "s": "Stopping at 40 trees is better than training to 1,000, but it keeps a model built from 40 large, aggressive steps. Each tree has up to 255 leaves fitted on 20,000 rows, so many leaves contain few samples and fit noise. At a learning rate of 0.3 each of those noisy trees also makes a large change to the predictions. Better: lower the learning rate to about 0.05 and let early stopping choose the number of trees (it will now be several hundred); shrink `num_leaves` to 15-63 and raise `min_child_samples` so leaves average over more rows; add row and column subsampling (`bagging_fraction`, `feature_fraction` around 0.7-0.8) and perhaps `lambda_l2`. Many small, regularised steps usually reach a lower minimum of validation loss than a few large ones, not just the same minimum reached sooner.",
+   "r": [
+    [
+     "Friedman (2001): Greedy Function Approximation: A Gradient Boosting Machine",
+     "https://doi.org/10.1214/aos/1013203451",
+     "The original gradient boosting paper: pseudo-residuals, per-leaf line search, shrinkage."
+    ],
+    [
+     "Chen and Guestrin (2016): XGBoost: A Scalable Tree Boosting System",
+     "https://arxiv.org/abs/1603.02754",
+     "Section 2 derives the second-order leaf weights and split gain."
+    ],
+    [
+     "XGBoost docs: Introduction to Boosted Trees",
+     "https://xgboost.readthedocs.io/en/stable/tutorials/model.html",
+     "A clean derivation of the regularised objective and structure score."
+    ],
+    [
+     "LightGBM docs: Features",
+     "https://lightgbm.readthedocs.io/en/stable/Features.html",
+     "Histogram algorithm, leaf-wise growth, and how categorical and missing values are handled."
+    ]
+   ],
+   "k": [
+    "gradient boosting",
+    "XGBoost",
+    "LightGBM"
+   ],
+   "x": [
+    "XGBoost",
+    "LightGBM",
+    "scikit-learn"
+   ],
+   "p": [
+    "gradient-boosted-regressor",
+    "decision-tree-regressor"
+   ]
+  },
+  {
+   "id": "04.06",
+   "t": "Interpreting tree models",
+   "n": [
+    "Impurity-based importance (MDI) sums each feature's weighted impurity decrease over all splits. It is free, but computed on training data and biased towards continuous and high-cardinality features.",
+    "Permutation importance shuffles one column of held-out data and measures the drop in score. It is model-agnostic and reflects generalisation, but correlated features share or hide importance.",
+    "Partial dependence averages predictions while forcing one feature to each value: it shows the average effect, but extrapolates into impossible feature combinations when features are correlated.",
+    "ICE curves show the per-sample lines behind a PD plot and reveal interactions that averaging hides; SHAP (TreeSHAP) gives exact per-prediction attributions for tree ensembles.",
+    "Importance measures describe the model, not the world: an important feature is one the model uses, which is not evidence of causation."
+   ],
+   "a": "## Three questions, three tools\nTrees and ensembles are often deployed where someone asks \"why?\". This last lesson of the module separates three questions that people tend to blur together:\n- **Which features does the model rely on?** Global importance: MDI or permutation importance.\n- **How does the prediction change with a feature?** Effect curves: partial dependence and ICE.\n- **Why did this one prediction come out this way?** Local attribution: SHAP values.\n\nEach tool answers only its own question, and each has a known way of misleading you.\n\n## Impurity-based importance (MDI)\nEvery split in a tree reduces impurity by some amount, weighted by the fraction of samples reaching that node. Mean decrease in impurity (MDI) adds these up per feature, averages over the trees, and normalises to sum to 1. scikit-learn exposes it as `feature_importances_`.\n\nIt is free and often reasonable, but it has two structural biases:\n1. **Cardinality bias**: a feature with many distinct values offers many candidate thresholds, so by chance alone it finds splits that reduce training impurity. A random numeric column or a customer ID can get substantial MDI.\n2. **Training-data scores**: MDI measures how much a feature helped fit the training set, including fitting noise. Deep forests that memorise give importance to features that do not generalise.\n\nStrobl et al. (2007) documented the bias; the practical rule is to treat MDI as a quick first look and confirm with permutation importance.\n\n## Permutation importance\nThe idea: if the model relies on feature $j$, destroying the information in $j$ should hurt. Take a held-out set, record the score $s$, shuffle column $j$ (breaking its relation with the target and other features while keeping its distribution), and record the new score $s_j$. The importance is $s - s_j$, averaged over several shuffles.\n\n%%flow Permutation importance for one feature. Repeat for each feature and several shuffles; the model is never retrained.\nValidation set -(score)-> Baseline s -(shuffle column j)-> Corrupted set -(score)-> *Importance s − s_j\n%%\n\n```python\nfrom sklearn.inspection import permutation_importance\nres = permutation_importance(model, X_val, y_val, scoring=\"roc_auc\",\n                             n_repeats=10, random_state=0, n_jobs=-1)\norder = res.importances_mean.argsort()[::-1]   # report mean ± std per feature\n```\n\nCost is $d \\times$ `n_repeats` predictions over the validation set; no retraining. It works for any model and any metric.\n\nThe main failure is **correlated features**. If `height_cm` and `height_in` are both present, shuffling one leaves the other intact, so the model barely suffers and both look unimportant. Worse, shuffling one creates rows such as 190 cm alongside 60 in, which the model never saw, so the importance partly measures behaviour on impossible inputs. Remedies: cluster correlated features (for example by Spearman correlation) and permute or drop whole groups, or use drop-column importance (retrain without the feature), which is honest but costs one fit per feature.\n\n! Example: reading permutation importances\n! A churn model has validation AUC 0.84. Shuffling `tenure_months` drops it to 0.71 (importance 0.13 ± 0.01); shuffling `contract_type` gives 0.80 (0.04 ± 0.01); shuffling `account_id` gives 0.84 (0.00 ± 0.002).\n! MDI on the same forest ranked `account_id` third, because it has 50,000 distinct values and the deep trees used it to memorise. Permutation importance on held-out data correctly shows it carries no generalisable signal: drop it.\n! If `tenure_months` and `total_charges` were 0.9 correlated, their individual importances would understate the pair; permuting both together would show the joint effect.\n\n## Partial dependence and ICE\nImportance says how much; effect curves say how. The partial dependence of the prediction on a feature $x_S$ is\n\n$$\\mathrm{PD}(v) = \\frac{1}{n}\\sum_{i=1}^{n} f\\big(x_S = v,\\ x_C^{(i)}\\big)$$\n\nthat is, set feature $S$ to the value $v$ in every row, keep the other features $x_C$ as they are, and average the predictions. Plotting over a grid of $v$ shows the model's average response.\n\nAn individual conditional expectation (ICE) curve is the same computation for a single row, before averaging. Plotting a few hundred ICE lines under the PD line reveals heterogeneity: if half the lines rise and half fall, the PD line is flat even though the feature matters a lot through an interaction.\n\nPartial dependence shares the correlated-feature trap: forcing `age = 20` onto rows with `years_employed = 35` asks the model about inputs that do not exist, and trees answer such questions arbitrarily. Accumulated local effects (ALE) plots average differences only within narrow bins of the actual data and avoid most of this. Either way, a PD curve is a description of the fitted function, not of what would happen if you intervened on the feature.\n\n## Local attributions: SHAP\nShapley values from game theory split one prediction, relative to the average prediction, into additive contributions per feature, with consistency guarantees. They are expensive in general, but TreeSHAP (Lundberg et al.) computes them exactly for tree ensembles in polynomial time, $O(T L D^2)$ for $T$ trees, $L$ leaves and depth $D$, so it is practical for XGBoost, LightGBM and forests. Averaging $\\lvert\\phi_j\\rvert$ over rows gives a global importance that, unlike MDI, does not favour high-cardinality features by construction; a SHAP dependence plot (feature value against $\\phi_j$) is a per-row alternative to PD.\n\n| Method | Question | Data used | Main pitfall |\n| MDI | Global reliance | Training | High-cardinality bias, training noise |\n| Permutation | Global reliance | Held-out | Correlated features, off-manifold rows |\n| PD / ICE | Average and per-row effect | Any | Extrapolation with correlated features |\n| TreeSHAP | Per-prediction attribution | Any | Still describes the model, not causation |\n\n> Takeaway: prefer permutation importance on held-out data over impurity importance, check correlated features before trusting either, and read PD/ICE and SHAP as descriptions of the model's behaviour, not causal effects.",
+   "q": "A random forest predicting house prices ranks `listing_id` (a unique integer) second by `feature_importances_`, while `sqft_living` and `sqft_above` (correlation 0.88) both rank low by permutation importance. Explain both observations and what you would report.",
+   "s": "`listing_id` ranks high under MDI because it is a continuous-looking feature with a distinct value per row. Deep trees can always find thresholds on it that reduce training impurity, effectively memorising individual houses, and MDI credits those splits even though they do not generalise. Its permutation importance on held-out data should be near zero, and I would drop it. The two square-footage features both look weak under permutation because they carry largely the same information: shuffling one leaves the other available, so the score barely drops. Shuffling also creates implausible pairs, such as a large living area with a tiny above-ground area. I would report importance for the group: permute both columns together, or cluster correlated features and keep one representative. I would state clearly that the size signal is strong, but that splitting it between the two features is not well defined.",
+   "r": [
+    [
+     "scikit-learn User Guide: Permutation feature importance",
+     "https://scikit-learn.org/stable/modules/permutation_importance.html",
+     "Algorithm, its relation to MDI, and the correlated-feature caveat."
+    ],
+    [
+     "scikit-learn User Guide: Partial dependence and ICE plots",
+     "https://scikit-learn.org/stable/modules/partial_dependence.html",
+     "Definitions, the brute vs recursion methods for trees, and interpretation limits."
+    ],
+    [
+     "Strobl et al. (2007): Bias in random forest variable importance measures",
+     "https://bmcbioinformatics.biomedcentral.com/articles/10.1186/1471-2105-8-25",
+     "Shows MDI's preference for features with many categories or values."
+    ],
+    [
+     "Lundberg, Erion, Lee: Consistent Individualized Feature Attribution for Tree Ensembles",
+     "https://arxiv.org/abs/1802.03888",
+     "The TreeSHAP algorithm and why gain-based importances can be inconsistent."
+    ]
+   ],
+   "k": [
+    "feature importance",
+    "partial dependence",
+    "SHAP"
+   ],
+   "x": [
+    "scikit-learn",
+    "SHAP"
+   ],
+   "p": [
+    "permutation-feature-importance",
+    "random-forest"
+   ]
+  }
+ ]
+}

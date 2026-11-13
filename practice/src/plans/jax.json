@@ -1,0 +1,90 @@
+{
+ "id": "jax",
+ "group": "Systems and GPU Programming",
+ "title": "JAX for ML Systems",
+ "blurb": "Learn JAX the way ML systems engineers use it: pure functions transformed by grad, jit, vmap and scan, then the optimizers, numerics, decoding loops and collectives that real training and serving code is built from.",
+ "prereq": "Be comfortable with NumPy arrays and broadcasting and with how gradient descent trains a model; knowing attention helps from the inference sections on.",
+ "next": "Take these patterns to production serving in the Inference Engineering study plan, or drop one level down and write the kernels yourself in the Triton study plan.",
+ "sections": [
+  {
+   "name": "Arrays the JAX way",
+   "problems": [
+    "functional-array-update",
+    "prng-key-splitting",
+    "masked-mean-without-boolean-indexing",
+    "pad-and-mask-to-bucket-length"
+   ]
+  },
+  {
+   "name": "Automatic Differentiation",
+   "problems": [
+    "value-and-grad-of-loss",
+    "hessian-vector-product",
+    "per-example-gradient-clipping",
+    "straight-through-estimator-with-custom-vjp"
+   ]
+  },
+  {
+   "name": "Compiling with jit and scan",
+   "problems": [
+    "static-arguments-in-jit",
+    "traced-learning-rate-schedule",
+    "exponential-moving-average-with-scan",
+    "spectral-norm-by-power-iteration"
+   ]
+  },
+  {
+   "name": "Vectorizing with vmap",
+   "problems": [
+    "batched-attention-with-vmap",
+    "model-ensemble-with-in-axes",
+    "pairwise-distances-with-nested-vmap"
+   ]
+  },
+  {
+   "name": "Pytrees and Optimizers",
+   "problems": [
+    "sgd-with-momentum-over-pytree",
+    "global-norm-gradient-clipping",
+    "adamw",
+    "gradient-accumulation-with-scan"
+   ]
+  },
+  {
+   "name": "Memory and Numerics",
+   "problems": [
+    "mixed-precision-with-loss-scaling",
+    "rematerialized-mlp-block",
+    "int8-matmul-with-per-channel-scales",
+    "blockwise-attention-with-online-softmax"
+   ]
+  },
+  {
+   "name": "Inference Building Blocks",
+   "problems": [
+    "rotary-position-embedding",
+    "kv-cache-update-at-position",
+    "top-k-and-top-p-sampling",
+    "grouped-query-decode-step"
+   ]
+  },
+  {
+   "name": "Decoding Loops",
+   "problems": [
+    "greedy-decode-loop-with-scan",
+    "paged-kv-cache-gather",
+    "beam-search-step",
+    "speculative-decoding-acceptance"
+   ]
+  },
+  {
+   "name": "Sharding and Parallelism",
+   "problems": [
+    "device-mesh-and-named-sharding",
+    "data-parallel-step-with-psum",
+    "tensor-parallel-mlp",
+    "ring-all-reduce-with-ppermute"
+   ]
+  }
+ ]
+}

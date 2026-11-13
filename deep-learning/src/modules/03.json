@@ -1,0 +1,253 @@
+{
+ "n": "03",
+ "name": "Convolutional networks",
+ "lessons": [
+  {
+   "id": "03.01",
+   "t": "Convolution",
+   "n": [
+    "A convolutional layer slides a small kernel of shape $C_{in} \\times k \\times k$ over the input and takes a dot product at every position; $C_{out}$ such kernels give $C_{out}$ output channels.",
+    "Weight sharing and locality cut parameters from millions to thousands and make the layer translation-equivariant: shift the input, and the feature map shifts with it.",
+    "Output size is $\\lfloor (H + 2p - d(k-1) - 1)/s \\rfloor + 1$; padding controls border behaviour, stride downsamples, dilation spreads the kernel.",
+    "The receptive field grows with depth: each layer adds $(k-1)$ times the product of all earlier strides, so stacks of small kernels see large regions.",
+    "Parameters are $C_{out} C_{in} k^2$ but compute is that times the number of output positions, so early high-resolution layers dominate FLOPs while late layers dominate parameters."
+   ],
+   "a": "## From dense layers to convolutions\nModule 01's MLP showed the cost of dense layers on images: a 224×224×3 input flattened to 150,528 numbers, connected to just 1000 hidden units, needs 150 million weights, and the network has to learn separately that a cat in the top-left and a cat in the bottom-right are both cats. Convolutional networks build in two assumptions about images:\n- **Locality**: useful features (edges, textures) depend on nearby pixels, so each output looks at a small window.\n- **Stationarity**: a feature detector useful in one place is useful everywhere, so the same weights are reused at every position.\n\nThis module applies the training machinery of Modules 01-02 to convolutional networks; Module 04 then uses them for detection and segmentation.\n\n## The operation\nFor an input of shape $(C_{in}, H, W)$ and a weight tensor $(C_{out}, C_{in}, k, k)$:\n\n$$y_{o,i,j} = b_o + \\sum_{c=1}^{C_{in}} \\sum_{u=0}^{k-1} \\sum_{v=0}^{k-1} w_{o,c,u,v}\\; x_{c,\\; s i + d u - p,\\; s j + d v - p}$$\n\nEvery output channel looks at **all** input channels. (Deep learning libraries compute cross-correlation, without flipping the kernel; since kernels are learned the distinction doesn't matter.) The output size per spatial dimension, with padding $p$, stride $s$, dilation $d$:\n\n$$H_{out} = \\left\\lfloor \\frac{H + 2p - d(k-1) - 1}{s} \\right\\rfloor + 1$$\n\n- **Padding** $p = (k-1)/2$ with $s = 1$ keeps the size (\"same\" padding) and lets border pixels influence as many outputs as central ones.\n- **Stride** $s = 2$ halves the resolution, a learned alternative to pooling (03.02).\n- **Dilation** $d$ inserts gaps in the kernel, enlarging its footprint without adding weights; used in segmentation to keep resolution.\n\n%%flow One conv layer as tensor shapes: the kernel's channel depth always equals the input's channel count.\nInput 3×224×224 -(64 kernels of 3×7×7, s=2, p=3)-> *Output 64×112×112 -(BN, ReLU)-> Next layer\n%%\n\n## Translation equivariance and its limits\nBecause weights are shared, shifting the input by one pixel shifts the output by one pixel: convolution is **translation-equivariant**. Classification wants **invariance** (same label regardless of position), which comes later from pooling and global averaging. Equivariance is exact only for stride 1; stride and pooling make outputs sensitive to sub-stride shifts, which is why CNN predictions can flicker when an image moves by a pixel.\n\n## Receptive field\nThe receptive field of a unit is the input region that can affect it. With $r_0 = 1$ and jump $j_0 = 1$:\n\n$$r_l = r_{l-1} + (k_l - 1)\\, j_{l-1}, \\qquad j_l = j_{l-1}\\, s_l$$\n\nThree stacked 3×3 stride-1 convs see $1 + 2 + 2 + 2 = 7$ pixels: the same as one 7×7 kernel (the VGG argument in 03.03). Strides multiply the growth of everything after them, which is how a 50-layer ResNet reaches a theoretical receptive field larger than the image. The **effective** receptive field is much smaller: influence is roughly Gaussian-weighted toward the centre, so the outer region of the theoretical field contributes little.\n\n## Cost: parameters versus compute\nParameters: $C_{out} C_{in} k^2$ (+ $C_{out}$ biases), independent of image size. Multiply-adds: that number times $H_{out} W_{out}$. Early layers have few channels but huge resolution, late layers many channels but tiny resolution, so early layers dominate compute and late layers dominate parameters.\n\nImplementations turn convolution into matrix multiplication. **im2col** unrolls every $C_{in} k^2$ input patch into a column, giving a $(C_{in} k^2) \\times (H_{out} W_{out})$ matrix; the weights reshape to $C_{out} \\times (C_{in} k^2)$; one GEMM gives the output. cuDNN also uses implicit-GEMM, FFT and Winograd algorithms, picking per layer shape.\n\n```python\nimport numpy as np\n\ndef conv2d(x, w, b, stride=1, pad=0):\n    # x: (C_in, H, W), w: (C_out, C_in, k, k) -> (C_out, H_out, W_out), via im2col\n    C, H, W = x.shape; O, _, k, _ = w.shape\n    x = np.pad(x, ((0, 0), (pad, pad), (pad, pad)))\n    Ho, Wo = (H + 2 * pad - k) // stride + 1, (W + 2 * pad - k) // stride + 1\n    cols = np.stack([x[:, i * stride:i * stride + k, j * stride:j * stride + k].ravel()\n                     for i in range(Ho) for j in range(Wo)], axis=1)   # (C*k*k, Ho*Wo)\n    return (w.reshape(O, -1) @ cols + b[:, None]).reshape(O, Ho, Wo)\n```\n\n! Example: sizing a ResNet stem\n! Input 3×224×224, 64 kernels of 7×7, stride 2, padding 3. $H_{out} = \\lfloor (224 + 6 - 6 - 1)/2 \\rfloor + 1 = 112$, so the output is 64×112×112.\n! Parameters: $64 \\cdot 3 \\cdot 49 = 9{,}408$ weights. Compute: $9{,}408 \\times 112 \\times 112 \\approx 118$ million multiply-adds per image.\n! Compare a late ResNet layer, 512→512 channels with 3×3 kernels at 7×7: 2.36 million weights (250× more) but $2.36\\text{M} \\times 49 \\approx 116$ million MACs, about the same compute.\n\n| Hyperparameter | Effect on output size | Effect on parameters |\n| Kernel size $k$ | shrinks by $k-1$ without padding | grows as $k^2$ |\n| Padding $p$ | grows by $2p$ | none |\n| Stride $s$ | divides by about $s$ | none |\n| Dilation $d$ | shrinks by $d(k-1)$ without padding | none |\n| Channels $C_{out}$ | sets output depth | grows linearly |\n\n> Takeaway: a conv layer is a small dense layer applied at every position with shared weights; know the output-size formula, how receptive fields compound, and that compute scales with resolution while parameters scale with channels.",
+   "q": "A network has two layers: a 3×3 conv with stride 2, then a 3×3 conv with stride 1. A colleague claims swapping their order (stride-1 first, then stride-2) leaves both the receptive field and the compute unchanged. Check both claims for a 64-channel to 64-channel network on a 128×128 input with same padding.",
+   "s": "Receptive field: with stride 2 first, $r_1 = 3$, $j_1 = 2$, then $r_2 = 3 + 2 \\cdot 2 = 7$. With stride 1 first, $r_1 = 3$, $j_1 = 1$, then $r_2 = 3 + 2 \\cdot 1 = 5$. So the claim is false: putting the stride first makes the later layer's kernel cover a wider input region. Compute: each layer has $64 \\cdot 64 \\cdot 9 = 36{,}864$ weights. Stride 2 first: layer 1 outputs 64×64 (4,096 positions), layer 2 also at 64×64, total $2 \\times 36{,}864 \\times 4{,}096 \\approx 302$M MACs. Stride 1 first: layer 1 at 128×128 (16,384 positions), layer 2 at 64×64, total $36{,}864 \\times (16{,}384 + 4{,}096) \\approx 755$M MACs. Parameters are identical, but downsampling early gives a larger receptive field for about 40% of the compute, at the cost of losing high-resolution detail sooner. This is the trade-off every CNN stem makes.",
+   "r": [
+    [
+     "CS231n: Convolutional Neural Networks",
+     "https://cs231n.github.io/convolutional-networks/",
+     "The conv layer, output-size arithmetic, parameter sharing and im2col."
+    ],
+    [
+     "Dumoulin & Visin: A guide to convolution arithmetic for deep learning",
+     "https://arxiv.org/abs/1603.07285",
+     "Every padding/stride/dilation case drawn out, with exact size relations."
+    ],
+    [
+     "Luo et al.: Understanding the Effective Receptive Field",
+     "https://arxiv.org/abs/1701.04128",
+     "Why the effective receptive field is Gaussian-shaped and much smaller than the theoretical one."
+    ],
+    [
+     "Dive into Deep Learning: Padding and Stride",
+     "https://d2l.ai/chapter_convolutional-neural-networks/padding-and-strides.html",
+     "Shape calculations with runnable code."
+    ]
+   ],
+   "k": [
+    "convolution",
+    "receptive field",
+    "im2col"
+   ],
+   "x": [
+    "NumPy",
+    "PyTorch"
+   ],
+   "p": [
+    "2d-convolution",
+    "multichannel-2d-convolution",
+    "conv2d",
+    "dilated-2d-convolution"
+   ]
+  },
+  {
+   "id": "03.02",
+   "t": "Pooling and downsampling",
+   "n": [
+    "Max pooling takes the largest value in each window (2×2, stride 2 is standard), giving small-shift invariance and halving resolution with no parameters; its gradient goes only to the arg-max position.",
+    "Global average pooling collapses each channel to one number, replacing huge flatten-then-dense heads and letting the network accept any input size.",
+    "Strided convolution is learned downsampling; most modern CNNs use it, or pooling, at a few stage boundaries while doubling channels.",
+    "Transposed convolution upsamples by scattering each input value through the kernel; its output size is $(H-1)s - 2p + k$, and kernels not divisible by the stride cause checkerboard artifacts."
+   ],
+   "a": "## Why downsample\nA classifier must turn a 224×224 image into one label. Reducing resolution step by step does three things: it cuts compute in later layers (cost scales with $H \\times W$), it grows the receptive field quickly (strides multiply it, 03.01), and it builds invariance to small shifts. The standard pattern is a few **stages**: at each boundary, halve the resolution and double the channels, so compute per layer stays roughly constant while features become more abstract.\n\n## Max and average pooling\nPooling applies a fixed reduction to each window per channel, with no parameters and no channel mixing:\n- **Max pooling** keeps the strongest response, which reads as \"is this feature present anywhere in the window\". 2×2 with stride 2 is the default; AlexNet used overlapping 3×3 windows with stride 2.\n- **Average pooling** keeps the mean, smoother and preserving more information, but diluting a strong local response.\n\nThe backward passes differ in a useful way. Average pooling spreads the upstream gradient equally over the window ($1/k^2$ each). Max pooling routes all of it to the position that held the maximum and gives zero to the rest, so implementations store the arg-max indices from the forward pass.\n\n```python\nimport numpy as np\n\ndef maxpool2x2(x):                      # x: (C, H, W), H and W even\n    C, H, W = x.shape\n    win = x.reshape(C, H // 2, 2, W // 2, 2).transpose(0, 1, 3, 2, 4).reshape(C, H // 2, W // 2, 4)\n    idx = win.argmax(-1)                # remember winners for backward\n    return win.max(-1), idx\n\ndef maxpool2x2_backward(dout, idx, shape):\n    C, H, W = shape\n    g = np.zeros((C, H // 2, W // 2, 4))\n    np.put_along_axis(g, idx[..., None], dout[..., None], axis=-1)\n    return g.reshape(C, H // 2, W // 2, 2, 2).transpose(0, 1, 3, 2, 4).reshape(C, H, W)\n```\n\n## Global average pooling\nAt the end of the network, **global average pooling** (GAP) reduces each $C \\times h \\times w$ feature map to a length-$C$ vector by averaging each channel over all positions. Compare heads:\n- VGG-16 flattens 512×7×7 = 25,088 values into a 4096-unit dense layer: about 103 million weights, three quarters of the whole model.\n- ResNet-50 applies GAP to 2048×7×7, giving 2048 values, then one 2048→1000 dense layer: about 2 million weights.\n\nGAP also makes the network size-agnostic (any input resolution gives a $C$-vector) and acts as a structural regulariser. **Adaptive** pooling generalises it: pick the output size (say 7×7) and the window adapts to the input.\n\n## Strided convolution instead of pooling\nSpringenberg et al. showed you can replace every pooling layer with a stride-2 convolution and lose nothing: the network learns how to downsample. ResNets downsample with stride-2 convs inside blocks; many modern designs use a stride-2 conv or a \"patchify\" stem. One caveat applies to both: subsampling without low-pass filtering aliases, so outputs can change noticeably under one-pixel shifts. Blurring before subsampling (anti-aliased pooling) restores much of the shift stability.\n\n%%flow A classic stage layout: resolution halves at each boundary while channels double, keeping compute per stage roughly flat.\n224×224×3 -(stem, s=2 + pool)-> 56×56×64 -(stage, s=2)-> 28×28×128 -(s=2)-> 14×14×256 -(s=2)-> 7×7×512 -(global avg pool)-> *512 -(dense)-> 1000 logits\n%%\n\n## Upsampling: transposed convolution\nSegmentation, generators and decoders need to go the other way. **Transposed convolution** (sometimes misnamed deconvolution) is the gradient of a convolution with respect to its input, used as a forward operation. Each input value multiplies the whole kernel and is added into the output at stride-spaced positions; overlapping contributions sum. Output size:\n\n$$H_{out} = (H - 1)s - 2p + d(k - 1) + p_{out} + 1$$\n\nwhich with $d = 1$ and no output padding is $(H-1)s - 2p + k$. The extra `output_padding` resolves the ambiguity that several input sizes map to the same strided-conv output size.\n\n**Checkerboard artifacts**: when $k$ is not divisible by $s$ (say $k = 3, s = 2$), some output pixels receive contributions from more input positions than their neighbours, imprinting a grid pattern. Fixes: use $k$ divisible by $s$ (4 with stride 2), or upsample with nearest-neighbour or bilinear interpolation and then apply a normal convolution, which U-Nets and many generators do. **Pixel shuffle** (sub-pixel convolution) is a third option: a conv produces $C \\cdot r^2$ channels and a reshape rearranges them into an $r$-times larger image.\n\n! Example: one DCGAN-style upsampling layer\n! Input 512×4×4, transposed conv to 256 channels with $k = 4$, $s = 2$, $p = 1$: $H_{out} = (4-1) \\cdot 2 - 2 + 4 = 8$, so 256×8×8. Four such layers take 4×4 to 64×64.\n! Because $4$ is divisible by $2$, every output pixel receives exactly $(k/s)^2 = 4$ kernel contributions, so overlap is even and no grid pattern is built in.\n! With $k = 3$, $s = 2$, $p = 1$, $p_{out} = 1$ the output is also 8×8, but output pixels alternate between 1, 2 and 4 contributions: the checkerboard.\n\n> Takeaway: downsample a few times with pooling or strided convs while doubling channels, finish with global average pooling instead of a giant dense head, and upsample with transposed convs whose kernel is divisible by the stride, or with resize-then-convolve.",
+   "q": "A segmentation decoder uses `ConvTranspose2d(k=3, stride=2, padding=1, output_padding=1)` and its outputs show a faint grid pattern even after long training. Explain the cause in terms of how many input contributions each output pixel receives, and give two alternative designs that keep the same output size.",
+   "s": "A transposed conv scatters each input value through the 3×3 kernel at stride 2. Along one dimension, output positions alternate between being covered by one kernel tap and two overlapping taps, since a width-3 kernel placed every 2 pixels overlaps by one. In 2-D this gives a periodic pattern of 1, 2 or 4 contributions per pixel, so even with identical weights the output has a built-in 2-pixel grid, and the network must learn weights that exactly cancel it, which it rarely does. Alternatives with the same 2× upsampling: (1) a kernel divisible by the stride, `ConvTranspose2d(k=4, stride=2, padding=1)`, which gives uniform overlap and also doubles the size; (2) nearest-neighbour or bilinear upsampling by 2 followed by a 3×3 conv with padding 1, which separates resizing from learning and is the standard U-Net choice; (3) a conv producing $4C$ channels followed by pixel shuffle with factor 2.",
+   "r": [
+    [
+     "Dumoulin & Visin: A guide to convolution arithmetic",
+     "https://arxiv.org/abs/1603.07285",
+     "Pooling arithmetic and the transposed-convolution chapter with output-size relations."
+    ],
+    [
+     "Odena, Dumoulin, Olah: Deconvolution and Checkerboard Artifacts",
+     "https://distill.pub/2016/deconv-checkerboard/",
+     "Interactive explanation of uneven overlap and the resize-convolution fix."
+    ],
+    [
+     "Springenberg et al.: Striving for Simplicity: The All Convolutional Net",
+     "https://arxiv.org/abs/1412.6806",
+     "Replacing max pooling with strided convolution without accuracy loss."
+    ],
+    [
+     "Dive into Deep Learning: Pooling",
+     "https://d2l.ai/chapter_convolutional-neural-networks/pooling.html",
+     "Max and average pooling with padding and stride, from scratch."
+    ]
+   ],
+   "k": [
+    "pooling",
+    "transposed convolution",
+    "global average pooling"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "max-pool-2d",
+    "pooling-layers",
+    "transposed-convolution",
+    "2d-transposed-convolution",
+    "adaptive-average-pool-2d"
+   ]
+  },
+  {
+   "id": "03.03",
+   "t": "Classic CNNs: LeNet, AlexNet, VGG",
+   "n": [
+    "LeNet-5 (1998) fixed the template still used today: conv, nonlinearity, pool, repeated, then dense layers; about 60k parameters for 32×32 digits.",
+    "AlexNet (2012) scaled the template to ImageNet with ReLU, dropout, heavy augmentation and two GPUs, cutting top-5 error from 26.2% to 15.3% and starting the deep learning era in vision.",
+    "VGG (2014) showed depth with only 3×3 kernels works: two 3×3 convs see a 5×5 region with 28% fewer parameters and an extra nonlinearity.",
+    "These networks put most parameters in the dense head (about 90% in VGG-16) and most compute in the convolutions; later designs removed the head and attacked compute."
+   ],
+   "a": "## Why study old networks\nLeNet, AlexNet and VGG are rarely deployed now, but each one introduced a design decision every later CNN inherits, and their failure modes motivated what came next: residual connections (03.04) and efficient blocks (03.05). They also make good mental benchmarks for parameter and compute counting. AI Research's TensorFlow lessons train CNNs on MNIST and CIFAR-10 in code; this lesson is about the architecture choices.\n\n## LeNet-5: the template\nLeCun et al.'s LeNet-5 read 32×32 grayscale digits for cheque processing:\n- conv 5×5, 6 channels → 28×28×6, then subsample to 14×14×6\n- conv 5×5, 16 channels → 10×10×16, then subsample to 5×5×16\n- dense 400 → 120 → 84 → 10\n\nAbout 60 thousand parameters. The key ideas were already there: local receptive fields, shared weights, spatial subsampling, and end-to-end training by backprop. It used tanh-like activations and average-style subsampling; the modern re-implementation swaps in ReLU and max pooling.\n\n## AlexNet: scale, ReLU and regularisation\nKrizhevsky, Sutskever and Hinton won ILSVRC-2012 with 15.3% top-5 error against 26.2% for the next entry. The architecture was LeNet's shape, much larger: 5 conv layers (the first 11×11 with stride 4 and 96 channels), 3 dense layers of 4096, 4096 and 1000 units, about 60 million parameters. What made it work is as important as the layers:\n- **ReLU** instead of tanh: the paper reports reaching 25% training error on CIFAR-10 about six times faster.\n- **Dropout** 0.5 in the first two dense layers, without which it overfit badly.\n- **Data augmentation**: random 224×224 crops and flips from 256×256 images, plus PCA colour jitter.\n- **GPUs**: trained for five to six days on two 3 GB GTX 580s, with the model split across them.\n- **Overlapping max pooling** (3×3, stride 2) and local response normalisation; LRN was later dropped as BatchNorm superseded it.\n\n## VGG: depth from small kernels\nSimonyan and Zisserman asked what happens if you fix every conv to 3×3, stride 1, padding 1, and only vary depth. VGG-16 has 13 conv layers in 5 blocks (64, 128, 256, 512, 512 channels, each block ending in a 2×2 max pool) and the same 3-layer dense head. It placed second in ILSVRC-2014 classification. The argument for 3×3:\n- Two stacked 3×3 layers have a 5×5 receptive field; three have 7×7 (03.01).\n- Parameters for $C$ channels: three 3×3 layers $3 \\cdot 9C^2 = 27C^2$ versus one 7×7 layer $49C^2$, 45% fewer.\n- Each layer adds a ReLU, so the stack is more nonlinear than one big kernel.\n\nThe cost: VGG-16 has 138 million parameters and about 15.3 billion multiply-adds per 224×224 image. The first dense layer alone, $25{,}088 \\times 4096 \\approx 103$M weights, is three quarters of the parameter count.\n\n| Model | Year | Depth (weight layers) | Parameters | ImageNet top-5 error |\n| LeNet-5 | 1998 | 5 | about 60k | (digits only) |\n| AlexNet | 2012 | 8 | about 60M | 15.3% |\n| VGG-16 | 2014 | 16 | about 138M | about 7.3% (ensemble entry) |\n\n%%layers VGG-16 as five stages: each halves resolution and (up to 512) doubles channels; the dense head holds most parameters.\nInput | 224×224×3\nStages 1-2 | 2 × conv3-64, pool; 2 × conv3-128, pool → 56×56×128\nStages 3-5 | 3 × conv3-256, 3 × conv3-512, 3 × conv3-512, each then pool → 7×7×512\n*Dense head | 25,088 → 4096 → 4096 → 1000, about 124M of 138M parameters\n%%\n\n```python\nimport torch.nn as nn\n\ndef vgg_block(c_in, c_out, n_convs):\n    layers = []\n    for i in range(n_convs):\n        layers += [nn.Conv2d(c_in if i == 0 else c_out, c_out, 3, padding=1), nn.ReLU(inplace=True)]\n    return nn.Sequential(*layers, nn.MaxPool2d(2))\n\nfeatures = nn.Sequential(vgg_block(3, 64, 2), vgg_block(64, 128, 2), vgg_block(128, 256, 3),\n                         vgg_block(256, 512, 3), vgg_block(512, 512, 3))   # -> 512×7×7\n```\n\n## What they could not do\nGoing deeper than about 20 layers in this plain style stopped helping: VGG-19 barely beat VGG-16, and training very deep VGG-style nets needed staged initialisation from shallower trained ones (He init, 01.05, and BatchNorm, 02.01, eased this). The next lesson shows the problem was optimisation, not capacity, and how residual connections fixed it. The huge dense heads were replaced by global average pooling (03.02), and the compute cost motivated the efficient designs of 03.05.\n\n! Example: where VGG-16's parameters live\n! Conv layers: 13 layers totalling about 14.7M parameters. The largest, 512→512 at 3×3, is $512 \\cdot 512 \\cdot 9 \\approx 2.36$M each, and there are five of them.\n! Dense layers: $25{,}088 \\times 4096 + 4096 \\times 4096 + 4096 \\times 1000 \\approx 102.8 + 16.8 + 4.1 = 123.6$M.\n! So about 89% of parameters sit in the head, but over 99% of the multiply-adds are in the convolutions, mostly in the high-resolution early stages. Replacing the head with global average pooling plus one 512→1000 layer removes about 123M parameters and almost no compute.\n\n> Takeaway: LeNet set the conv-pool-dense template, AlexNet proved it scales with ReLU, dropout, augmentation and GPUs, and VGG showed stacks of 3×3 convs are the efficient way to grow receptive fields; their dense heads and depth limits set up the designs that followed.",
+   "q": "Someone proposes replacing each pair of 3×3 convolutions in a VGG block with a single 5×5 convolution \"since the receptive field is the same and there's one fewer layer to run\". For 256 input and output channels at 56×56, compare parameters, compute and expressiveness, and say which you would keep.",
+   "s": "Two 3×3 layers: $2 \\times 9 \\times 256^2 = 1{,}179{,}648$ weights. One 5×5 layer: $25 \\times 256^2 = 1{,}638{,}400$ weights, about 39% more. Compute scales the same way since both run at 56×56 (3136 positions): about 3.70 billion versus 5.14 billion multiply-adds. The receptive field is 5×5 in both cases, so the larger kernel buys no extra context. Expressiveness favours the pair: it applies two ReLUs, so it can represent functions of the 5×5 patch that a single linear filter plus one ReLU cannot, and the factorisation acts as a structured constraint that tends to generalise well. The only argument for 5×5 is one fewer kernel launch and one fewer stored activation map, which rarely outweighs 39% more FLOPs. Keep the two 3×3 convolutions.",
+   "r": [
+    [
+     "Krizhevsky, Sutskever, Hinton: ImageNet Classification with Deep Convolutional Neural Networks",
+     "https://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks",
+     "Section 3 on ReLU, multi-GPU training and pooling; Section 4 on augmentation and dropout."
+    ],
+    [
+     "Simonyan & Zisserman: Very Deep Convolutional Networks (VGG)",
+     "https://arxiv.org/abs/1409.1556",
+     "Section 2.3 gives the argument for stacks of 3×3 convolutions; Table 1 lists the configurations."
+    ],
+    [
+     "Dive into Deep Learning: LeNet",
+     "https://d2l.ai/chapter_convolutional-neural-networks/lenet.html",
+     "LeNet-5 layer by layer with shapes, trained on Fashion-MNIST."
+    ],
+    [
+     "Dive into Deep Learning: AlexNet",
+     "https://d2l.ai/chapter_convolutional-modern/alexnet.html",
+     "What changed from LeNet to AlexNet and why it mattered."
+    ]
+   ],
+   "k": [
+    "LeNet",
+    "AlexNet",
+    "VGG"
+   ],
+   "x": [
+    "PyTorch"
+   ],
+   "p": [
+    "lenet-forward-pass",
+    "vgg-convolution-block",
+    "multichannel-2d-convolution"
+   ]
+  },
+  {
+   "id": "03.04",
+   "t": "Residual networks",
+   "n": [
+    "Plain networks deeper than about 20 layers trained **worse**, with higher training error, not just test error: a degradation problem in optimisation, not overfitting.",
+    "A residual block computes $y = x + F(x)$, so each block only has to learn a correction to the identity, and doing nothing is the easy default.",
+    "The identity path gives backprop a direct route: $\\partial L/\\partial x_l = \\partial L/\\partial x_L\\,(1 + \\partial(\\ldots)/\\partial x_l)$, so the gradient never has to pass through every weight layer.",
+    "Bottleneck blocks (1×1 reduce, 3×3, 1×1 expand) make 50-152 layer nets affordable; a 1×1 projection shortcut handles changes in shape."
+   ],
+   "a": "## The degradation problem\nBy 2015, VGG (03.03), He initialisation (01.05) and BatchNorm (02.01) let 20-30 layer plain networks train. Going deeper should not hurt: a 56-layer net could copy a 20-layer net and make the extra 36 layers identity maps. In practice He et al. found the 56-layer plain network had **higher training error** than the 20-layer one on CIFAR-10, and plain-34 was worse than plain-18 on ImageNet. Since training error rose, this is not overfitting. With BN, gradients weren't vanishing either. The solver simply could not find the good solutions that exist; learning an identity mapping through a stack of conv-BN-ReLU layers is surprisingly hard.\n\n## The residual block\nThe fix is to make identity the default. A residual block computes\n\n$$y = x + F(x; W)$$\n\nwhere $F$ is two or three conv layers. To act as identity the block only needs $F = 0$, which weight decay and small init make easy. Each block learns a **residual**: a correction to its input. Stacking them, the output of block $L$ is the input of block $l$ plus a sum of corrections:\n\n$$x_L = x_l + \\sum_{i=l}^{L-1} F(x_i)$$\n\nand the gradient is\n\n$$\\frac{\\partial \\mathcal{L}}{\\partial x_l} = \\frac{\\partial \\mathcal{L}}{\\partial x_L}\\left(1 + \\frac{\\partial}{\\partial x_l}\\sum_{i=l}^{L-1} F(x_i)\\right)$$\n\nThe \"1\" means the gradient at the top reaches every earlier block directly, without being multiplied by any weight matrices. It cannot vanish just because some branches have small Jacobians. This is the same reasoning as the Pre-LN Transformer (02.02), which uses exactly this structure.\n\n%%flow A basic residual block: the shortcut carries x unchanged and the branch learns a correction that is added before the final ReLU.\nx -(conv3×3, BN, ReLU)-> h -(conv3×3, BN)-> F(x) -(+ x)-> *x + F(x) -(ReLU)-> y\n%%\n\n## Block designs\n- **Basic block** (ResNet-18/34): two 3×3 convs with BN and ReLU; the ReLU comes after the addition.\n- **Bottleneck block** (ResNet-50/101/152): 1×1 conv reduces channels by 4×, a 3×3 conv works at the reduced width, a 1×1 conv expands back. The expensive 3×3 runs on a quarter of the channels.\n- **Projection shortcut**: when a block changes resolution (stride 2) or channel count, $x$ no longer matches $F(x)$, so the shortcut becomes a 1×1 conv with stride 2 and BN. Elsewhere the shortcut is a free identity.\n- **Pre-activation** (ResNet v2): BN and ReLU move to the start of the branch, $y = x + F(\\mathrm{ReLU}(\\mathrm{BN}(x)))$, so the shortcut path is a pure identity with nothing after the addition. This trains 1000-layer nets and is the form diffusion U-Nets and Transformers follow.\n\n```python\nimport torch.nn as nn\n\nclass Bottleneck(nn.Module):\n    def __init__(self, c_in, c_mid, stride=1):\n        super().__init__()\n        c_out = 4 * c_mid\n        self.f = nn.Sequential(\n            nn.Conv2d(c_in, c_mid, 1, bias=False), nn.BatchNorm2d(c_mid), nn.ReLU(inplace=True),\n            nn.Conv2d(c_mid, c_mid, 3, stride, 1, bias=False), nn.BatchNorm2d(c_mid), nn.ReLU(inplace=True),\n            nn.Conv2d(c_mid, c_out, 1, bias=False), nn.BatchNorm2d(c_out))\n        nn.init.zeros_(self.f[-1].weight)          # block starts as identity\n        self.short = nn.Identity() if stride == 1 and c_in == c_out else nn.Sequential(\n            nn.Conv2d(c_in, c_out, 1, stride, bias=False), nn.BatchNorm2d(c_out))\n        self.act = nn.ReLU(inplace=True)\n    def forward(self, x):\n        return self.act(self.f(x) + self.short(x))\n```\n\nZero-initialising the last BN scale $\\gamma$ in each branch, as above, makes every block an exact identity at step 0, so a 100-block network initially behaves like a shallow one; Goyal et al. used it for large-batch training.\n\n## Why ResNets train\nSeveral complementary explanations hold up:\n- **Gradient highway**: the identity term above.\n- **Easier targets**: learning small corrections near zero is better-conditioned than learning a full mapping.\n- **Smoother loss surfaces**: Li et al.'s visualisations show deep plain nets have chaotic, non-convex landscapes, while skip connections keep them smooth and nearly convex near the minimum.\n- **Implicit ensemble**: a stack of $n$ blocks contains $2^n$ paths of different lengths, and most gradient flows through relatively short ones, so a deep ResNet behaves partly like an ensemble of shallower networks.\n\nThe results: ResNet-152 had lower complexity than VGG-16 (11.3 versus 15.3 billion FLOPs as reported) and an ensemble won ILSVRC-2015 at 3.57% top-5 error. ResNet-50 (25.6M parameters, about 3.8 billion multiply-adds) remains the standard vision baseline, and the residual connection is now in almost every deep architecture.\n\n! Example: why bottlenecks are cheaper\n! At 256 channels, a basic block with two 3×3 convs needs $2 \\times 9 \\times 256^2 = 1{,}179{,}648$ weights.\n! A bottleneck 256 → 64 → 64 → 256 needs $256 \\cdot 64 + 9 \\cdot 64^2 + 64 \\cdot 256 = 16{,}384 + 36{,}864 + 16{,}384 = 69{,}632$ weights, 17× fewer.\n! That saving is what let ResNet-50 use three layers per block and 16 blocks while staying cheaper than VGG-16.\n\n> Takeaway: residual blocks learn corrections on top of an identity shortcut, which turns the degradation problem into a non-problem by giving gradients a direct path; use bottlenecks for depth, projection shortcuts where shapes change, and zero-init the last layer of each branch.",
+   "q": "Explain why the degradation problem cannot be overfitting, then use the residual gradient formula to argue why a 100-block ResNet still gets useful gradients at its first block even if the branch Jacobians are all small. What happens to that argument if you add a ReLU after every addition (as the original ResNet does)?",
+   "s": "Overfitting means low training error but high test error. In the degradation experiments the deeper plain net had higher training error than the shallower one, even though it could represent the shallower solution by setting extra layers to identity, so the failure is in optimisation. In a ResNet, $\\partial L/\\partial x_1 = \\partial L/\\partial x_{100}\\,(1 + \\partial(\\sum F_i)/\\partial x_1)$. The leading 1 passes the top gradient to the first block unchanged, so small branch Jacobians reduce the correction terms without shrinking the base signal; in a plain network the gradient is a product of 100 Jacobians and vanishes if each has norm below one. With a ReLU after each addition the shortcut is no longer a pure identity: each step multiplies the gradient by a 0/1 mask, so units that are off block their component of the shortcut. In practice most units are active and the path is still short, so it trains well to about 150 layers, but at around 1000 layers this degrades, which is why pre-activation ResNets move all nonlinearities into the branch and keep the shortcut clean.",
+   "r": [
+    [
+     "He et al.: Deep Residual Learning for Image Recognition",
+     "https://arxiv.org/abs/1512.03385",
+     "Figure 1 (degradation), Section 3 (residual blocks, projection shortcuts), Table 1 (ResNet-18 to 152)."
+    ],
+    [
+     "He et al.: Identity Mappings in Deep Residual Networks",
+     "https://arxiv.org/abs/1603.05027",
+     "The gradient decomposition and the pre-activation block that trains 1001-layer nets."
+    ],
+    [
+     "Li et al.: Visualizing the Loss Landscape of Neural Nets",
+     "https://arxiv.org/abs/1712.09913",
+     "Loss-surface plots with and without skip connections."
+    ],
+    [
+     "Dive into Deep Learning: Residual Networks",
+     "https://d2l.ai/chapter_convolutional-modern/resnet.html",
+     "Residual blocks and ResNet-18 in code, with the function-class argument."
+    ]
+   ],
+   "k": [
+    "ResNet",
+    "skip connections",
+    "bottleneck"
+   ],
+   "x": [
+    "PyTorch"
+   ],
+   "p": [
+    "resnet-residual-block",
+    "residual-block",
+    "apply-alphago-residual-block",
+    "time-conditioned-residual-block"
+   ]
+  },
+  {
+   "id": "03.05",
+   "t": "Efficient and attentive CNNs",
+   "n": [
+    "1×1 convolutions mix channels at each pixel; Inception uses them to cut channel counts before expensive 3×3 and 5×5 branches, often by around 10× in compute.",
+    "A depthwise-separable convolution splits a $k \\times k$ conv into a per-channel spatial filter plus a 1×1 channel mixer, reducing cost by a factor of about $1/C_{out} + 1/k^2$, roughly 8-9× for 3×3.",
+    "MobileNetV2's inverted residual expands channels, filters depthwise, then projects back with a linear (no ReLU) bottleneck, with the residual between the narrow ends.",
+    "Squeeze-and-excitation pools each channel to one number, passes the vector through a tiny gating MLP with a sigmoid, and rescales the channels: channel attention for about 10% more parameters and under 1% more compute."
+   ],
+   "a": "## From accuracy to accuracy per FLOP\nAfter ResNet (03.04), the question shifted from \"can it train?\" to \"what does each multiply-add buy?\". Phones, cameras and serving budgets care about latency and energy, so a model that matches ResNet-50 at a tenth of the cost is worth more than one that beats it by half a point. This lesson covers the three ideas that dominate efficient CNN design: cheap channel mixing with 1×1 convs (Inception), factorised convolutions (depthwise-separable, MobileNet), and channel attention (squeeze-and-excitation). Module 04 continues with Vision Transformers, which push the attention idea further.\n\n## Inception and 1×1 reductions\nGoogLeNet (Szegedy et al., 2014) won ILSVRC-2014 with an Inception module: parallel 1×1, 3×3 and 5×5 conv branches plus a 3×3 max-pool branch, concatenated along channels, so each layer can choose its own mix of receptive-field sizes. Run naively, the 5×5 branch is enormous. The trick is a **1×1 convolution** before it: a per-pixel dense layer across channels that cuts depth from, say, 192 to 16, so the 5×5 conv runs on 16 channels. GoogLeNet reached higher accuracy than VGG with about 12× fewer parameters than AlexNet.\n\n%%flow An Inception module: four parallel branches, each 1×1-reduced where needed, concatenated along channels.\n[Branch 1] Input 192ch -(1×1, 64)-> *Concat\n[Branch 2] Input 192ch -(1×1, 96)-> Reduced -(3×3, 128)-> *Concat\n[Branch 3] Input 192ch -(1×1, 16)-> Reduced -(5×5, 32)-> *Concat\n[Branch 4] Input 192ch -(3×3 max pool)-> Pooled -(1×1, 32)-> *Concat\n%%\n\n## Depthwise-separable convolutions\nA standard conv does spatial filtering and channel mixing at once: cost $k^2 C_{in} C_{out}$ per output pixel. A **depthwise-separable** conv factorises it:\n1. **Depthwise**: one $k \\times k$ filter per input channel, no mixing across channels (a grouped conv with groups $= C_{in}$). Cost $k^2 C_{in}$.\n2. **Pointwise**: a 1×1 conv mixing channels. Cost $C_{in} C_{out}$.\n\n$$\\frac{k^2 C_{in} + C_{in} C_{out}}{k^2 C_{in} C_{out}} = \\frac{1}{C_{out}} + \\frac{1}{k^2}$$\n\nFor 3×3 kernels and hundreds of channels this is about $1/9$. MobileNet (2017) built a whole network from these blocks: about 4.2M parameters and 569M multiply-adds for 70.6% ImageNet top-1, against VGG-16's 138M parameters and about 15.3 billion for 71.5%. Xception reached a similar design from the Inception side, viewing depthwise-separable conv as an Inception module taken to the extreme.\n\n**MobileNetV2's inverted residual** improves on it. ResNet bottlenecks go wide → narrow → wide; V2 goes narrow → wide → narrow: a 1×1 expands channels by about 6×, a 3×3 depthwise filters in the wide space (cheap, since depthwise cost is linear in channels), and a 1×1 projects back down with **no ReLU**, because ReLU in a low-dimensional space destroys information. The residual connects the narrow ends, keeping the memory-heavy tensors small.\n\nThe caveat: FLOPs are not latency. Depthwise convs do very little arithmetic per byte loaded, so on GPUs they are memory-bound and run far below peak throughput; a MobileNet can be slower than its FLOP count suggests. Always benchmark on the target hardware.\n\n## Squeeze-and-excitation: channel attention\nConvolutions treat every channel equally regardless of the image. Hu et al.'s SE block lets the network reweight channels per input:\n1. **Squeeze**: global average pool each of the $C$ channels to one number, giving a $C$-vector summarising the whole image.\n2. **Excite**: a two-layer MLP $C \\to C/r \\to C$ (with $r = 16$), ReLU in between, sigmoid at the end, giving a gate in $(0, 1)$ per channel.\n3. **Scale**: multiply each channel of the feature map by its gate.\n\n```python\nimport torch.nn as nn\n\nclass SE(nn.Module):\n    def __init__(self, c, r=16):\n        super().__init__()\n        self.gate = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Flatten(),\n                                  nn.Linear(c, c // r), nn.ReLU(inplace=True),\n                                  nn.Linear(c // r, c), nn.Sigmoid())\n    def forward(self, x):                       # x: (N, C, H, W)\n        return x * self.gate(x)[:, :, None, None]\n```\n\nInserted into every ResNet-50 block (on the branch, before the addition), SE adds about 2.5M parameters (10%) and under 1% compute, and the SE-based entry won ILSVRC-2017. It is a cheap form of attention: global context decides which features matter. EfficientNet (2019) combined MobileNetV2 blocks, SE and a **compound scaling** rule that grows depth, width and resolution together by fixed ratios; EfficientNet-B7 reached 84.3% top-1 while being 8.4× smaller than the previous best.\n\n| Idea | What it factorises or adds | Typical saving or cost |\n| 1×1 reduction (Inception) | cuts channels before big kernels | about 10× fewer MACs in a branch |\n| Depthwise-separable | spatial filter and channel mix separately | about 8-9× fewer MACs for 3×3 |\n| Inverted residual | expand, depthwise, linear project | small memory footprint between blocks |\n| Squeeze-and-excitation | per-image channel gates | +10% params, under 1% compute |\n\n! Example: the savings, counted\n! Inception's 5×5 branch on a 28×28×192 input, producing 32 channels. Direct: $28^2 \\times 32 \\times 25 \\times 192 \\approx 120.4$M MACs. With a 1×1 reduction to 16 channels first: $28^2 \\times 16 \\times 192 + 28^2 \\times 32 \\times 25 \\times 16 \\approx 2.4 + 10.0 = 12.4$M, about 10× less.\n! Depthwise-separable 3×3 conv with 256 in and out channels: standard $9 \\times 256^2 = 589{,}824$ weights; separable $9 \\times 256 + 256^2 = 2{,}304 + 65{,}536 = 67{,}840$, about 8.7× fewer, matching $1/256 + 1/9 \\approx 0.115$.\n\n> Takeaway: efficient CNNs separate what a standard conv does jointly, using 1×1 convs to mix channels cheaply and depthwise convs to filter space cheaply, and add channel attention like squeeze-and-excitation for a small cost; always check that FLOP savings turn into real latency on your hardware.",
+   "q": "You replace every 3×3 conv in a ResNet-50 with a depthwise-separable equivalent. FLOPs drop about 8×, but inference on a datacenter GPU gets only about 1.5× faster, and accuracy falls 3 points. Explain both effects, and say what MobileNetV2-style design changes address each.",
+   "s": "Speed: depthwise convs do $k^2$ multiply-adds per loaded input value per channel, very low arithmetic intensity, so on a GPU they are memory-bandwidth-bound and run at a small fraction of peak compute. FLOPs fall 8× but bytes moved fall much less, the 1×1 convs and memory traffic dominate, and the extra layers add kernel launches, so wall-clock improves only modestly. Accuracy: a depthwise-separable conv is a constrained, low-rank factorisation of the full conv, so at the same channel width each block has far fewer parameters and less capacity; ResNet's widths were tuned for full convs. MobileNetV2 addresses capacity by expanding channels about 6× before the depthwise conv (cheap, since depthwise cost is linear in width), and by using a linear bottleneck so the projection doesn't destroy information with ReLU. For speed, the answer is co-design: fuse depthwise and pointwise kernels, choose widths and resolutions benchmarked on the target hardware, or use plain dense convs where the GPU is compute-rich.",
+   "r": [
+    [
+     "Szegedy et al.: Going Deeper with Convolutions (GoogLeNet)",
+     "https://arxiv.org/abs/1409.4842",
+     "Section 4 on the Inception module and 1×1 dimension reductions."
+    ],
+    [
+     "Howard et al.: MobileNets",
+     "https://arxiv.org/abs/1704.04861",
+     "Depthwise-separable cost analysis (Section 3.1) and the width and resolution multipliers."
+    ],
+    [
+     "Hu et al.: Squeeze-and-Excitation Networks",
+     "https://arxiv.org/abs/1709.01507",
+     "The SE block, where to insert it, and its parameter and compute overhead."
+    ],
+    [
+     "Tan & Le: EfficientNet",
+     "https://arxiv.org/abs/1905.11946",
+     "Compound scaling of depth, width and resolution built on MBConv blocks with SE."
+    ]
+   ],
+   "k": [
+    "depthwise separable",
+    "Inception",
+    "squeeze-and-excitation"
+   ],
+   "x": [
+    "PyTorch"
+   ],
+   "p": [
+    "depthwise-separable-convolution",
+    "inception-module",
+    "squeeze-and-excitation-block",
+    "conv2d"
+   ]
+  }
+ ]
+}

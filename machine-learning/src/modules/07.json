@@ -1,0 +1,259 @@
+{
+ "n": "07",
+ "name": "Feature engineering",
+ "lessons": [
+  {
+   "id": "07.01",
+   "t": "Scaling and transforming features",
+   "n": [
+    "Distance-based models, regularised linear models, PCA and anything trained by gradient descent are sensitive to feature scale; tree models are not, because a split only depends on order.",
+    "**Standardisation** $(x - \\mu)/\\sigma$ is the default; **min-max** maps to $[0, 1]$ but one outlier squashes everything else; **robust** scaling uses median and IQR. Fit the statistics on training data only.",
+    "Skewed positive features usually behave better after $\\log(1+x)$; **Box-Cox** picks a power by maximum likelihood (positive data only) and **Yeo-Johnson** extends it to zero and negatives. A **quantile** transform forces any shape to uniform or normal.",
+    "**Binning** turns a number into categories. It buys non-linearity and robustness for linear models at the price of information and jumps at bin edges; splines are the smoother alternative.",
+    "Transforming the *target* changes what the model predicts: a model fitted on $\\log y$ predicts the median of $y$ after exponentiating, not the mean."
+   ],
+   "a": "## Where this module fits\nModule 06 showed how to measure a model. This module is about the inputs: how to turn raw columns into features a model can use, without leaking the evaluation data along the way. The lessons cover numeric transforms, categorical encodings, missing values, feature selection, and the pipeline that ties them together so the same steps run in CV and in production. The ML Toolkit course covers the pandas and SQL mechanics; here the focus is on what each transform does to a model.\n\n## Who cares about scale\nA feature measured in metres and the same feature in millimetres are identical to a decision tree, which only asks \"is $x_j < t$?\". They are very different to:\n- **Distance-based models** (k-NN, k-means, RBF kernels): a feature with range 0 to 100,000 swamps one with range 0 to 1 in the Euclidean distance.\n- **Penalised linear models** (ridge, lasso, logistic with $C$): the penalty $\\lambda \\sum w_j^2$ treats all weights alike, so a feature in small units needs a large weight and is penalised more.\n- **Gradient descent** and neural networks: badly scaled inputs give an ill-conditioned loss surface, so one learning rate is too big for some directions and too small for others.\n- **PCA**: principal components chase variance, and variance depends on units.\n\n%%layers How much each model family cares about feature scale.\n*k-NN, k-means, SVM with RBF, PCA | scale is part of the model: always scale\nRidge, lasso, logistic regression | the penalty depends on units: scale\nNeural networks, SGD-trained models | conditioning and initialisation: scale\nTrees, random forests, gradient boosting | only order matters: scaling is unnecessary\n%%\n\n## The three scalers\n| Scaler | Formula | Good for | Weakness\n| Standard | $(x-\\mu)/\\sigma$ | the default for most models | outliers inflate $\\sigma$\n| Min-max | $(x-\\min)/(\\max-\\min)$ | bounded inputs, pixel values | one outlier compresses the rest\n| Robust | $(x-\\text{median})/\\text{IQR}$ | heavy-tailed or dirty data | does not bound the range\n\nFor sparse data (bag-of-words counts) use max-abs scaling, which divides without centring, so zeros stay zero and the matrix stays sparse. Whatever the scaler, its statistics are learned state: fit them on the training fold and apply them unchanged to validation, test and production data. If production sees a value outside the training range, min-max scaling produces numbers outside $[0, 1]$; that is fine for most models, but a drift alarm worth having (lesson 09.03).\n\n## Fixing skew\nMany real features (income, counts, durations, prices) are positive with a long right tail. Squashing that tail helps linear models (relationships become closer to linear), distance models (one extreme value stops dominating) and the stability of gradient training.\n- $\\log(1 + x)$ is the workhorse for non-negative counts and amounts.\n- **Box-Cox**: $x^{(\\lambda)} = (x^\\lambda - 1)/\\lambda$ for $\\lambda \\ne 0$ and $\\log x$ for $\\lambda = 0$, with $\\lambda$ chosen by maximum likelihood to make the result as Gaussian as possible. It requires $x > 0$.\n- **Yeo-Johnson** applies a similar family to $x + 1$ for non-negative values and a mirrored one for negatives, so it accepts any real input. scikit-learn's `PowerTransformer` uses it by default and standardises afterwards.\n- **Quantile transform** maps each value to its empirical CDF, then optionally through the inverse normal CDF. Any distribution becomes uniform or Gaussian, and outliers are tamed completely. It is rank-based, so it discards how far apart values were, and with few training rows the mapping is coarse.\n- **Clipping or winsorising** at, say, the 1st and 99th percentiles caps extreme values without changing the bulk.\n\n! Example: income in a k-NN model\n! Income in the training set: median 52,000, mean 71,000, standard deviation about 90,000, maximum 4.2 million. After standardisation the richest customer sits at $z \\approx 46$, so in Euclidean distance this one feature outweighs the other 20 standardised features combined, and the customer has no meaningful neighbours.\n! After $\\log(1+x)$ the values run from about 9 to 15.3, with the median at 10.9 and a standard deviation near 0.8, so the maximum is about 5.4 standard deviations out. Standardising the logged feature gives a well-behaved column, and nearest-neighbour validation accuracy improves because distances now reflect all features.\n\n## Binning and its alternatives\nBinning (discretisation) replaces a number with the bin it falls into, usually one-hot encoded afterwards. **Equal-width** bins are easy to explain and empty when data is skewed; **quantile** bins hold equal counts. Reasons to bin:\n- It lets a linear model fit a non-linear, even non-monotone, effect (risk by age band).\n- It is robust to outliers and to small measurement errors.\n- Regulated scorecards (credit) often require it for interpretability.\n\nThe costs: information inside a bin is thrown away, predictions jump at bin edges, and the edges are another choice you can overfit. **Splines** (`SplineTransformer`) give a linear model a smooth non-linear effect with a handful of basis columns, and trees learn their own bins. Bin edges, like scaler statistics, must come from training data. Periodic features (hour of day, day of week, wind direction) need a different treatment altogether: encode $\\theta$ as $(\\sin\\theta, \\cos\\theta)$ so that 23:00 and 01:00 are close.\n\n## Transforming the target\nFor a skewed target such as price or duration, fitting on $\\log y$ often gives better relative errors. But $\\exp(\\widehat{\\log y})$ estimates the **median** of $y$, not the mean. If the residuals on the log scale are roughly normal with variance $\\sigma^2$, the mean is $\\exp(\\widehat{\\log y} + \\sigma^2/2)$; with $\\sigma = 0.5$ that is a 13% correction. Forgetting it biases totals (revenue forecasts) low. scikit-learn's `TransformedTargetRegressor` applies the forward and inverse transform for you, but not the bias correction.\n\n```python\nimport numpy as np\nfrom sklearn.compose import ColumnTransformer\nfrom sklearn.preprocessing import StandardScaler, PowerTransformer, FunctionTransformer, KBinsDiscretizer\npre = ColumnTransformer([\n    (\"log\", FunctionTransformer(np.log1p, feature_names_out=\"one-to-one\"), [\"income\", \"n_orders\"]),\n    (\"yj\", PowerTransformer(), [\"balance_change\"]),                      # can be negative\n    (\"bin\", KBinsDiscretizer(n_bins=8, strategy=\"quantile\", encode=\"onehot\"), [\"age\"]),\n], remainder=StandardScaler())\n```\n\n> Takeaway: scale for models that measure distance, penalise weights or use gradients; squash skewed features with log, Box-Cox or Yeo-Johnson; bin only when you need what binning buys; and learn every statistic on the training fold.",
+   "q": "You train a ridge regression and a gradient-boosted tree on the same raw features, one of which is account balance in cents (range 0 to 10^9, heavy right tail). For each model, predict what happens if you (a) leave it raw, (b) standardise it, (c) apply log1p then standardise. Explain each prediction.",
+   "s": "For the **tree**, all three give essentially the same model: splits depend only on the ordering of values, and standardisation and log1p are monotone, so the same partitions are available. Only histogram-based boosting binning can shift slightly. For **ridge**, (a) raw: the coefficient on balance needs to be tiny to keep predictions sensible, so the L2 penalty barely affects it while other, standardised features get penalised heavily; the effective regularisation is inconsistent, and the extreme tail values act as high-leverage points that dominate the fit. (b) Standardising fixes the penalty imbalance but not the tail: a few accounts sit tens of standard deviations out and still pull the line. (c) log1p then standardise compresses the tail, makes the relationship closer to linear in relative terms (doubling balance has a constant effect), and removes most of the leverage, so it is usually the best choice for ridge.",
+   "r": [
+    [
+     "scikit-learn: Preprocessing data",
+     "https://scikit-learn.org/stable/modules/preprocessing.html",
+     "Scalers, power and quantile transforms, discretisation and splines, with the fit/transform API."
+    ],
+    [
+     "scikit-learn: Compare the effect of different scalers on data with outliers",
+     "https://scikit-learn.org/stable/auto_examples/preprocessing/plot_all_scaling.html",
+     "Side-by-side plots of every scaler and transformer on a skewed, outlier-heavy dataset."
+    ],
+    [
+     "Feature Engineering and Selection (Kuhn and Johnson)",
+     "https://bookdown.org/max/FES/",
+     "Free online book; chapter 6 on engineering numeric predictors covers Box-Cox, Yeo-Johnson, splines and binning trade-offs."
+    ],
+    [
+     "scikit-learn: PowerTransformer",
+     "https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.PowerTransformer.html",
+     "Box-Cox and Yeo-Johnson definitions and how lambda is estimated."
+    ]
+   ],
+   "k": [
+    "feature scaling",
+    "power transforms",
+    "binning"
+   ],
+   "x": [
+    "scikit-learn",
+    "NumPy"
+   ],
+   "p": [
+    "feature-scaling",
+    "normalize-columns",
+    "winsorize",
+    "column-scaling",
+    "angle-features"
+   ]
+  },
+  {
+   "id": "07.02",
+   "t": "Encoding categorical variables",
+   "n": [
+    "**One-hot** encoding gives each category its own column; it is exact and safe for low-cardinality features, but needs a policy for rare and unseen categories.",
+    "**Ordinal** (integer) encoding is right for truly ordered categories and acceptable for trees, but it imposes a fake order and spacing on linear and distance-based models.",
+    "**Target encoding** replaces a category with a smoothed mean of the target, $\\frac{n_c \\bar y_c + m \\bar y}{n_c + m}$. Computed in-sample it leaks the label, so it must be **cross-fitted**: each training row is encoded by a model that never saw it.",
+    "For very high cardinality, **feature hashing** bounds the dimension at the cost of collisions, and **learned embeddings** let a neural network place similar categories close together.",
+    "Gradient-boosting libraries can split on categories natively; that is often the simplest strong option for tabular models."
+   ],
+   "a": "## Nominal, ordinal and high-cardinality\nA categorical feature takes values from a finite set: country, product type, browser. Before encoding, ask two questions. Is there a natural **order** (education level, size S/M/L, star rating)? And how many **levels** are there: a handful (payment method), hundreds (country), or hundreds of thousands (user id, zip code, merchant)? The answers pick the encoding.\n\n%%flow Choosing an encoding: cardinality and model type decide most cases.\nCategorical feature -(ordered?)-> Ordinal codes -(else, few levels)-> One-hot -(many levels, tree model)-> Native categorical splits -(many levels, any model)-> *Cross-fitted target encoding or embeddings\n%%\n\n## One-hot encoding\nOne-hot creates one binary column per level. For a linear model this is exact: each level gets its own coefficient, with no assumed order. Practical details:\n- **Collinearity**: the one-hot columns of a feature sum to 1, the same as the intercept. Unregularised linear regression then has no unique solution, so drop one level (`drop=\"first\"`). With regularisation, keep all levels; the penalty resolves the redundancy and no level becomes the hidden reference.\n- **Rare levels**: a level seen 3 times gets a noisy coefficient. Group levels below a frequency into an \"infrequent\" bucket (`min_frequency`).\n- **Unseen levels** at serving time must not crash the service. Map them to all zeros or to the infrequent bucket (`handle_unknown=\"infrequent_if_exist\"`), and monitor how often it happens.\n- **Width**: 30,000 zip codes become 30,000 sparse columns. Linear models handle sparse input well; dense tree learners and k-NN do not.\n\n## Ordinal encoding\nMapping levels to integers is right for genuinely ordered categories, where the model can exploit the order. For nominal categories it invents structure: coding red, green, blue as 0, 1, 2 tells a linear model that green is halfway between red and blue. Trees are less affected, since they can isolate any code with two splits, but they need more splits to do it and the arbitrary order influences which groupings are reachable.\n\n## Target encoding and its leakage\nTarget encoding replaces each level $c$ with a statistic of the target for that level, typically the mean $\\bar y_c$ (the fraction of positives, for classification). It compresses any number of levels into one dense, informative column. Two problems must be handled.\n\n**Noise on small levels.** A level seen twice, both times positive, would get the value 1.0. Shrink towards the global mean $\\bar y$:\n\n$$\\text{enc}(c) = \\frac{n_c\\,\\bar y_c + m\\,\\bar y}{n_c + m}$$\n\nwhere $m$ acts as a prior count. Levels with $n_c \\gg m$ keep their own mean; rare levels stay near the global rate.\n\n**Label leakage.** If you compute $\\bar y_c$ on the training set and then train on the encoded column, each row's own label is part of its feature. For a level with 3 rows, a third of the encoding *is* the row's label. The model learns to trust the column, training scores soar, and validation collapses. The fix is **cross-fitting**: split the training data into $k$ folds and encode each fold with statistics computed from the other folds only. Validation, test and production rows are encoded with statistics from the full training set.\n\n%%flow Cross-fitted target encoding: no training row is encoded with its own label.\nTraining data -(split into k folds)-> Fold j -(encode using the other k-1 folds)-> *Out-of-fold encodings -(train)-> Model\nFull training data -(fit statistics once)-> Encoder for validation, test, serving\n%%\n\nscikit-learn's `TargetEncoder` does this automatically: `fit_transform` cross-fits, while `fit` followed by `transform` does not, so calling them separately on training data reintroduces the leak. CatBoost uses a related idea, **ordered target statistics**, where each row is encoded using only the rows before it in a random permutation. If the data is time-ordered, compute encodings from the past only, or the encoding leaks the future as well as the label.\n\n```python\nfrom sklearn.preprocessing import TargetEncoder, OneHotEncoder\nte = TargetEncoder(smooth=\"auto\", cv=5, random_state=0)\nX_tr_enc = te.fit_transform(X_tr[[\"merchant_id\"]], y_tr)   # cross-fitted: safe to train on\nX_va_enc = te.transform(X_va[[\"merchant_id\"]])             # full-training-set statistics\nohe = OneHotEncoder(handle_unknown=\"infrequent_if_exist\", min_frequency=20)\n```\n\n! Example: a merchant id with 50,000 levels\n! A fraud model has merchant_id with 50,000 levels, most with fewer than 5 transactions, and a 2% fraud rate. In-sample target encoding: training AUC 0.99, validation AUC 0.63. The model learned that \"encoding near 1\" means fraud, which is true only because the row's own label set it.\n! With 5-fold cross-fitting and $m = 20$: a merchant seen 3 times, all fraudulent, encodes as $(3 \\times 1 + 20 \\times 0.02)/23 = 0.148$ rather than 1.0. Training AUC drops to 0.81 and validation AUC rises to 0.79. The gap between the two now reflects ordinary overfitting, not leakage.\n\n## Hashing and embeddings\n**Feature hashing** maps each level to one of $D$ columns with a hash function, $j = h(c) \\bmod D$, often with a second hash for the sign. The dimension is fixed in advance, there is no vocabulary to store or update, and unseen levels need no special case. The price is collisions: with $D = 2^{18}$ (262,144 columns) and 50,000 levels, about 17% of levels, nearly 9,000, share a column with at least one other level. Linear models at web scale use this routinely.\n\n**Embeddings** give each level a learned dense vector of, say, 16 to 64 dimensions, trained with the rest of a neural network. Similar levels end up close, which lets rare levels borrow strength from similar common ones. They need enough data per level to learn anything and a plan for unseen ids (a shared \"unknown\" vector or hashing into buckets). Lesson 08.04 uses exactly this for users and items.\n\n## Native categorical support\nLightGBM, CatBoost, XGBoost and scikit-learn's `HistGradientBoosting` can split a categorical feature into two groups of levels directly, for example by sorting the levels by their gradient statistics at each node and choosing the best cut in that order. This avoids one-hot width and the leakage questions of target encoding, and is often the best first try for tabular data with moderate cardinality. Very high-cardinality features can still overfit through these splits; regularisation parameters such as a minimum count per category matter.\n\n> Takeaway: one-hot for few levels, ordinal codes only for real orders, native splits for tree models, and target encoding only when it is smoothed and cross-fitted, because an in-sample target encoding is the label in disguise.",
+   "q": "A teammate target-encodes a high-cardinality product_id by computing the mean conversion rate per product on the whole training set, then runs 5-fold cross-validation of a gradient-boosted model on the encoded data and reports a CV AUC of 0.94. Production AUC is 0.71. Explain exactly how the leak arises, why CV did not catch it, and give two correct alternatives.",
+   "s": "Each product's encoded value includes the labels of all its training rows, so a row's own conversion label is part of its feature; for rare products that contribution is large (a product with 2 rows has half its encoding from each row). The model learns to map high encodings to conversion. CV did not catch it because the encoding was computed **before** splitting: validation rows were encoded with statistics that include their own labels too, so they leak in exactly the same way as training rows. In production, new rows' labels are unknown when encoded, so the shortcut disappears and AUC drops. Correct options: (1) put the target encoder inside the CV pipeline and cross-fit it, e.g. scikit-learn's TargetEncoder via fit_transform, so each training row is encoded out-of-fold and each validation fold is encoded only from training folds, with smoothing; or (2) use the boosting library's native categorical handling or a hashed or embedded representation that never touches the target.",
+   "r": [
+    [
+     "scikit-learn: Encoding categorical features",
+     "https://scikit-learn.org/stable/modules/preprocessing.html",
+     "OneHotEncoder (infrequent and unknown categories), OrdinalEncoder and TargetEncoder, including the cross-fitting note."
+    ],
+    [
+     "scikit-learn: Importance of cross fitting in target encoding",
+     "https://scikit-learn.org/stable/auto_examples/preprocessing/plot_target_encoder_cross_val.html",
+     "Runnable demonstration of the leak and how cross-fitting removes it."
+    ],
+    [
+     "CatBoost: unbiased boosting with categorical features (Prokhorenkova et al.)",
+     "https://arxiv.org/abs/1706.09516",
+     "Target leakage and prediction shift explained, and ordered target statistics as the fix."
+    ],
+    [
+     "Feature hashing for large scale multitask learning (Weinberger et al.)",
+     "https://arxiv.org/abs/0902.2206",
+     "The hashing trick, signed hashing, and collision analysis."
+    ]
+   ],
+   "k": [
+    "categorical encoding",
+    "target encoding",
+    "data leakage"
+   ],
+   "x": [
+    "scikit-learn"
+   ],
+   "p": [
+    "categorical-encoding",
+    "stacking-ensemble",
+    "k-fold-cross-validation"
+   ]
+  },
+  {
+   "id": "07.03",
+   "t": "Missing data",
+   "n": [
+    "Why a value is missing matters more than how many: **MCAR** (unrelated to anything), **MAR** (explained by observed columns) and **MNAR** (depends on the missing value itself) call for different handling.",
+    "Dropping rows is unbiased only under MCAR and wastes data; in prediction it also fails at serving time, when you must score rows with gaps.",
+    "Mean or median imputation is simple but shrinks variance and weakens correlations. Adding a **missingness indicator** lets the model use the fact that a value was missing, which is often predictive.",
+    "Model-based imputers (k-NN, iterative/MICE) use other columns; gradient-boosted trees can handle NaN natively by learning which branch missing values take.",
+    "An imputer is learned state like a scaler: fit it on training data, and never fill gaps with information from the future or from validation rows."
+   ],
+   "a": "## Missingness is information\nA missing value is a fact about the data-collection process, and that process often correlates with the label. A lab test is missing because the doctor did not order it, usually because the patient looked healthy. An income field is blank because the applicant chose not to share it. A sensor reading is missing because the device was offline. Before choosing an imputation, find out *why* values are missing; ML Toolkit's pandas lessons cover the mechanics of finding and filling them.\n\nLittle and Rubin's classification gives the vocabulary:\n- **MCAR** (missing completely at random): missingness is unrelated to any value, observed or not. A random subset of forms was lost. Rare in practice.\n- **MAR** (missing at random): missingness depends only on observed columns. Older customers skip the app-usage survey, and age is recorded.\n- **MNAR** (missing not at random): missingness depends on the unobserved value itself. High earners are more likely to leave income blank.\n\n%%layers The three mechanisms, from easiest to hardest.\nMCAR | deletion is unbiased, just wasteful; any simple imputation is fine\nMAR | impute from the observed columns that explain the gaps\n*MNAR | the gap carries signal: keep an indicator, model it explicitly\n%%\n\nFor inference (estimating a coefficient or a mean), the mechanism decides whether results are biased, and statisticians use multiple imputation to carry the uncertainty through. For prediction, the goal is simpler: make the model accurate on future rows that will have the same kind of gaps. That shifts the advice towards keeping the missingness pattern visible to the model.\n\n## Deletion\n**Listwise deletion** (drop any row with a gap) is unbiased under MCAR, but with 20 columns each 5% missing independently, only $0.95^{20} \\approx 36\\%$ of rows survive. Worse for production: you cannot refuse to score a customer because one field is empty, so a model trained only on complete rows will meet inputs it never saw. Dropping a **column** that is mostly missing and carries no signal is often fine; check its indicator's predictive value first.\n\n## Simple imputation and indicators\n- **Mean / median** for numeric columns (median is robust to skew), **most frequent** or an explicit \"missing\" category for categoricals, a **constant** where it has meaning (0 purchases when there is no purchase record).\n- Imputing a single value shrinks the column's variance and pulls its correlation with other features towards zero; with 30% missing, a third of the rows sit at one point.\n- A **missingness indicator** (a 0/1 column \"was missing\") restores the information that imputation hides. Under MNAR it is often the most predictive part of the feature. scikit-learn's `SimpleImputer(add_indicator=True)` adds one per column that had gaps in training.\n\n```python\nfrom sklearn.impute import SimpleImputer, KNNImputer\nfrom sklearn.experimental import enable_iterative_imputer  # noqa: F401\nfrom sklearn.impute import IterativeImputer\nsimple = SimpleImputer(strategy=\"median\", add_indicator=True)\nknn = KNNImputer(n_neighbors=5)                        # scale features first: k-NN uses distances\nmice = IterativeImputer(max_iter=10, random_state=0)   # regresses each column on the others, round-robin\n```\n\n## Model-based imputation\n**k-NN imputation** fills a gap with the average of that column among the $k$ most similar rows (by the observed columns). **Iterative imputation** (MICE-style) models each column with gaps as a regression on the others and cycles until the fills stabilise. Both exploit correlations between features, which helps under MAR. They cost more, they are more learned state to fit and ship, and they do not fix MNAR: if the missing values are systematically different, no amount of modelling from the observed columns recovers that.\n\n## Native handling in trees\nGradient-boosted tree libraries (XGBoost, LightGBM, scikit-learn's `HistGradientBoosting`) accept NaN directly. At each split they try sending missing values left and then right, and keep whichever reduces the loss more, so the model learns a \"default direction\" per split. That is an implicit indicator, learned where it matters, and is usually as good as or better than imputing. If missing values appear only at serving time for a feature that never had gaps in training, the default direction was never learned (scikit-learn sends such values to the child with more training samples), so monitor missingness rates (lesson 09.03).\n\n## Traps\n1. **Sentinel values**: -999, 0, \"N/A\", \"unknown\" or empty strings that mean missing must be converted to real missing values first, or the model learns a fake spike at -999 and your imputer never fires.\n2. **Leakage through the imputer**: means computed on all data, or on validation rows, are leakage just as with scalers. Fit the imputer inside the training fold.\n3. **Time series**: forward-fill within each entity (station, user) from past values, with a limit on how stale a value may be. Backward fill and interpolation across the gap use future values that would not exist at prediction time.\n4. **Training-serving mismatch**: the notebook filled with the median, the serving code fills with 0. Ship the fitted imputer with the model (lesson 07.05).\n\n! Example: a lab test missing for 40% of patients\n! Predicting 30-day readmission, a lab value is missing for 40% of patients, mostly those the doctor considered low risk. Readmission is 6% among patients without the test and 15% among those with it.\n! Mean imputation: validation AUC 0.74; the imputed patients sit at the average lab value, which looks moderately risky, the opposite of the truth. Median plus missingness indicator: AUC 0.79, and the indicator alone is one of the top three features. Native NaN handling in a boosted model: AUC 0.80. The gap was MNAR (the decision to test depended on how sick the patient looked), so the fact of missingness was signal worth keeping.\n\n> Takeaway: ask why values are missing, keep a missingness indicator (or use native NaN handling) when the gap may carry signal, fit imputers on training data only, and fill time series only from the past.",
+   "q": "An insurance model uses \"years since last claim\", which is blank for customers who have never claimed (about 55% of rows). The current pipeline fills blanks with the column mean, about 4.2 years. Classify the missingness, explain what the mean fill does to the model, and propose a better treatment for (a) a logistic regression and (b) a gradient-boosted tree.",
+   "s": "The blank is not really missing: it is structurally determined by \"never claimed\", a strongly MNAR, informative state, and those customers are likely the lowest risk. Mean filling puts 55% of customers at 4.2 years, mixing them with people who claimed about four years ago, so the model can no longer distinguish \"never claimed\" from \"claimed a while ago\"; it shrinks the feature's spread and blurs its relationship with risk. (a) For logistic regression, add an explicit indicator never_claimed, and fill the numeric column with a constant (0 or a capped large value) after deciding how the indicator and the number should interact; possibly bin years-since-claim and give \"never\" its own bin. (b) For a boosted tree, leave the blanks as NaN so the tree learns a default direction for them, or encode \"never\" as a large sentinel such as 99, which a tree can isolate with one split; an indicator is optional. In both cases, fit any imputation on training data only.",
+   "r": [
+    [
+     "scikit-learn: Imputation of missing values",
+     "https://scikit-learn.org/stable/modules/impute.html",
+     "Simple, k-NN and iterative imputers, missing indicators, and NaN support in estimators."
+    ],
+    [
+     "Flexible Imputation of Missing Data, 2nd ed. (van Buuren)",
+     "https://stefvanbuuren.name/fimd/",
+     "Free online book: chapter 1 on MCAR/MAR/MNAR and why ad hoc methods fail, chapter 2 on multiple imputation."
+    ],
+    [
+     "scikit-learn: Imputing missing values before building an estimator",
+     "https://scikit-learn.org/stable/auto_examples/impute/plot_missing_values.html",
+     "Compares imputation strategies and indicators on real data."
+    ],
+    [
+     "pandas: Working with missing data",
+     "https://pandas.pydata.org/docs/user_guide/missing_data.html",
+     "NaN versus NA, sentinel replacement, and fill methods with limits."
+    ]
+   ],
+   "k": [
+    "missing data",
+    "imputation"
+   ],
+   "x": [
+    "scikit-learn",
+    "pandas"
+   ],
+   "p": [
+    "missing-value-imputation",
+    "handle-missing-values",
+    "replace-values",
+    "null-handling",
+    "boolean-masking"
+   ]
+  },
+  {
+   "id": "07.04",
+   "t": "Feature selection",
+   "n": [
+    "Selection is worth doing for cost, latency, robustness and interpretability as much as for accuracy; a well-regularised model often loses little from extra weak features.",
+    "**Filter** methods score each feature alone (correlation, mutual information, F-test, chi-squared): fast, but blind to interactions and redundancy.",
+    "**Wrapper** methods (forward selection, recursive feature elimination) search subsets by retraining the model; they are expensive and can overfit the validation data.",
+    "**Embedded** methods select during training: L1 penalties drive weights to zero, trees rank features by split gain. Correlated features share or steal importance, so cluster them before pruning.",
+    "Selection is part of training. Choosing features on the full dataset and then cross-validating gives wildly optimistic scores; selection must be repeated inside each fold."
+   ],
+   "a": "## Why select at all\nRemoving features can improve accuracy when many are pure noise relative to the number of rows, but that is not the only, or even the main, reason. Each feature in production is a dependency: a pipeline to compute it, data to keep fresh, a column that can break, drift or arrive late. Fewer features mean cheaper serving, fewer failure modes, faster training and a model that is easier to explain. Strongly regularised models (ridge, boosted trees with sensible settings) are quite tolerant of weak features, so measure whether selection helps before adding it to the pipeline.\n\nThe three families differ in how much they involve the model.\n\n%%layers Three families of feature selection, from cheapest to most model-aware.\nFilter | score each feature alone against the target; model-free, fast\nWrapper | search subsets by retraining the model; slow, captures interactions\n*Embedded | the model selects while training: L1 weights, tree importances\n%%\n\n## Filter methods\nA filter ranks features with a univariate statistic and keeps the top $k$ or those above a threshold.\n- **Variance threshold**: drop constant and near-constant columns. Almost always worth doing.\n- **Correlation** with a numeric target (Pearson for linear relationships, Spearman for monotone ones).\n- **ANOVA F-test**: for a numeric feature and a class label, compares between-class to within-class variance.\n- **Chi-squared**: for non-negative count features against a class label.\n- **Mutual information**: captures any dependence, linear or not, at the cost of a noisier estimate.\n\nFilters are cheap and model-agnostic, which makes them a good first pass on thousands of columns. Their blind spots: a feature that matters only in combination with another (the XOR pattern, or price that matters only relative to income) scores zero alone, and ten nearly identical copies of one useful feature all score high, so the top $k$ can be all redundant.\n\n## Wrapper methods\nWrappers treat the subset as a hyperparameter. **Forward selection** starts empty and adds the feature that most improves the CV score; **backward elimination** starts full and removes the least useful. **Recursive feature elimination** (RFE) trains the model, drops the features with the smallest coefficients or importances, and repeats. They account for interactions and redundancy because the model is retrained, but they need on the order of $p^2$ fits for sequential search over $p$ features, and searching over many subsets overfits the validation folds the same way a large hyperparameter search does (06.05).\n\n## Embedded methods\n- **L1 regularisation** (lasso, L1 logistic regression) sets many coefficients exactly to zero; the strength $\\lambda$ controls how many survive. With groups of correlated features, lasso tends to pick one arbitrarily and drop the others; elastic net keeps groups together. Lesson 02.02 covers the geometry.\n- **Tree importances**: impurity-based importance is free but biased towards high-cardinality and continuous features. **Permutation importance** on validation data (lesson 04.06) measures how much the score drops when a feature is shuffled, which is more faithful.\n- **Correlated features** confuse both: permuting one of two near-duplicates hurts little because the model reads the other, so both look unimportant, and dropping both would hurt a lot. Cluster features by correlation (for example, hierarchical clustering on Spearman correlation), keep one per cluster, then evaluate importance.\n\n```python\nfrom sklearn.feature_selection import VarianceThreshold, SelectKBest, mutual_info_classif, SelectFromModel\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.preprocessing import StandardScaler\nfrom sklearn.pipeline import make_pipeline\npipe = make_pipeline(VarianceThreshold(1e-6), StandardScaler(),\n                     SelectFromModel(LogisticRegression(penalty=\"l1\", C=0.1, solver=\"liblinear\")),\n                     LogisticRegression(max_iter=1000))\n# Selection happens inside fit, so cross_val_score(pipe, X, y) repeats it in every fold.\n```\n\n## Selection bias: the classic mistake\nSelecting features using all rows and *then* cross-validating the model on those features leaks the labels of the validation folds into the choice of features. With many candidate features and few rows the effect is dramatic. *The Elements of Statistical Learning* (section 7.10.2, \"The wrong and right way to do cross-validation\") gives the canonical demonstration.\n\n! Example: perfect accuracy on pure noise\n! The setting from ESL: 50 samples, two balanced classes, 5,000 features of pure noise, so no model can beat 50% error on new data. Wrong way: pick the 100 features most correlated with the label using all 50 rows, then run 5-fold CV of a 1-nearest-neighbour classifier on those 100. Among 5,000 noise columns, plenty correlate with these particular labels by chance, and CV reports an error of about 3%.\n! Right way: inside each fold, select the top 100 using only the 40 training rows, then score the 10 held-out rows. CV error rises to about 50%, the truth. The only difference is whether the validation labels took part in selection.\n\nThe rule generalises: any step that looks at labels (selection, target encoding, resampling, tuning) belongs inside the training fold. Putting the selector in a pipeline, as in the code above, makes that automatic.\n\n## A practical recipe\n1. Remove constant, duplicate and leaky columns (identifiers, post-outcome fields, anything with suspiciously high single-feature AUC).\n2. Cluster highly correlated features and keep a representative of each cluster.\n3. Fit a strong embedded model and compute permutation importance on validation data, ideally with repeats and across folds to see how stable the ranking is.\n4. Drop features that are consistently near zero and confirm with CV that the score does not fall by more than its noise. Weigh what is left against the cost of computing each feature in production.\n\n> Takeaway: select features for robustness and cost as much as accuracy, prefer embedded methods with permutation checks, handle correlated groups explicitly, and always run selection inside the training folds.",
+   "q": "A genomics team has 120 patients and 20,000 gene-expression features. They pick the 50 genes with the largest t-statistics between cases and controls using all 120 patients, train an SVM on those 50 genes, and report 10-fold CV accuracy of 94%. Explain why the estimate is unreliable, what an honest protocol looks like, and what else you would report about the selected genes.",
+   "s": "The 50 genes were chosen using the labels of all 120 patients, including those later used as validation folds. With 20,000 candidates and 120 samples, many genes separate these particular labels by chance, so the selection step has already fitted the validation labels; CV then only evaluates the SVM on a feature set tailored to the data it is scored on, and 94% can arise even from pure noise. Honest protocol: make selection part of the model. Inside each of the 10 folds, compute t-statistics on the training 108 patients only, select 50 genes, train the SVM, score the held-out 12. If the number of genes or the SVM's C is also tuned, wrap that in nested CV. Report the mean and spread of fold accuracies, and report the stability of the selected genes: how often each gene is chosen across folds (or bootstrap resamples). An unstable list means the specific genes should not be over-interpreted even if accuracy holds up.",
+   "r": [
+    [
+     "An introduction to variable and feature selection (Guyon and Elisseeff, JMLR 2003)",
+     "https://www.jmlr.org/papers/v3/guyon03a.html",
+     "The standard survey of filter, wrapper and embedded methods, with a practical checklist."
+    ],
+    [
+     "scikit-learn: Feature selection",
+     "https://scikit-learn.org/stable/modules/feature_selection.html",
+     "Variance threshold, univariate selection, RFE, SelectFromModel and sequential selection."
+    ],
+    [
+     "The Elements of Statistical Learning (Hastie, Tibshirani, Friedman)",
+     "https://hastie.su.domains/ElemStatLearn/",
+     "Free PDF; section 7.10.2 is the wrong-and-right-way-to-cross-validate demonstration."
+    ],
+    [
+     "scikit-learn: Permutation importance with multicollinear features",
+     "https://scikit-learn.org/stable/auto_examples/inspection/plot_permutation_importance_multicollinear.html",
+     "Why correlated features look unimportant and how clustering them fixes it."
+    ]
+   ],
+   "k": [
+    "feature selection",
+    "selection bias"
+   ],
+   "x": [
+    "scikit-learn"
+   ],
+   "p": [
+    "permutation-feature-importance",
+    "anova-f-statistic",
+    "pearson-correlation-matrix",
+    "lasso-regression"
+   ]
+  },
+  {
+   "id": "07.05",
+   "t": "Pipelines: fit/transform discipline end to end",
+   "n": [
+    "Every preprocessing step with learned state follows the same contract: `fit` learns from training data only, `transform` applies the frozen state anywhere. A **pipeline** chains these steps with the model into one estimator.",
+    "Because the pipeline is one object, cross-validation and hyperparameter search refit *every* step inside each fold, which removes the commonest leaks automatically.",
+    "`ColumnTransformer` routes columns to different steps (scale numerics, encode categoricals) and keeps the output layout fixed, so serving receives exactly the columns training produced.",
+    "Leakage can still enter before the pipeline: aggregates computed over all rows, features built with future data, duplicates across splits. The pipeline only protects what is inside it.",
+    "Ship the fitted pipeline as one versioned artefact and run the same object in batch and online serving; re-implementing preprocessing in serving code is the main source of training-serving skew."
+   ],
+   "a": "## The contract\nEvery lesson in this module ended with the same instruction: learn the statistics on the training fold only. A scaler learns $\\mu$ and $\\sigma$, an imputer learns medians, an encoder learns a vocabulary or target means, a selector learns which columns to keep. scikit-learn makes this a contract with three methods:\n- `fit(X, y)` learns state from training data and stores it in attributes ending in an underscore (`mean_`, `categories_`).\n- `transform(X)` applies that frozen state to any data, without learning anything.\n- `fit_transform(X, y)` does both on training data, sometimes differently from calling them in sequence (the cross-fitted `TargetEncoder` of lesson 07.02 is the important case).\n\nA **pipeline** is a sequence of transformers followed by an estimator. Calling `fit` runs `fit_transform` on each step in order and fits the final model on the result; `predict` runs `transform` on each step and then the model. The fitted pipeline *is* the model: everything needed to turn a raw row into a prediction, in one object.\n\n%%flow The same fitted object serves both paths: fit on training rows only, then transform everywhere else.\n[Fit] Raw training rows -(fit + transform)-> Impute -(fit + transform)-> Encode and scale -(fit)-> *Model\n[Predict] Raw new rows -(transform)-> Impute -(transform)-> Encode and scale -(predict)-> Prediction\n%%\n\n## Why it removes most leaks\nWithout a pipeline, the natural notebook order is: clean, impute, scale, encode, select, then split and cross-validate. Every step before the split saw the validation rows. With a pipeline, you split first and pass the whole pipeline to `cross_val_score` or `GridSearchCV`; each fold clones it and fits every step on that fold's training rows only. The same holds for anything else that learns from data: feature selection (07.04), target encoding (07.02), and resampling (06.06), which needs imbalanced-learn's pipeline because samplers must run during `fit` but never during `predict`.\n\nA side benefit is that hyperparameters of preprocessing steps become searchable alongside the model's, using `step__parameter` names: `\"pre__num__impute__strategy\": [\"mean\", \"median\"]`. Choosing the imputation strategy by CV is then as natural as choosing $C$.\n\n## Mixed column types\nReal tables mix numeric, categorical and text columns that need different treatment. `ColumnTransformer` applies a different sub-pipeline to each column group and concatenates the results in a fixed order:\n\n```python\nfrom sklearn.compose import ColumnTransformer, make_column_selector\nfrom sklearn.pipeline import Pipeline\nfrom sklearn.impute import SimpleImputer\nfrom sklearn.preprocessing import StandardScaler, OneHotEncoder\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.model_selection import GridSearchCV\nnum = Pipeline([(\"impute\", SimpleImputer(strategy=\"median\", add_indicator=True)), (\"scale\", StandardScaler())])\ncat = Pipeline([(\"impute\", SimpleImputer(strategy=\"constant\", fill_value=\"missing\")),\n                (\"onehot\", OneHotEncoder(handle_unknown=\"infrequent_if_exist\", min_frequency=20))])\npre = ColumnTransformer([(\"num\", num, make_column_selector(dtype_include=\"number\")),\n                         (\"cat\", cat, make_column_selector(dtype_include=object))])\nmodel = Pipeline([(\"pre\", pre), (\"clf\", LogisticRegression(max_iter=2000))])\ngrid = GridSearchCV(model, {\"pre__num__impute__strategy\": [\"mean\", \"median\"], \"clf__C\": [0.1, 1, 10]},\n                    cv=cv, scoring=\"average_precision\").fit(X_train, y_train)\n```\n\nTwo habits help. Select columns by explicit name lists in production code, not by dtype, so that a column that changes type upstream fails loudly rather than silently moving groups. And call `set_output(transform=\"pandas\")` or `get_feature_names_out()` while debugging, so you can see which output column came from which input.\n\n## What a pipeline cannot protect\nThe pipeline only sees the rows and columns you hand it. Leakage that happens while building those rows is invisible to it:\n1. **Aggregate features over all data**: \"average spend of this customer's city\" computed over the full table includes validation rows (and their labels, if spend relates to the target). Compute such aggregates inside the pipeline with a custom transformer, or as of each row's timestamp.\n2. **Future information**: features joined without a point-in-time cut (lesson 09.02 and the ML Toolkit SQL lessons).\n3. **Duplicates and groups** split across folds (lesson 01.03).\n4. **Target-derived columns** created upstream, like a status flag set after the outcome.\n\nWhen you need custom logic, write a transformer that follows the contract, so it slots into a pipeline and is refit in every fold:\n\n```python\nfrom sklearn.base import BaseEstimator, TransformerMixin\nclass GroupMean(BaseEstimator, TransformerMixin):\n    # Adds the training-set mean of `col` per `key`; unseen keys get the global mean.\n    def __init__(self, key, col): self.key, self.col = key, col\n    def fit(self, X, y=None):\n        self.means_ = X.groupby(self.key)[self.col].mean(); self.global_ = X[self.col].mean(); return self\n    def transform(self, X):\n        return X.assign(**{f\"{self.col}_by_{self.key}\": X[self.key].map(self.means_).fillna(self.global_)})\n```\n\n## From notebook to serving\nTraining-serving skew is when the features computed at serving time differ from those at training time, for the same input. The usual cause is duplicated logic: preprocessing in a notebook, re-implemented by hand in the serving service, drifting apart one small decision at a time. The pipeline gives you one artefact to ship instead:\n- **Persist the fitted pipeline**, not just the model weights, and load the same object in batch scoring and in the online service. Pickle and joblib files execute code when loaded, so load only artefacts you produced; skops offers a safer format.\n- **Pin library versions** with the artefact; a pickled scikit-learn object is not guaranteed to load or behave identically under another version.\n- **Validate inputs** against the schema the pipeline was trained on (column names, types, allowed ranges) before transforming; fail loudly on missing columns.\n- **Monitor** unseen-category rates, imputation rates and feature distributions after the pipeline, since those are where upstream changes show up first (lesson 09.03).\n\n! Example: AUC 0.86 offline, 0.78 in production\n! A churn model scored AUC 0.86 on a clean time-based test set but 0.78 live. A training-serving skew report comparing logged serving features with offline features for the same customers found two differences. The notebook filled missing tenure with the training median (14 months); the service filled it with 0, which the model reads as \"brand new customer, high churn risk\". And the service rebuilt the plan-type mapping from a database query whose ordering had changed, so integer codes pointed at the wrong plans.\n! Fix: the team put imputation and one-hot encoding into a single scikit-learn pipeline, persisted it with the model, and served that object behind the same API. The live AUC moved to 0.85, and the skew report now runs in CI before every release.\n\n> Takeaway: put every step that learns from data inside one pipeline so CV refits it per fold, keep row-building steps point-in-time correct, and ship the fitted pipeline itself so training and serving run identical code.",
+   "q": "A team computes, before any splitting, each user's \"average order value over all their orders\" and a global StandardScaler, then uses a scikit-learn Pipeline containing only the model inside GridSearchCV with a time-based split. Validation looks excellent. Identify each leak, say which ones moving steps into the pipeline would fix, and which need a different fix.",
+   "s": "Two leaks. (1) The global StandardScaler was fitted on all rows, including validation periods, so validation statistics shape the training inputs. Moving the scaler into the pipeline fixes it: GridSearchCV then refits it on each training fold only. The effect is usually small, but it is a real leak. (2) \"Average order value over all their orders\" includes orders made **after** each row's prediction time, and possibly the very order being predicted, so it leaks the future and possibly the target. Putting a groupby transformer into the pipeline only partly helps: it would restrict the statistic to training-fold rows, but within the training fold it still averages each user's later orders into earlier rows. The proper fix is point-in-time feature construction: compute, for each row, the average over that user's orders strictly before its timestamp (an expanding mean shifted by one, or a point-in-time join), and use the same definition in serving. Then re-run the time-based CV and expect lower, more honest scores.",
+   "r": [
+    [
+     "scikit-learn: Pipelines and composite estimators",
+     "https://scikit-learn.org/stable/modules/compose.html",
+     "Pipeline, ColumnTransformer, parameter naming for search, caching and feature names."
+    ],
+    [
+     "scikit-learn: Common pitfalls and recommended practices",
+     "https://scikit-learn.org/stable/common_pitfalls.html",
+     "Inconsistent preprocessing and data leakage, with the pipeline fix shown side by side."
+    ],
+    [
+     "scikit-learn: Model persistence",
+     "https://scikit-learn.org/stable/model_persistence.html",
+     "Pickle, joblib and skops, version compatibility and the security caveats of loading pickles."
+    ],
+    [
+     "Hidden technical debt in machine learning systems (Sculley et al., NeurIPS 2015)",
+     "https://papers.nips.cc/paper_files/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html",
+     "Pipeline jungles, glue code and training-serving skew as system-level costs."
+    ]
+   ],
+   "k": [
+    "pipelines",
+    "data leakage",
+    "training-serving skew"
+   ],
+   "x": [
+    "scikit-learn",
+    "pandas"
+   ],
+   "p": [
+    "training-serving-skew",
+    "normalize-columns",
+    "point-in-time-feature-join",
+    "record-schema-validation",
+    "transform-pipeline"
+   ]
+  }
+ ]
+}
