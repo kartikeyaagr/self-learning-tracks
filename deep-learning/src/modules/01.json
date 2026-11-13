@@ -1,0 +1,256 @@
+{
+ "n": "01",
+ "name": "Neural network building blocks",
+ "lessons": [
+  {
+   "id": "01.01",
+   "t": "Neurons, layers and the MLP",
+   "n": [
+    "A neuron computes an affine function of its inputs followed by a nonlinearity, $h = \\phi(w^\\top x + b)$; a layer is many neurons sharing the same input, i.e. one matrix multiply plus an elementwise $\\phi$.",
+    "Without the nonlinearity, any stack of layers collapses to a single linear map, so depth buys nothing.",
+    "The universal approximation theorem says one wide hidden layer can approximate any continuous function on a compact set, but it says nothing about how wide, how to find the weights, or how well it generalises.",
+    "Depth helps because composition reuses features: some functions need exponentially many units with one hidden layer but only a modest number with several layers.",
+    "Count parameters and shapes before anything else: a dense layer from $n_{in}$ to $n_{out}$ has $n_{in} n_{out} + n_{out}$ parameters and costs about $n_{in} n_{out}$ multiply-adds per example."
+   ],
+   "a": "## Where this course starts\nThis module builds a neural network from its smallest parts: the neuron, the activation, the loss, the backward pass that computes gradients, and the initial weights that let training start at all. Module 02 then covers what keeps deep networks trainable (normalisation, regularisation, schedules, diagnostics), and Module 03 applies all of it to convolutional networks. The maths of gradients and the optimiser update rules themselves (SGD, momentum, Adam) live in ML Maths; here they are tools.\n\n## One neuron, one layer\nA neuron takes a vector $x \\in \\mathbb{R}^{n}$, forms a weighted sum plus a bias, and passes it through a nonlinearity $\\phi$:\n\n$$h = \\phi(w^\\top x + b)$$\n\nWith $\\phi$ = step function this is Rosenblatt's perceptron; with $\\phi$ = sigmoid it is logistic regression. A **layer** is $m$ neurons reading the same input. Stack their weight vectors as rows of $W \\in \\mathbb{R}^{m \\times n}$ and the whole layer is one matrix multiply:\n\n$$h = \\phi(Wx + b), \\quad W: m \\times n, \\; b: m$$\n\nIn code you process a batch of $B$ examples at once, so inputs are a $B \\times n$ matrix and the layer computes `X @ W.T + b`, giving $B \\times m$. Getting these shapes right is most of the work in debugging a network.\n\n%%flow A two-layer MLP for 10-class classification: affine, nonlinearity, affine, then the loss turns logits into a number.\nx: B×784 -(W1, b1)-> z1: B×256 -(ReLU)-> h1: B×256 -(W2, b2)-> *logits: B×10 -(softmax + CE)-> loss\n%%\n\n## Why the nonlinearity is mandatory\nTwo linear layers compose to one: $W_2(W_1 x + b_1) + b_2 = (W_2 W_1)x + (W_2 b_1 + b_2)$. A 100-layer linear network has exactly the expressive power of logistic regression; it only has a different (and worse) optimisation landscape. The elementwise $\\phi$ breaks this. With ReLU, each hidden unit splits input space with a hyperplane, and the network becomes a piecewise-linear function whose number of linear pieces grows with width and, much faster, with depth.\n\n## Universal approximation, and what it does not say\nThe universal approximation theorem (Cybenko 1989 for sigmoids, Hornik and others for general non-polynomial activations) states that a network with **one** hidden layer and enough units can approximate any continuous function on a bounded domain to any accuracy. Three caveats make it less useful than it sounds:\n- **Width can be enormous.** The theorem is existential; the number of units needed can grow exponentially with input dimension.\n- **It says nothing about learning.** Gradient descent may never find the weights that exist.\n- **It says nothing about generalisation.** Fitting the training points is not the same as predicting new ones.\n\n## Why depth helps\nDeep networks win in practice for reasons the theorem doesn't cover:\n- **Compositional reuse.** Layer 2 builds on layer 1's features, layer 3 on layer 2's. In images: edges, then textures, then parts, then objects. A shallow net must build every high-level feature from raw pixels independently.\n- **Exponential efficiency for some functions.** Telgarsky showed functions computable by a network with $O(k^3)$ layers and constant width that need on the order of $2^k$ units if the network has only $O(k)$ layers. The classic intuition: a ReLU \"tent\" composed with itself $k$ times makes a sawtooth with $2^k$ teeth using $O(k)$ units, while one hidden layer needs a unit per tooth.\n- **Parameter efficiency.** At a fixed parameter budget, deeper-and-narrower usually beats shallow-and-wide on real data.\n\nDepth has a cost: gradients must travel through many layers and can vanish or explode. Most of Module 02 and the residual connection in 03.04 exist to pay that cost.\n\n## Counting parameters and compute\nA dense layer $n_{in} \\to n_{out}$ has $n_{in} n_{out}$ weights plus $n_{out}$ biases, and costs $n_{in} n_{out}$ multiply-adds (MACs) per example in the forward pass. The backward pass costs about twice that (one matmul for the input gradient, one for the weight gradient), so training is roughly 3× forward compute.\n\n```python\nimport numpy as np\n\ndef mlp_forward(X, params):\n    # params: list of (W, b) with W shaped (n_out, n_in)\n    h = X\n    for i, (W, b) in enumerate(params):\n        z = h @ W.T + b\n        h = np.maximum(z, 0) if i < len(params) - 1 else z   # no ReLU on logits\n    return h\n\nrng = np.random.default_rng(0)\nsizes = [784, 256, 10]\nparams = [(rng.normal(0, np.sqrt(2 / a), (b_, a)), np.zeros(b_)) for a, b_ in zip(sizes, sizes[1:])]\nprint(mlp_forward(rng.normal(size=(32, 784)), params).shape)   # (32, 10)\n```\n\n! Example: sizing an MNIST MLP\n! Layer 1: 784 × 256 weights + 256 biases = 200,960 parameters. Layer 2: 256 × 10 + 10 = 2,570. Total 203,530 parameters, about 0.8 MB in fp32.\n! Forward cost per image is about 203k MACs; a batch of 128 is about 26 million MACs, trivial for any GPU. Notice 99% of parameters sit in the first layer: wide inputs dominate MLP cost, which is one reason images moved to convolutions (Module 03).\n\n| Question | Answer |\n| What does one hidden layer guarantee? | Approximation exists, given enough units |\n| What does it not guarantee? | Reasonable width, learnability, generalisation |\n| Why go deeper? | Feature reuse, exponential savings on compositional functions |\n| What does depth cost? | Harder gradient flow; needs init, normalisation, residuals |\n\n> Takeaway: an MLP is alternating affine maps and elementwise nonlinearities; the nonlinearity is what gives it power, and depth is what makes that power cheap, at the price of harder optimisation.\n\nAI Research's \"Neural Network from Scratch\" lessons build these pieces in code step by step; this lesson is the conceptual frame for the rest of the course.",
+   "q": "A colleague removes every activation from a 10-layer, 512-wide MLP \"to make it train faster\" and finds training accuracy drops to that of logistic regression. Explain exactly why, and whether adding more layers would recover the lost accuracy.",
+   "s": "Without activations each layer is affine, and a composition of affine maps is affine: $W_{10}\\cdots W_1 x + c$ collapses to a single matrix $M$ and bias. The network therefore represents exactly the same function class as a single linear layer followed by softmax, which is multinomial logistic regression. Its decision boundaries are hyperplanes no matter how many parameters it has. Adding layers cannot help, because every extra linear layer is absorbed into $M$; at best it changes the optimisation dynamics (deep linear nets have non-convex landscapes and can train more slowly), never the expressive power. Accuracy comes back only by restoring a nonlinearity such as ReLU between the affine maps, which lets each layer bend the representation so later layers can separate classes that are not linearly separable in the input.",
+   "r": [
+    [
+     "Deep Learning (Goodfellow, Bengio, Courville), Chapter 6",
+     "https://www.deeplearningbook.org/contents/mlp.html",
+     "Sections 6.1 and 6.4 on XOR, universal approximation and the argument for depth."
+    ],
+    [
+     "Dive into Deep Learning: Multilayer Perceptrons",
+     "https://d2l.ai/chapter_multilayer-perceptrons/mlp.html",
+     "Short derivation of why hidden layers need nonlinearities, with runnable code."
+    ],
+    [
+     "Telgarsky: Benefits of depth in neural networks",
+     "https://arxiv.org/abs/1602.04485",
+     "The sawtooth construction showing exponential separation between deep and shallow nets."
+    ],
+    [
+     "CS231n: Neural Networks Part 1",
+     "https://cs231n.github.io/neural-networks-1/",
+     "Neuron model, layer sizing and the representational-power discussion."
+    ]
+   ],
+   "k": [
+    "MLP",
+    "universal approximation",
+    "depth"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "multi-layer-perceptron-forward-pass",
+    "evaluate-multi-layer-perceptron",
+    "simple-neural-network",
+    "evaluate-dense-layer",
+    "perceptron"
+   ]
+  },
+  {
+   "id": "01.02",
+   "t": "Activation functions",
+   "n": [
+    "Sigmoid and tanh saturate: for large $|x|$ their derivative goes to zero, and sigmoid's derivative never exceeds 0.25, so stacked sigmoids shrink gradients geometrically.",
+    "ReLU has gradient exactly 1 for positive inputs, which keeps deep gradients alive, but a unit whose input stays negative gets zero gradient forever (a dead unit).",
+    "GELU, $x\\Phi(x)$, and SiLU, $x\\sigma(x)$, are smooth ReLU-like gates that let small negative values through; they are the defaults in Transformers.",
+    "Write activations in numerically safe forms: compute sigmoid and softplus with branches or $\\log(1+e^{-|x|})$ so `exp` never overflows."
+   ],
+   "a": "## What an activation is for\nThe previous lesson showed the nonlinearity is what makes depth meaningful. The choice of nonlinearity then decides two practical things: how gradients flow backward through many layers, and whether the forward computation stays finite in floating point. This lesson goes through the common choices in historical order, because each one fixes a failure of the last.\n\n## Sigmoid and tanh: smooth but saturating\n$$\\sigma(x) = \\frac{1}{1+e^{-x}}, \\qquad \\sigma'(x) = \\sigma(x)(1-\\sigma(x)) \\le 0.25$$\n$$\\tanh(x) = 2\\sigma(2x) - 1, \\qquad \\tanh'(x) = 1 - \\tanh^2(x) \\le 1$$\n\nBoth squash to a bounded range. Their problem is **saturation**: when $|x|$ is large the curve is flat, the derivative is near zero, and backprop multiplies the upstream gradient by that near-zero number. With sigmoid the best case is a factor of 0.25 per layer; ten layers gives at most $0.25^{10} \\approx 10^{-6}$. Sigmoid is also not zero-centred: its outputs are all positive, so the gradients on a downstream neuron's weights all share one sign, which makes updates zig-zag. Tanh fixes the centring but still saturates.\n\nSigmoid remains the right tool where you need a probability or a gate: the output of a binary classifier, LSTM gates, attention-free gating like squeeze-and-excitation (03.05).\n\n## ReLU and its variants\n$$\\mathrm{ReLU}(x) = \\max(0, x), \\qquad \\mathrm{ReLU}'(x) = \\mathbb{1}[x > 0]$$\n\nReLU made deep supervised nets practical (AlexNet, 2012). For active units the gradient passes through unchanged, so there is no per-layer shrinkage; it is also one comparison to compute. Its failure mode is the **dead unit**: if a unit's pre-activation is negative for every input (often after one large update pushes its bias very negative), its gradient is zero for every example and it never recovers. Fixes:\n- **Leaky ReLU**: $\\max(\\alpha x, x)$ with $\\alpha \\approx 0.01$, so negative inputs still carry a small gradient.\n- **ELU**: $\\alpha(e^x - 1)$ for $x<0$, smooth and with negative mean outputs.\n- Lower learning rate and proper initialisation (01.05) prevent most deaths in the first place.\n\n## GELU and SiLU: smooth gates\nModern Transformers and many CNNs use activations that behave like ReLU for large $|x|$ but are smooth near zero and allow small negative outputs:\n\n$$\\mathrm{GELU}(x) = x\\,\\Phi(x) \\approx 0.5x\\left(1 + \\tanh\\!\\left(\\sqrt{2/\\pi}\\,(x + 0.044715x^3)\\right)\\right)$$\n$$\\mathrm{SiLU}(x) = x\\,\\sigma(x) \\quad \\text{(also called Swish)}$$\n\nRead them as \"multiply the input by a soft probability that it should pass\". Both are non-monotonic: a minimum around $x \\approx -0.75$ (GELU) or $x \\approx -1.28$ (SiLU). Smoothness gives better-behaved second-order structure and empirically small but consistent accuracy gains in large models. Gated variants such as SwiGLU multiply two projections, one through SiLU; AI Research covers that in its SwiGLU lesson.\n\n| Activation | Range | Max derivative | Main failure |\n| Sigmoid | (0, 1) | 0.25 | saturation, not zero-centred |\n| Tanh | (-1, 1) | 1 | saturation |\n| ReLU | [0, ∞) | 1 | dead units |\n| Leaky ReLU | (-∞, ∞) | 1 | extra hyperparameter |\n| GELU / SiLU | about (-0.17 / -0.28, ∞) | about 1.1 | costlier to compute |\n\n%%flow How the choice of activation shows up in training: the derivative at each layer multiplies the backward signal.\nUpstream grad -(× φ'(z) at layer L)-> Layer L-1 -(× φ'(z))-> Layer L-2 -(sigmoid: ≤ 0.25 each)-> *Vanished at layer 1\n%%\n\n## Numerically safe forms\nNaive formulas overflow. `np.exp(-x)` for $x = -1000$ is `inf`; dividing gives 0 with a warning, and anything downstream that takes a log produces `-inf` or `nan`. The fixes all rely on never exponentiating a large positive number:\n\n```python\nimport numpy as np\n\ndef sigmoid(x):\n    # e^{-|x|} is always in (0, 1]: no overflow on either side\n    e = np.exp(-np.abs(x))\n    return np.where(x >= 0, 1 / (1 + e), e / (1 + e))\n\ndef softplus(x):            # log(1 + e^x), the smooth ReLU\n    return np.maximum(x, 0) + np.log1p(np.exp(-np.abs(x)))\n\ndef log_sigmoid(x):         # log σ(x) = -softplus(-x)\n    return -softplus(-x)\n\ndef tanh(x):\n    return np.tanh(x)       # library tanh is already stable; 2σ(2x)-1 loses precision near 0\n```\n\nTwo related rules carry into the next lesson: compute `log(softmax)` with log-sum-exp rather than taking the log of a softmax, and feed **logits** to loss functions (`BCEWithLogitsLoss`, `CrossEntropyLoss`) instead of probabilities, so the library can use these stable forms.\n\n! Example: how much gradient survives 6 layers\n! Suppose every pre-activation is near zero, the best case for sigmoid. Each layer multiplies the gradient by $\\sigma'(0) = 0.25$, so after 6 layers $0.25^6 \\approx 2.4 \\times 10^{-4}$ of the signal remains, before counting weights.\n! With tanh, $\\tanh'(0) = 1$, so near zero the signal survives; but if pre-activations drift to $|z| = 3$, $\\tanh'(3) \\approx 0.0099$ and six layers leave about $10^{-12}$.\n! With ReLU, active units pass a factor of exactly 1; the risk moves from shrinking gradients to units being off entirely.\n\n> Takeaway: pick ReLU-family or GELU/SiLU for hidden layers, keep sigmoid and tanh for outputs and gates, and always implement activations and their logs in forms that never exponentiate a large positive number.",
+   "q": "A 20-layer tanh network trains well at learning rate 1e-3 but at 1e-1 the loss stops improving within a few hundred steps, and inspecting activations shows most values at ±1. A ReLU version at 1e-1 stalls too, but its activations are mostly exactly 0. Explain both failures in terms of the activation derivatives, and suggest one fix for each.",
+   "s": "Tanh: the large learning rate pushes weights large, so pre-activations land deep in the flat tails where $\\tanh' = 1 - \\tanh^2 \\approx 0$. Every saturated layer multiplies the backward signal by nearly zero, so gradients to early layers vanish and learning stalls even though the units are not dead in principle. Fix: lower learning rate, Xavier initialisation, or normalisation layers that keep pre-activations near zero. ReLU: a big update drove many units' pre-activations negative for all inputs; their derivative is exactly 0, so they get no gradient and never come back (dead units). The signal is not shrinking smoothly, it is cut off. Fix: lower learning rate or warmup, He initialisation, or Leaky ReLU/GELU so negative inputs keep a small gradient. Both cases show that the activation's derivative profile determines which way a too-large step breaks training.",
+   "r": [
+    [
+     "Hendrycks & Gimpel: Gaussian Error Linear Units (GELUs)",
+     "https://arxiv.org/abs/1606.08415",
+     "Definition of GELU, the tanh approximation and comparisons with ReLU and ELU."
+    ],
+    [
+     "Ramachandran, Zoph, Le: Searching for Activation Functions",
+     "https://arxiv.org/abs/1710.05941",
+     "Where Swish ($x\\sigma(\\beta x)$) came from, found by automated search."
+    ],
+    [
+     "CS231n: Neural Networks Part 1 (activation functions)",
+     "https://cs231n.github.io/neural-networks-1/",
+     "Sigmoid saturation, non-zero-centred outputs and dying ReLUs, concisely."
+    ],
+    [
+     "PyTorch docs: torch.nn.GELU",
+     "https://pytorch.org/docs/stable/generated/torch.nn.GELU.html",
+     "The exact and tanh-approximate forms as implemented."
+    ]
+   ],
+   "k": [
+    "activations",
+    "saturation",
+    "numerical stability"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "activation-functions",
+    "derivatives-of-common-activation-functions",
+    "sigmoid-stable",
+    "continuity-of-activation-functions",
+    "sigmoid-boundedness-via-squeeze-theorem"
+   ]
+  },
+  {
+   "id": "01.03",
+   "t": "Loss functions for deep learning",
+   "n": [
+    "Most losses are negative log-likelihoods: cross-entropy assumes a categorical output, MSE a Gaussian with fixed variance, so the loss encodes what noise you believe in.",
+    "Softmax plus cross-entropy has the gradient $p - y$ with respect to the logits; compute it from logits with log-sum-exp, never by taking the log of probabilities.",
+    "MSE's gradient grows linearly with the error, so outliers dominate; Huber loss switches to a constant-magnitude gradient beyond a threshold $\\delta$.",
+    "Focal loss multiplies cross-entropy by $(1-p_t)^\\gamma$ to down-weight easy examples; margin losses (hinge, triplet) only push until a gap is reached and then stop."
+   ],
+   "a": "## A loss is a modelling choice\nThe loss is the only signal the network gets about what you want. Most standard losses are the **negative log-likelihood** of the data under an assumed output distribution, which makes the choice less arbitrary than it looks:\n- Categorical output, $p = \\mathrm{softmax}(z)$: NLL is **cross-entropy**.\n- Bernoulli output, $p = \\sigma(z)$: NLL is **binary cross-entropy**.\n- Gaussian output with fixed variance: NLL is **mean squared error** up to constants.\n- Laplace output: NLL is **mean absolute error**.\n\nSo picking MSE means \"I believe errors are Gaussian\"; if they are heavy-tailed, the loss will over-react to outliers. The ML course covers logistic regression and the classical metrics; AI Research covers entropy and KL divergence. This lesson focuses on how the losses behave inside a deep network's training loop.\n\n## Cross-entropy from logits\nFor $C$ classes, logits $z \\in \\mathbb{R}^C$ and true class $y$:\n\n$$\\mathcal{L} = -\\log \\frac{e^{z_y}}{\\sum_j e^{z_j}} = -z_y + \\log\\sum_j e^{z_j}$$\n\n$$\\frac{\\partial \\mathcal{L}}{\\partial z_j} = p_j - \\mathbb{1}[j = y]$$\n\nThe gradient is \"predicted probability minus target\", bounded in $[-1, 1]$ per logit. This clean form is why softmax and cross-entropy are always fused. The stable computation uses log-sum-exp with the max subtracted:\n\n```python\nimport numpy as np\n\ndef cross_entropy(logits, y):          # logits (B, C), y (B,) int labels\n    m = logits.max(axis=1, keepdims=True)\n    lse = m[:, 0] + np.log(np.exp(logits - m).sum(axis=1))\n    loss = lse - logits[np.arange(len(y)), y]\n    p = np.exp(logits - lse[:, None])\n    grad = p.copy(); grad[np.arange(len(y)), y] -= 1\n    return loss.mean(), grad / len(y)\n```\n\nBinary cross-entropy has the same trick: $\\mathcal{L} = \\max(z,0) - zy + \\log(1 + e^{-|z|})$. This is why PyTorch's `BCEWithLogitsLoss` and `CrossEntropyLoss` take raw logits. Feeding them probabilities (or applying softmax twice) is a common silent bug: training still runs but gradients are badly scaled.\n\n**Label smoothing** replaces the one-hot target with $1-\\varepsilon$ on the true class and $\\varepsilon/(C-1)$ elsewhere (one common convention). It stops the network driving logits to infinity to reach probability 1, which improves calibration.\n\n! Example: one cross-entropy step by hand\n! Logits $z = [2.0, 1.0, 0.1]$, true class 0. Exponentials: 7.389, 2.718, 1.105; sum 11.212.\n! Probabilities: $p = [0.659, 0.242, 0.099]$. Loss $= -\\ln 0.659 = 0.417$.\n! Gradient on logits: $[0.659 - 1, 0.242, 0.099] = [-0.341, 0.242, 0.099]$. The gradient sums to zero: raising the true logit and lowering the others are the same move.\n\n## Regression: MSE, MAE, Huber\nMSE $= \\frac{1}{2}(\\hat y - y)^2$ has gradient $\\hat y - y$, linear in the error. One target that is wrong by 100 contributes a gradient 100× larger than a typical example, so a few outliers steer the whole batch. MAE has gradient $\\pm 1$, robust but non-smooth at zero and slow to fine-tune. **Huber** blends them:\n\n$$\\mathcal{L}_\\delta(r) = \\begin{cases} \\tfrac{1}{2} r^2 & |r| \\le \\delta \\\\ \\delta(|r| - \\tfrac{1}{2}\\delta) & |r| > \\delta \\end{cases}$$\n\nQuadratic near zero, linear beyond $\\delta$, so the gradient magnitude is capped at $\\delta$. DQN uses it on TD errors for exactly this reason (Module 08); detection uses smooth-L1 (Huber with $\\delta = 1$) for box regression.\n\n## Focal and margin losses\n**Focal loss** targets class imbalance in dense detection, where a single image has around 100k candidate boxes and almost all are easy background:\n\n$$\\mathrm{FL}(p_t) = -\\alpha_t (1 - p_t)^\\gamma \\log p_t$$\n\nwith $p_t$ the probability of the true class and typically $\\gamma = 2$. An easy example at $p_t = 0.9$ has its loss scaled by $0.01$; a hard one at $p_t = 0.1$ by $0.81$. The thousands of easy negatives stop drowning out the rare positives.\n\n**Margin losses** don't model probabilities at all. They push until a required gap is reached and then contribute zero:\n- **Hinge** (SVM): $\\max(0, 1 - y \\cdot s)$ for labels $\\pm 1$.\n- **Triplet**: $\\max(0, d(a, p) - d(a, n) + m)$, pulling an anchor closer to a positive than to a negative by margin $m$; used for embeddings and face recognition.\n- **Contrastive / InfoNCE**: cross-entropy over similarities, one positive among many negatives (CLIP); really a softmax loss in disguise.\n\n| Loss | Gradient size for a bad example | Typical use |\n| Cross-entropy | bounded, about 1 per logit | classification, language models |\n| MSE | grows with error | clean regression |\n| Huber | capped at $\\delta$ | noisy regression, box offsets, TD errors |\n| Focal | CE scaled by $(1-p_t)^\\gamma$ | dense detection, extreme imbalance |\n| Hinge / triplet | constant until margin met, then 0 | SVMs, metric learning |\n\n%%flow Where the loss sits: it is the root of the computational graph, and its gradient is the first signal backprop sends.\nLogits -(softmax)-> Probabilities -(−log p_y)-> *Scalar loss -(∂L/∂z = p − y)-> Backward pass\n%%\n\n> Takeaway: choose the loss as a statement about your output distribution and your data's noise, compute it from logits in its stable form, and reach for Huber, focal or margin losses when outliers, imbalance or ranking make plain NLL misbehave.",
+   "q": "You train a classifier on 1% positives and 99% negatives with plain binary cross-entropy. It reaches 99% accuracy but almost never predicts the positive class. Explain, using gradients, why plain BCE behaves this way and how focal loss and class weighting each change the gradient contributions.",
+   "s": "Each example contributes a gradient of size $|p - y|$ on its logit. Early on the network learns to output a low probability for everything; then 99% of examples are easy negatives with small but non-zero gradients, and their sum still outweighs the few positives, so the optimiser keeps refining the negatives and accepts misclassifying positives. Accuracy looks great because predicting all-negative is 99% correct. Class weighting multiplies the positive examples' loss (and gradient) by a factor like 99, rebalancing the total gradient mass between classes regardless of difficulty. Focal loss instead scales each example by $(1-p_t)^\\gamma$: well-classified negatives with $p_t \\approx 0.95$ are scaled by about $0.0025$ at $\\gamma=2$, while misclassified positives keep most of their gradient. It reweights by difficulty, which handles imbalance indirectly because easy examples are mostly the majority class. In practice both are combined (the $\\alpha_t$ term) and the threshold is tuned on a validation set.",
+   "r": [
+    [
+     "Lin et al.: Focal Loss for Dense Object Detection",
+     "https://arxiv.org/abs/1708.02002",
+     "Sections 3 and 5: the focal term, why easy negatives dominate, and the $\\gamma$ ablation."
+    ],
+    [
+     "PyTorch docs: CrossEntropyLoss",
+     "https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html",
+     "Takes logits, supports class weights, ignore_index and label smoothing."
+    ],
+    [
+     "PyTorch docs: HuberLoss",
+     "https://pytorch.org/docs/stable/generated/torch.nn.HuberLoss.html",
+     "Exact definition and its relation to SmoothL1Loss."
+    ],
+    [
+     "Deep Learning (Goodfellow et al.), Chapter 6.2",
+     "https://www.deeplearningbook.org/contents/mlp.html",
+     "Cost functions as maximum likelihood and why saturating outputs need log-likelihood losses."
+    ]
+   ],
+   "k": [
+    "cross-entropy",
+    "Huber",
+    "focal loss"
+   ],
+   "x": [
+    "NumPy",
+    "PyTorch"
+   ],
+   "p": [
+    "cross-entropy-logits",
+    "softmax-cross-entropy-gradient",
+    "log-loss-binary-cross-entropy",
+    "loss-functions",
+    "sigmoid-focal-loss"
+   ]
+  },
+  {
+   "id": "01.04",
+   "t": "Backpropagation through a computational graph",
+   "n": [
+    "Any computation built from simple operations forms a directed acyclic graph; each node only needs its local derivative to take part in backprop.",
+    "Reverse-mode autodiff runs the graph forward, then visits nodes in reverse topological order, multiplying the upstream gradient by each local derivative (the chain rule).",
+    "When a value feeds several consumers its gradient is the **sum** over all paths, so gradients must be accumulated with `+=`, and reset between steps.",
+    "Reverse mode gives the gradient of one scalar loss with respect to millions of parameters for about 2-3× the cost of the forward pass, at the price of storing intermediate activations."
+   ],
+   "a": "## From chain rule to algorithm\nYou know the chain rule: if $L = f(g(x))$ then $\\frac{dL}{dx} = f'(g(x))\\,g'(x)$. Backpropagation is the chain rule applied systematically to a graph with millions of nodes, in an order that reuses work. ML Maths and AI Research's chain-rule lessons cover the calculus; here the point is the **algorithm** and the engineering around it, the thing PyTorch's autograd does every step.\n\n## The computational graph\nWrite any computation as a DAG: leaves are inputs and parameters, internal nodes are primitive operations (add, multiply, exp, tanh, matmul), and the root is the scalar loss. For each primitive you only need one rule: given the gradient of $L$ with respect to the node's output, produce the gradient with respect to each input. That rule needs only local information:\n- $c = a + b$: $\\bar a \\mathrel{+}= \\bar c$, $\\bar b \\mathrel{+}= \\bar c$ (addition routes gradient unchanged).\n- $c = a \\cdot b$: $\\bar a \\mathrel{+}= b\\,\\bar c$, $\\bar b \\mathrel{+}= a\\,\\bar c$ (multiplication swaps the inputs).\n- $c = \\tanh(a)$: $\\bar a \\mathrel{+}= (1 - c^2)\\,\\bar c$.\n- $C = AB$ (matrices): $\\bar A \\mathrel{+}= \\bar C B^\\top$, $\\bar B \\mathrel{+}= A^\\top \\bar C$.\n\nHere $\\bar v$ means $\\partial L / \\partial v$, the \"adjoint\". The global derivative falls out of composing local rules.\n\n%%flow Forward computes values left to right; backward sends adjoints right to left, each node applying only its local rule.\n[Forward] a, b -(mul)-> d = a·b -(add c)-> e = d + c -(mul f)-> *L = e·f\n[Backward] L̄ = 1 -(f̄ = e, ē = f)-> ē -(c̄ = ē, d̄ = ē)-> d̄ -(ā = b·d̄, b̄ = a·d̄)-> *Leaf grads\n%%\n\n## Why reverse order, and why accumulate\nA node's adjoint is complete only after **every** consumer has sent its contribution. Visiting nodes in reverse topological order guarantees that. If a value $x$ feeds two operations, its adjoint is the sum of the two path contributions, by the multivariate chain rule. That is why every rule above uses `+=`. Two classic bugs follow:\n- Using `=` instead of `+=`: a reused node (a weight shared across time steps, or $x$ in $x \\cdot x$) silently loses all but one path.\n- Forgetting to reset gradients between steps: PyTorch accumulates into `.grad` by design, which is why every loop calls `optimizer.zero_grad()`. The same behaviour is what makes gradient accumulation across micro-batches work (02.04).\n\n## A scalar autograd engine\nThe whole idea fits in a few dozen lines. Each value remembers its parents and a closure that applies its local rule:\n\n```python\nimport math\n\nclass Value:\n    def __init__(self, data, parents=()):\n        self.data, self.grad, self._parents, self._back = data, 0.0, parents, lambda: None\n    def __add__(self, o):\n        o = o if isinstance(o, Value) else Value(o); out = Value(self.data + o.data, (self, o))\n        def back(): self.grad += out.grad; o.grad += out.grad\n        out._back = back; return out\n    def __mul__(self, o):\n        o = o if isinstance(o, Value) else Value(o); out = Value(self.data * o.data, (self, o))\n        def back(): self.grad += o.data * out.grad; o.grad += self.data * out.grad\n        out._back = back; return out\n    def tanh(self):\n        t = math.tanh(self.data); out = Value(t, (self,))\n        def back(): self.grad += (1 - t * t) * out.grad\n        out._back = back; return out\n    def backward(self):\n        order, seen = [], set()\n        def visit(v):\n            if v not in seen:\n                seen.add(v); [visit(p) for p in v._parents]; order.append(v)\n        visit(self); self.grad = 1.0\n        for v in reversed(order): v._back()\n```\n\nKarpathy's micrograd is this design plus a few more operations and a tiny neural-network library on top; PyTorch is the same idea over tensors, with each primitive's backward written as a fused kernel.\n\n! Example: backprop by hand\n! Let $a = 3$, $b = -2$, $c = 5$, $f = -4$. Forward: $d = ab = -6$, $e = d + c = -1$, $L = ef = 4$.\n! Backward: $\\bar L = 1$. Multiply node: $\\bar e = f = -4$, $\\bar f = e = -1$. Add node routes unchanged: $\\bar d = \\bar c = -4$.\n! Multiply node: $\\bar a = b\\,\\bar d = (-2)(-4) = 8$, $\\bar b = a\\,\\bar d = 3 \\cdot (-4) = -12$.\n! Check one numerically: raising $a$ to 3.001 gives $d = -6.002$, $e = -1.002$, $L = 4.008$, a slope of 8. Finite differences like this are the standard way to test any hand-written backward.\n\n## Cost, memory, and why reverse mode\nFor a function $\\mathbb{R}^n \\to \\mathbb{R}$ (millions of parameters, one loss), reverse mode computes all $n$ partial derivatives in **one** backward pass costing a small constant times the forward pass, in practice 2-3× for matmul-heavy nets. Forward-mode autodiff would need $n$ passes, one per input direction. Forward mode wins only when outputs outnumber inputs. In Jacobian terms, reverse mode computes vector-Jacobian products, forward mode Jacobian-vector products.\n\nThe price is **memory**: the backward rules need forward values ($b$ for $\\bar a$, $t$ for tanh), so every intermediate activation is stored until its backward runs. For large models activations, not weights, often dominate memory. Activation checkpointing trades compute for memory by storing only some activations and recomputing the rest during backward.\n\n> Takeaway: backprop is reverse topological traversal applying local derivative rules and summing over paths; it gives every parameter's gradient for a few forward passes' compute, paid for with stored activations.",
+   "q": "In your scalar autograd engine, `y = x * x` with `x = 3` gives `x.grad == 3` after `y.backward()` instead of 6. The multiply's backward is `self.grad = other.data * out.grad; other.grad = self.data * out.grad`. Explain the bug through the graph structure and why the same bug would also break a recurrent network with shared weights.",
+   "s": "In `x * x` both inputs of the multiply node are the same object, so the node has two edges into `x`. The true derivative sums both paths: $\\partial y/\\partial x = x + x = 6$. With assignment, the second line overwrites the first: the first sets `x.grad = 3`, the second sets it to 3 again instead of adding, so one path's contribution is lost. Using `+=` gives 3 + 3 = 6. A recurrent network reuses the same weight matrix at every time step, so in the unrolled graph that weight has one consumer per step and its gradient must be the sum over all steps (backprop through time). With assignment, only the last-processed step's contribution would survive, so the weights would be trained as if the sequence had length 1. The general rule: any node with fan-out greater than one needs accumulation, and accumulated gradients must be zeroed before the next backward.",
+   "r": [
+    [
+     "Karpathy: micrograd",
+     "https://github.com/karpathy/micrograd",
+     "A complete scalar autograd engine and neural-net library in about 150 lines; read engine.py."
+    ],
+    [
+     "CS231n: Backpropagation, Intuitions",
+     "https://cs231n.github.io/optimization-2/",
+     "Gates as local gradient rules, patterns in backward flow, staged computation."
+    ],
+    [
+     "Olah: Calculus on Computational Graphs",
+     "https://colah.github.io/posts/2015-08-Backprop/",
+     "Why reverse mode beats forward mode, with path-sum diagrams."
+    ],
+    [
+     "Baydin et al.: Automatic Differentiation in Machine Learning: a Survey",
+     "https://arxiv.org/abs/1502.05767",
+     "Forward vs reverse mode, cost analysis, and how real AD systems are built."
+    ]
+   ],
+   "k": [
+    "backprop",
+    "autodiff",
+    "computational graph"
+   ],
+   "x": [
+    "Python"
+   ],
+   "p": [
+    "run-reverse-mode-autodiff",
+    "backpropagation-through-computation-graph",
+    "accumulate-shared-path-gradients",
+    "topologically-sort-computation-dag",
+    "gradient-check-autodiff-graph"
+   ]
+  },
+  {
+   "id": "01.05",
+   "t": "Weight initialisation",
+   "n": [
+    "For a layer $z = Wx$ with independent zero-mean entries, $\\mathrm{Var}(z_i) = n_{in}\\,\\mathrm{Var}(w)\\,\\mathrm{Var}(x)$, so the weight variance must scale like $1/n_{in}$ to keep signals the same size layer after layer.",
+    "Xavier/Glorot sets $\\mathrm{Var}(w) = 2/(n_{in}+n_{out})$, a compromise between preserving forward activations and backward gradients, derived for tanh-like activations.",
+    "He/Kaiming sets $\\mathrm{Var}(w) = 2/n_{in}$ for ReLU, doubling the variance because ReLU zeroes half its inputs.",
+    "Initialising all weights to the same value (including zero) makes every hidden unit compute the same thing forever; random init exists to break symmetry."
+   ],
+   "a": "## Why the starting point matters\nGradient descent needs a starting point, and for deep networks a bad one is fatal before the first update. If each layer multiplies the signal's scale by 0.9, a 50-layer network shrinks it by $0.9^{50} \\approx 0.005$; by 1.1, it grows by about 117×. The backward pass multiplies by the same weights transposed, so gradients vanish or explode the same way. Initialisation is about choosing the weight scale so that this per-layer factor is close to 1. Batch and layer normalisation (02.01, 02.02) and residual connections (03.04) make networks far less sensitive to init, but they don't remove the need for it.\n\n## Symmetry breaking\nIf every weight in a layer starts at the same value, every hidden unit receives the same input, computes the same output, and receives the same gradient. They stay identical forever and the layer behaves like a single unit. Random initialisation breaks this symmetry. Biases have no such problem and are usually set to zero.\n\n## The variance argument\nTake one pre-activation $z_i = \\sum_{j=1}^{n_{in}} w_{ij} x_j$, with weights and inputs independent, weights zero-mean. Then\n\n$$\\mathrm{Var}(z_i) = n_{in}\\,\\mathrm{Var}(w)\\,\\mathbb{E}[x_j^2]$$\n\nTo keep the scale constant across layers you need $n_{in}\\,\\mathrm{Var}(w) \\approx 1$ (adjusted for the activation). The backward pass sums over $n_{out}$ outputs instead, so preserving gradient variance needs $n_{out}\\,\\mathrm{Var}(w) \\approx 1$. Three classical schemes follow:\n\n| Scheme | Var(w) | Derived for | Default in |\n| LeCun | $1/n_{in}$ | linear / SELU | SELU networks |\n| Xavier (Glorot) | $2/(n_{in}+n_{out})$ | tanh, sigmoid near 0 | `nn.init.xavier_*` |\n| He (Kaiming) | $2/n_{in}$ | ReLU | CNNs with ReLU |\n\n**Xavier** averages the forward and backward conditions. **He** adds a factor 2 for ReLU: ReLU sets half its inputs to zero, so $\\mathbb{E}[\\mathrm{ReLU}(z)^2] = \\tfrac{1}{2}\\mathrm{Var}(z)$, and the weights must make up the lost half. He et al. showed this choice lets a 30-layer plain ReLU net converge where Xavier init stalls.\n\nFor a uniform distribution $U(-a, a)$ the variance is $a^2/3$, so Xavier-uniform uses $a = \\sqrt{6/(n_{in}+n_{out})}$ and He-uniform $a = \\sqrt{6/n_{in}}$. For convolutions, $n_{in} = C_{in} k^2$ (the fan-in of one output pixel).\n\n%%flow The per-layer gain decides everything: a factor slightly off 1 compounds over depth.\nInput var 1 -(gain g per layer)-> Layer 10: g^10 -(× g^40 more)-> *Layer 50: g^50 -(g = 0.9 → 0.005, g = 1.1 → 117)-> Vanish or explode\n%%\n\n```python\nimport numpy as np\n\ndef activation_stds(init_std, depth=50, width=512, seed=0):\n    rng = np.random.default_rng(seed)\n    h = rng.normal(size=(1000, width))\n    stds = []\n    for _ in range(depth):\n        W = rng.normal(0, init_std, (width, width))\n        h = np.maximum(h @ W, 0)\n        stds.append(h.std())\n    return stds\n\nfor s in (0.01, np.sqrt(2 / 512), 0.1):\n    print(f\"{s:.4f}\", f\"{activation_stds(s)[-1]:.3g}\")\n# 0.0100 -> collapses to ~0, 0.0625 (He) -> stays order 1, 0.1000 -> blows up\n```\n\n! Example: three inits for a 50-layer ReLU MLP of width 512\n! With ReLU each layer multiplies the second moment by about $n\\,\\sigma^2 / 2 = 256\\,\\sigma^2$.\n! $\\sigma = 0.01$: gain $0.0256$ per layer, so after 50 layers the variance is about $0.0256^{50} \\approx 10^{-80}$: every activation is effectively zero and so is every gradient.\n! $\\sigma = 0.1$: gain $2.56$ per layer, $2.56^{50} \\approx 10^{20}$: activations pass fp16's maximum of 65504 after about 20 layers.\n! $\\sigma = \\sqrt{2/512} = 0.0625$ (He): gain exactly 1; activations stay order one at every depth.\n\n## Practical notes\n- **Framework defaults differ.** PyTorch's `nn.Linear` and `nn.Conv2d` default to Kaiming-uniform with $a = \\sqrt{5}$, which works out to $U(-1/\\sqrt{n_{in}}, 1/\\sqrt{n_{in}})$, variance $1/(3n_{in})$: smaller than He. It trains fine with normalisation layers but is worth overriding in a deep plain ReLU net.\n- **Residual branches.** In a residual network the output is $x + F(x)$, so variance adds up with depth even if each branch is well initialised. Common fixes: zero-init the last BatchNorm scale in each block (each block starts as identity), or scale the residual projections by $1/\\sqrt{2N}$ for $N$ layers as GPT-2 does.\n- **Output layer.** Initialising logits small (or zero) means the initial loss is near $\\ln C$, which is the first sanity check in 02.05.\n- **Width scaling.** These rules fix the scale at initialisation only. How learning rates should scale with width (muP, the Maximal Update Parametrisation) is a separate question beyond this course; the practice problem on muP width invariants is a starting point.\n\n> Takeaway: choose the weight variance so each layer's gain is about 1, $2/n_{in}$ for ReLU and $2/(n_{in}+n_{out})$ for tanh, and break symmetry with randomness; with normalisation and residuals in place, init matters less but still decides whether step one is sane.",
+   "q": "You build a 40-layer plain (no residual, no normalisation) tanh network and initialise with He init because \"it's the modern default\". Training stalls immediately and activations in late layers are mostly near ±1. What went wrong, what init would you use instead, and why does the answer differ between tanh and ReLU?",
+   "s": "He init sets $\\mathrm{Var}(w) = 2/n_{in}$, which doubles the variance to compensate for ReLU discarding half its inputs. Tanh discards nothing; near zero it is approximately the identity, so with He init each layer's pre-activation variance roughly doubles until tanh saturates. Saturated units (outputs near ±1) have derivative $1 - \\tanh^2 \\approx 0$, so gradients vanish backward through 40 layers and training stalls. For tanh the right choice is Xavier/Glorot, $\\mathrm{Var}(w) = 2/(n_{in}+n_{out})$, or LeCun $1/n_{in}$, which keep the per-layer gain about 1 in the near-linear regime. The difference comes from the activation's second moment: ReLU halves $\\mathbb{E}[h^2]$ and needs a gain-2 correction, tanh roughly preserves it for small inputs and needs none. PyTorch encodes this as `nn.init.calculate_gain('relu') = sqrt(2)` versus `5/3` for tanh.",
+   "r": [
+    [
+     "Glorot & Bengio: Understanding the difficulty of training deep feedforward neural networks",
+     "https://proceedings.mlr.press/v9/glorot10a.html",
+     "Origin of Xavier init, with measurements of activation and gradient variance by layer."
+    ],
+    [
+     "He et al.: Delving Deep into Rectifiers",
+     "https://arxiv.org/abs/1502.01852",
+     "Section 2.2 derives the $2/n_{in}$ rule for ReLU and shows a 30-layer net that only trains with it."
+    ],
+    [
+     "PyTorch docs: torch.nn.init",
+     "https://pytorch.org/docs/stable/nn.init.html",
+     "Exact formulas for xavier_*, kaiming_* and calculate_gain."
+    ],
+    [
+     "Dive into Deep Learning: Numerical Stability and Initialization",
+     "https://d2l.ai/chapter_multilayer-perceptrons/numerical-stability-and-init.html",
+     "Vanishing and exploding gradients and the symmetry problem, with code."
+    ]
+   ],
+   "k": [
+    "initialisation",
+    "variance preservation"
+   ],
+   "x": [
+    "NumPy",
+    "PyTorch"
+   ],
+   "p": [
+    "weight-initialization",
+    "multi-layer-perceptron-forward-pass",
+    "diagnose-mup-width-invariants"
+   ]
+  }
+ ]
+}

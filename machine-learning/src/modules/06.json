@@ -1,0 +1,312 @@
+{
+ "n": "06",
+ "name": "Evaluation and model selection",
+ "lessons": [
+  {
+   "id": "06.01",
+   "t": "Classification metrics and thresholds",
+   "n": [
+    "A classifier usually outputs a **score**; a **threshold** turns it into decisions, and only then is there a confusion matrix. Every count-based metric is a property of the model *and* the threshold.",
+    "**Precision** $= TP/(TP+FP)$ answers \"when it fires, is it right?\"; **recall** $= TP/(TP+FN)$ answers \"of the real positives, how many did it catch?\". Precision depends on prevalence; recall does not.",
+    "$F_1$ is the harmonic mean of precision and recall; $F_\\beta$ weights recall $\\beta$ times as much. Neither knows what an error costs, and both ignore true negatives.",
+    "With calibrated probabilities and per-error costs, the cost-minimising rule is: predict positive when $p > c_{FP}/(c_{FP}+c_{FN})$. A threshold of 0.5 is only right when both errors cost the same.",
+    "For multiclass, **macro** averaging weights every class equally, **micro** pools counts (and equals accuracy for single-label problems), **weighted** averages by support. Pick the one that matches who you are serving."
+   ],
+   "a": "## Where this module fits\nModule 01 gave you honest splits and baselines; this module is about what to compute on those splits and how to use the numbers to choose a model. The first three lessons cover metrics (classification, ranking curves, regression), then cross-validation, hyperparameter search and imbalanced data. Calibration, which several of these ideas lean on, has its own lesson in module 03.\n\n## From scores to a confusion matrix\nMost classifiers output a score $s(x)$: a probability from logistic regression, a margin from an SVM, a vote fraction from a forest. Decisions need a **threshold** $t$: predict positive when $s(x) \\ge t$. Only after fixing $t$ do you get the four counts of the confusion matrix.\n\n%%flow The model ranks; the threshold decides. Change the threshold and every count-based metric moves.\nFeatures -(model)-> Score s(x) -(compare to t)-> *Decision -(vs label)-> Confusion matrix -(ratios)-> Metrics\n%%\n\n| Actual class | Predicted positive | Predicted negative\n| Actually positive | TP (true positive) | FN (false negative, a miss)\n| Actually negative | FP (false positive, a false alarm) | TN (true negative)\n\nThe common rates are ratios of these counts:\n- **Accuracy** $=(TP+TN)/N$. Dominated by the majority class.\n- **Precision** (positive predictive value) $= TP/(TP+FP)$: the fraction of alarms that are real.\n- **Recall** (sensitivity, true positive rate) $= TP/(TP+FN)$: the fraction of real positives caught.\n- **Specificity** $= TN/(TN+FP)$, and the **false positive rate** $\\text{FPR} = FP/(FP+TN) = 1 - \\text{specificity}$.\n- **$F_1$** $= 2PR/(P+R)$, the harmonic mean, which is pulled towards the smaller of the two. $F_\\beta = (1+\\beta^2)PR/(\\beta^2 P + R)$ treats recall as $\\beta$ times as important.\n- **Matthews correlation coefficient** $= (TP\\cdot TN - FP\\cdot FN)/\\sqrt{(TP+FP)(TP+FN)(TN+FP)(TN+FN)}$: a correlation between prediction and label that uses all four cells and is 0 for any constant predictor.\n\nA detail that trips people up: recall and specificity are computed *within* a true class, so they do not change when prevalence changes. Precision mixes the two classes, so the same model has lower precision on a population where positives are rarer. A precision number quoted without the base rate is incomplete.\n\n## Choosing the threshold from costs\nThe default $t = 0.5$ is a convention, not a decision. If the model's probabilities are calibrated (module 03) and a false negative costs $c_{FN}$ while a false positive costs $c_{FP}$, predicting positive for an example with probability $p$ has expected cost $(1-p)\\,c_{FP}$, and predicting negative costs $p\\,c_{FN}$. Predict positive when the first is smaller:\n\n$$p > t^* = \\frac{c_{FP}}{c_{FP} + c_{FN}}$$\n\nIf a missed fraud costs 50 times a manual review, $t^* = 1/51 \\approx 0.02$. When probabilities are not calibrated, or costs are fuzzy, pick the threshold empirically: sweep $t$ on validation data and take the value that minimises total cost or meets a constraint (\"recall at least 0.9\"). The next lesson turns that sweep into curves.\n\n```python\nimport numpy as np\nfrom sklearn.metrics import confusion_matrix\ndef cost_at(t, y, p, c_fp=10, c_fn=500):\n    tn, fp, fn, tp = confusion_matrix(y, p >= t).ravel()\n    return fp * c_fp + fn * c_fn\nts = np.linspace(0.005, 0.5, 100)\nbest_t = ts[np.argmin([cost_at(t, y_val, p_val) for t in ts])]   # choose on validation, report on test\n```\n\nscikit-learn wraps this as `TunedThresholdClassifierCV`, which picks the threshold by cross-validation for any scorer, including a custom cost.\n\n## Multiclass averaging\nWith $K$ classes you get a $K \\times K$ confusion matrix and one precision/recall pair per class (that class versus the rest). Three ways to summarise:\n- **Macro**: average the per-class scores. Every class counts equally, so a rare class with recall 0.2 drags the score down. Use it when small classes matter.\n- **Micro**: pool TP, FP and FN over classes, then compute. For single-label problems micro-precision, micro-recall and micro-$F_1$ all equal accuracy.\n- **Weighted**: average per-class scores weighted by class support. It looks like macro but behaves like accuracy; it hides weak rare classes.\n\nReport the per-class table next to whichever average you pick; the average alone hides which class is failing.\n\n! Example: fraud screening at two thresholds\n! 10,000 transactions, 200 fraudulent (2%). At $t = 0.5$: TP = 120, FN = 80, FP = 180, TN = 9,620. Accuracy 97.4%, which is *worse* than the 98% of predicting \"never fraud\". Precision 120/300 = 0.40, recall 0.60, $F_1$ = 0.48, MCC about 0.48.\n! Costs: a missed fraud loses 500, a review costs 10. Total at $t = 0.5$: 80 x 500 + 180 x 10 = 41,800. The cost-optimal threshold for calibrated scores is 10/510, about 0.02. Suppose at $t = 0.02$ the model gives TP = 180, FN = 20, FP = 1,400. Precision collapses to 0.11 and $F_1$ falls to 0.20, yet total cost drops to 20 x 500 + 1,400 x 10 = 24,000. The \"worse\" model by $F_1$ saves 43% of the money.\n\n## Which number to report\n- If errors have known costs, report expected cost at the chosen threshold, plus precision and recall so people can reason about workload.\n- If the threshold is not yet fixed, report a threshold-free measure (next lesson) and pick the operating point later.\n- Use $F_1$ only when there is no cost information and positives and negatives of the prediction really are symmetric in importance; it is a convenient default for comparing systems, not a business objective.\n- Always state prevalence alongside precision, and the threshold alongside any count-based metric.\n\n> Takeaway: a confusion matrix belongs to a model plus a threshold; choose the threshold from costs or constraints on validation data, and report precision with its base rate.",
+   "q": "A content-moderation model is evaluated on a balanced test set (50% violating posts) and reaches precision 0.90 and recall 0.80 at its threshold. In production only 1% of posts violate policy. Estimate the production precision at the same threshold, explain why it changes, and say what the team should report instead.",
+   "s": "Recall and the false positive rate are computed within each true class, so they carry over to production. On the balanced set, recall 0.8 gives TP = 0.4N per N posts; precision 0.9 means FP = 0.4N/0.9 - 0.4N, about 0.044N, from 0.5N negatives, so **FPR = 0.089**. In production, per 10,000 posts: 100 violating, so TP = 80; 9,900 clean, so FP = 0.089 x 9,900, about 880. Precision = 80/960, roughly **0.08**. Most flags will be false alarms, because precision depends on prevalence and the negatives now outnumber positives 99 to 1. The team should report recall and FPR (prevalence-free), state the expected production prevalence, and give precision (or reviewer workload per true catch) computed at that prevalence. They should probably re-tune the threshold on data with the real class mix.",
+   "r": [
+    [
+     "scikit-learn: Metrics and scoring",
+     "https://scikit-learn.org/stable/modules/model_evaluation.html",
+     "The classification metrics section: confusion matrix, averaging options, MCC, with exact definitions."
+    ],
+    [
+     "scikit-learn: Tuning the decision threshold",
+     "https://scikit-learn.org/stable/modules/classification_threshold.html",
+     "Why 0.5 is arbitrary and how TunedThresholdClassifierCV picks a threshold for a given scorer or cost."
+    ],
+    [
+     "Google ML Crash Course: Accuracy, precision, recall",
+     "https://developers.google.com/machine-learning/crash-course/classification/accuracy-precision-recall",
+     "Short interactive treatment of the trade-off as the threshold moves."
+    ],
+    [
+     "Thresholding classifiers to maximize F1 (Lipton, Elkan, Narayanaswamy)",
+     "https://arxiv.org/abs/1402.1892",
+     "Shows the F1-optimal threshold for calibrated scores is half the achievable F1, and the pitfalls of optimising F1 over many labels."
+    ]
+   ],
+   "k": [
+    "confusion matrix",
+    "precision and recall",
+    "decision threshold"
+   ],
+   "x": [
+    "scikit-learn",
+    "NumPy"
+   ],
+   "p": [
+    "cross-tabulation",
+    "conditional-aggregation",
+    "top-k-classification-accuracy",
+    "mean-iou-for-segmentation"
+   ]
+  },
+  {
+   "id": "06.02",
+   "t": "ROC and precision-recall curves",
+   "n": [
+    "Sweeping the threshold traces a curve. The **ROC curve** plots TPR against FPR; the **PR curve** plots precision against recall. Both evaluate the ranking, not one decision.",
+    "ROC AUC equals the probability that a random positive scores above a random negative (the Mann-Whitney statistic). It ignores calibration and is unchanged by prevalence.",
+    "Under heavy imbalance, a tiny FPR still means many false positives, so ROC looks good while precision is poor. The PR curve exposes this; its random baseline is the prevalence, not 0.5.",
+    "**Average precision** summarises the PR curve as a step sum $\\sum_n (R_n - R_{n-1}) P_n$; linear interpolation between PR points overstates it.",
+    "An operating point is chosen where the curve meets your constraint or cost line, on validation data. A higher AUC does not guarantee a better model at *that* point."
+   ],
+   "a": "## The threshold sweep\nThe previous lesson fixed a threshold and read one confusion matrix. Sort the validation examples by score and lower the threshold one example at a time: each step converts one example from predicted negative to predicted positive, so either TP or FP goes up by one. Recording the rates at each step gives a curve that describes the whole ranking.\n\n%%flow One sort produces both curves; each threshold is one point on each.\nScores + labels -(sort descending)-> Ranked list -(cut at each score)-> Confusion matrix per cut -(TPR vs FPR)-> *ROC curve\nRanked list -(precision vs recall)-> *PR curve -(step sum)-> Average precision\n%%\n\n## ROC and AUC\nThe **ROC curve** puts FPR on the x-axis and TPR (recall) on the y-axis. It starts at (0, 0) with the threshold above every score and ends at (1, 1) with everything predicted positive. A random ranking gives the diagonal; a perfect ranking goes straight up to (0, 1) and then across.\n\nThe area under it has a clean meaning:\n\n$$\\text{AUC} = P\\big(s(x^+) > s(x^-)\\big) + \\tfrac12 P\\big(s(x^+) = s(x^-)\\big)$$\n\nfor a random positive $x^+$ and a random negative $x^-$. That is the Mann-Whitney U statistic divided by $n_+ n_-$, so you can compute AUC by ranks in $O(n \\log n)$ without drawing anything. Consequences worth knowing:\n- AUC is **invariant to any monotone transform** of the scores. Squaring probabilities or applying a sigmoid does not change it, so AUC says nothing about calibration.\n- Because TPR and FPR are each computed within one class, AUC **does not change with prevalence**.\n- Ties count half. With heavily tied scores (a coarse model, rounded probabilities), the curve has diagonal segments and the trapezoid rule is the right way to integrate them.\n\n## Precision-recall curves\nThe **PR curve** puts recall on the x-axis and precision on the y-axis. Its random baseline is a horizontal line at the prevalence $\\pi$: a random ranking has precision $\\pi$ at every recall. So an AP of 0.3 is poor when $\\pi = 0.5$ and strong when $\\pi = 0.001$. Always quote the prevalence with it.\n\nThe PR curve is not monotone and its points cannot be joined with straight lines: precision between two achievable points is not a linear blend (Davis and Goadrich showed the correct interpolation in ROC space maps to a curve in PR space). The standard summary, **average precision**, avoids interpolation by using a step sum over thresholds:\n\n$$\\text{AP} = \\sum_n (R_n - R_{n-1})\\, P_n$$\n\nscikit-learn's `average_precision_score` computes exactly this; `auc(recall, precision)` uses trapezoids and is optimistic.\n\n## Why ROC can flatter an imbalanced problem\nThe x-axis of ROC is a rate over negatives. When negatives outnumber positives 100 to 1, an FPR of 0.01 sounds negligible but equals as many false positives as there are positives in total. Precision, which is what a reviewer or user experiences, divides by the count of alarms and feels that directly.\n\n$$\\text{precision} = \\frac{\\pi\\,\\text{TPR}}{\\pi\\,\\text{TPR} + (1-\\pi)\\,\\text{FPR}}$$\n\nThis formula also lets you translate any ROC point into a precision for a given deployment prevalence, which is useful when the test set was rebalanced.\n\n| Question | Better tool\n| How well does the model rank, independent of class mix? | ROC AUC\n| How many alarms are real at the recall I need, on a rare class? | PR curve, AP\n| Is the probability itself trustworthy? | neither: reliability diagram, log loss (module 03)\n| Which threshold do I ship? | the curve plus a cost or constraint, on validation data\n\n! Example: higher AUC, worse product\n! 100,000 validation cases, 1,000 positive (1%). Model A has ROC AUC 0.95, model B 0.93. The product needs recall 0.80.\n! At recall 0.80, model A sits at FPR 0.03: 2,970 false positives against 800 true ones, precision 0.21. Model B's curve is steeper in that region and reaches recall 0.80 at FPR 0.01: 990 false positives, precision 0.45.\n! B wins where the product operates, despite the lower AUC; A's extra area comes from the high-recall corner nobody will deploy. Comparing the PR curves or \"precision at recall 0.8\" would have shown this immediately.\n\n## Choosing an operating point\nCommon ways to pick a threshold from the curve, always on validation data, then confirmed once on test:\n1. **Constraint**: \"recall at least 0.95\" (screening) or \"FPR at most 0.1%\" (spam that hides real mail). Take the threshold of the first point meeting it.\n2. **Cost**: expected cost is $c_{FN}\\,P\\,(1-\\text{TPR}) + c_{FP}\\,N\\,\\text{FPR}$. Lines of equal cost in ROC space have slope $c_{FP}N / (c_{FN}P)$; the best point is where such a line touches the curve.\n3. **Capacity**: \"the review team handles 300 cases a day\" fixes the number of alarms, i.e. a top-$k$ cut. Then precision at $k$ is the metric.\n\n```python\nfrom sklearn.metrics import roc_auc_score, average_precision_score, precision_recall_curve\nprint(roc_auc_score(y_val, s_val), average_precision_score(y_val, s_val), y_val.mean())\nprec, rec, thr = precision_recall_curve(y_val, s_val)        # len(thr) == len(prec) - 1\nok = rec[:-1] >= 0.80\nt = thr[ok][-1]                     # highest threshold that still meets the recall target\n```\n\nTwo cautions. A curve estimated from few positives is noisy: with 50 positives each one moves recall by 0.02, so bootstrap the curve (ML Maths covers the bootstrap) before arguing about the third decimal of AUC. And if the deployment prevalence differs from validation, the PR curve and the chosen precision move, while the ROC point does not; recompute precision with the formula above.\n\n> Takeaway: use ROC AUC to compare rankings, the PR curve to see what a rare-class product will actually feel, and choose the operating point from a cost or constraint rather than from the area.",
+   "q": "Two fraud models are compared on a test set where 0.2% of transactions are fraud. Model X has ROC AUC 0.97 and AP 0.18; model Y has ROC AUC 0.94 and AP 0.31. Explain how both statements can be true, and which model you would expect to serve a team that can review only the top 500 transactions per day.",
+   "s": "AUC averages ranking quality over the whole FPR range, weighting every negative equally, while AP is dominated by the top of the ranking, where precision is computed among the highest-scored cases. Model X ranks well overall (most fraud lands above most legitimate traffic), but its very top is contaminated with legitimate transactions; model Y places fraud more cleanly at the very top and loses ground further down. With 0.2% prevalence, a small FPR difference at the top equals many false alarms, which AP feels and AUC barely registers. A team reviewing 500 cases a day operates at the extreme top of the ranking, so the relevant metric is precision at 500 (or the left end of the PR curve). Model Y, with the higher AP, is very likely better there; confirm by computing precision@500 for both on validation data before choosing.",
+   "r": [
+    [
+     "The precision-recall plot is more informative than the ROC plot on imbalanced datasets (Saito and Rehmsmeier)",
+     "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0118432",
+     "Open-access paper with clear simulations of ROC vs PR under imbalance."
+    ],
+    [
+     "scikit-learn: Precision-recall example",
+     "https://scikit-learn.org/stable/auto_examples/model_selection/plot_precision_recall.html",
+     "How average precision is computed and why it is not the trapezoidal area."
+    ],
+    [
+     "Google ML Crash Course: ROC and AUC",
+     "https://developers.google.com/machine-learning/crash-course/classification/roc-and-auc",
+     "The ranking interpretation of AUC and choosing a threshold, with interactive figures."
+    ],
+    [
+     "scikit-learn: ROC example",
+     "https://scikit-learn.org/stable/auto_examples/model_selection/plot_roc.html",
+     "One-vs-rest and micro/macro ROC for multiclass problems."
+    ]
+   ],
+   "k": [
+    "ROC AUC",
+    "average precision",
+    "operating point"
+   ],
+   "x": [
+    "scikit-learn",
+    "NumPy"
+   ],
+   "p": [
+    "auc-roc",
+    "area-under-roc-curve-via-trapezoidal-rule",
+    "precision-recall-curve-and-average-precision",
+    "canary-mann-whitney",
+    "precision-recall-at-k"
+   ]
+  },
+  {
+   "id": "06.03",
+   "t": "Regression metrics and robust losses",
+   "n": [
+    "Each error metric is minimised by a different summary of $y \\mid x$: squared error by the **mean**, absolute error by the **median**, pinball loss by a **quantile**. Choose the metric for the quantity you actually want to predict.",
+    "RMSE is in the target's units but is dominated by the largest errors; MAE is more robust and easier to explain. A large gap between RMSE and MAE signals a heavy error tail.",
+    "$R^2 = 1 - SS_{res}/SS_{tot}$ compares the model to predicting the mean of the evaluation set. It is negative when the model is worse than that, and it depends on how varied the evaluation targets are.",
+    "Percentage errors (MAPE) are undefined at zero and punish over-forecasts more than under-forecasts; use them only for strictly positive targets far from zero, or prefer a scaled error.",
+    "**Huber** loss is quadratic for small residuals and linear beyond $\\delta$, so outliers cannot dominate the gradient. Train with a robust loss when the label noise has a heavy tail."
+   ],
+   "a": "## What each metric is asking for\nFor regression the choice of metric is a choice of *which number* the model should output. Given the conditional distribution of $y$ at a point $x$:\n- Minimising expected **squared error** gives the conditional **mean**.\n- Minimising expected **absolute error** gives the conditional **median**.\n- Minimising the **pinball (quantile) loss** $\\rho_\\tau(r) = \\max(\\tau r, (\\tau - 1) r)$ with $r = y - \\hat y$ gives the conditional $\\tau$-quantile. With $\\tau = 0.9$, under-predictions cost 9 times more than over-predictions, which is what you want for \"how much stock covers 90% of days\".\n\nSo if you train with MSE but evaluate with MAE, you are optimising for the mean and grading on the median. For skewed targets (delivery times, claim sizes, house prices) those differ a lot. The loss table in lesson 01.01 listed these; this lesson is about using them to judge models.\n\n%%layers Pick the metric for the summary of y you need, then train with a loss that targets the same summary.\nSquared error, RMSE | targets the conditional mean; punishes large misses hardest\n*Absolute error, MAE | targets the conditional median; robust to outliers\nPinball loss at tau | targets a quantile; asymmetric costs, prediction intervals\nHuber at delta | mean-like near zero, median-like in the tails\n%%\n\n## The everyday metrics\n| Metric | Formula | Units | Notes\n| MSE | $\\frac1n\\sum (y_i-\\hat y_i)^2$ | squared | the usual training loss; hard to interpret\n| RMSE | $\\sqrt{\\text{MSE}}$ | target | one large miss can dominate\n| MAE | $\\frac1n\\sum \\lvert y_i-\\hat y_i\\rvert$ | target | median-oriented, readable\n| $R^2$ | $1 - \\sum (y_i-\\hat y_i)^2 / \\sum (y_i-\\bar y)^2$ | none | share of variance explained\n| MAPE | $\\frac{100}{n}\\sum \\lvert y_i-\\hat y_i\\rvert / \\lvert y_i\\rvert$ | % | breaks at $y=0$, asymmetric\n| RMSLE | RMSE of $\\log(1+y)$ vs $\\log(1+\\hat y)$ | ratio-like | for multiplicative errors on positive targets\n\nAlways have $\\text{MAE} \\le \\text{RMSE}$; equality means every error has the same size. The ratio tells you about the tail: if RMSE is three times MAE, a few predictions are badly wrong and deserve a look.\n\n## Reading $R^2$ correctly\n$R^2$ compares your model with the constant predictor that outputs the mean of the *evaluation* targets. Three consequences:\n1. On held-out data it can be **negative**: the model is worse than that constant. Training $R^2$ of an OLS fit with an intercept is never negative; test $R^2$ can be.\n2. It **depends on the spread of $y$** in the evaluation set. The same model has higher $R^2$ on a test set covering all of a country than on one city, because $SS_{tot}$ is larger. Comparing $R^2$ across datasets is usually meaningless; compare RMSE or MAE instead.\n3. A high $R^2$ does not mean small errors in units that matter. Predicting house prices with $R^2 = 0.9$ can still mean a typical miss of 40,000.\n\n## Percentage and scaled errors\nMAPE is popular because \"off by 8%\" is easy to communicate, but it has two defects. It divides by $y$, so it explodes near zero and is undefined at zero (common in demand data). And it is asymmetric: for a true value of 100, predicting 0 costs 100% while predicting 300 costs 200%, so models tuned on MAPE learn to under-forecast. Alternatives:\n- **WAPE** $= \\sum \\lvert y - \\hat y\\rvert / \\sum \\lvert y\\rvert$: one ratio over the whole set, stable when individual $y$ values are small.\n- **MASE**: MAE divided by the in-sample MAE of a naive forecast (last value, or same day last week). Below 1 means you beat the naive baseline; it works across series of different scales. Hyndman's forecasting textbook makes this the default for time series.\n\n## Robust losses for training\nSquared error has gradient $2r$: a residual of 100 pushes the fit 100 times harder than a residual of 1. If 1% of labels are corrupted (a misplaced decimal point, a sensor glitch), those rows steer the whole model. The **Huber** loss caps that influence:\n\n$$L_\\delta(r) = \\begin{cases} \\tfrac12 r^2 & |r| \\le \\delta \\\\ \\delta\\,(|r| - \\tfrac12\\delta) & |r| > \\delta \\end{cases}$$\n\nIts gradient is $r$ inside $[-\\delta, \\delta]$ and $\\pm\\delta$ outside, so it behaves like MSE for ordinary errors and like MAE for outliers. A common choice of $\\delta$ is around 1.35 times a robust estimate of the noise scale, which keeps about 95% efficiency when the noise is in fact Gaussian. Log-cosh is a smooth relative. For linear models, scikit-learn offers `HuberRegressor`; gradient boosting libraries take `loss=\"huber\"` or `\"quantile\"`.\n\n```python\nimport numpy as np\nerr = y - y_hat\nmae, rmse = np.abs(err).mean(), np.sqrt((err ** 2).mean())\nr2 = 1 - (err ** 2).sum() / ((y - y.mean()) ** 2).sum()\ntau = 0.9\npinball = np.maximum(tau * err, (tau - 1) * err).mean()\n```\n\n! Example: one outlier, two stories\n! Five house-price errors, in thousands: 10, -10, 20, -20, 200. MAE = 260/5 = 52; MSE = (100 + 100 + 400 + 400 + 40,000)/5 = 8,200, so RMSE = 90.6.\n! Without the last house: MAE = 15, RMSE = 15.8. One listing moved RMSE by a factor of almost 6 and MAE by 3.5. Before deciding which model is better, look at that row: a data error (price recorded in cents) should be fixed or dropped; a real mansion means the model needs features for the luxury segment, or the business needs a separate model for it.\n\n## Evaluate in slices\nA single average hides structure. Plot residuals against the prediction and against key features, and report error by segment (price band, region, new vs returning). A model with good overall MAE that systematically under-predicts the most expensive decile is a pricing risk. If you train on a transformed target such as $\\log y$, report metrics on the original scale, since that is the scale users care about (lesson 07.01 explains the back-transform bias).\n\n> Takeaway: pick the regression metric for the quantity you want (mean, median or quantile), quote it in the target's units next to a naive baseline, and use a robust loss when the label noise has a heavy tail.",
+   "q": "A delivery-time model reports test RMSE of 9.8 minutes and MAE of 4.1 minutes, and R-squared of 0.62. A colleague proposes switching the training loss from MSE to MAE \"to improve MAE\". What do the numbers already tell you about the errors, what will the switch change about the predictions, and what would you check before deciding?",
+   "s": "RMSE is more than twice MAE, so the error distribution has a heavy tail: most deliveries are predicted within a few minutes, while a minority are missed by a lot (traffic, failed hand-offs). Training with MAE makes the model predict the conditional **median** instead of the mean; for right-skewed delivery times that shifts predictions down, which will likely improve MAE but worsen RMSE and systematically under-promise the long deliveries. Which one is right depends on the product: a customer-facing ETA may prefer the median, while staffing plans need the mean, and a \"promise\" time needs a high quantile (pinball loss at 0.9). Before deciding, look at residuals by segment to see whether the tail is predictable (missing features) or noise, check whether a few corrupted labels drive RMSE, and compare against a naive baseline in both metrics.",
+   "r": [
+    [
+     "scikit-learn: Regression metrics",
+     "https://scikit-learn.org/stable/modules/model_evaluation.html",
+     "The regression metrics section: definitions of R-squared, MAPE, pinball loss and which statistic each one targets."
+    ],
+    [
+     "Forecasting: Principles and Practice, 3rd ed. (Hyndman and Athanasopoulos): Evaluating point forecast accuracy",
+     "https://otexts.com/fpp3/accuracy.html",
+     "Scale-dependent, percentage and scaled errors, and why MASE is preferred."
+    ],
+    [
+     "Making and evaluating point forecasts (Gneiting)",
+     "https://arxiv.org/abs/0912.0902",
+     "The theory behind matching the scoring function to the functional (mean, median, quantile) you want."
+    ],
+    [
+     "scikit-learn: Robustness regression",
+     "https://scikit-learn.org/stable/modules/linear_model.html",
+     "The robustness regression section: Huber, RANSAC and Theil-Sen regressors and when each breaks down."
+    ]
+   ],
+   "k": [
+    "regression metrics",
+    "robust loss"
+   ],
+   "x": [
+    "NumPy",
+    "scikit-learn"
+   ],
+   "p": [
+    "regression-metrics",
+    "loss-functions",
+    "standard-error-comparison",
+    "percentiles-quantiles"
+   ]
+  },
+  {
+   "id": "06.04",
+   "t": "Cross-validation strategies",
+   "n": [
+    "Cross-validation estimates how well *the procedure* does when trained on about $(k-1)/k$ of your data. It is not the error of the one model you will deploy, and its fold-to-fold spread understates the real uncertainty.",
+    "The splitter must reproduce deployment: **stratified** for rare classes, **grouped** when rows share an entity, **forward-chaining with a gap** for time, and stratified-grouped when you need both.",
+    "When you tune on CV scores, the best score is biased upwards. **Nested CV** wraps the whole tuning procedure in an outer loop to estimate it honestly, at the cost of (outer folds) x (inner folds) x (configs) fits.",
+    "To compare two models, use the same folds and look at **paired** per-fold differences, with a variance correction for overlapping training sets (Nadeau and Bengio).",
+    "After CV picks a configuration, refit it on all the training data; the CV score is the estimate you report for that refit."
+   ],
+   "a": "## What lesson 01.03 left open\nLesson 01.03 introduced k-fold CV, its stratified, grouped and time-series variants, and the leakage that random splits invite. This lesson is about using CV well: what number it actually estimates, how to choose $k$ and the splitter, how nested CV keeps tuning honest, and how to decide whether one model really beats another.\n\n## What CV estimates\nEach fold trains a fresh model on $n(k-1)/k$ rows. The average fold score is therefore an estimate of the expected error of *the training procedure* applied to datasets of that size, not of the particular model you will refit on all $n$ rows. Bates, Hastie and Tibshirani (2021) show this formally and also show why the naive standard error, the fold standard deviation divided by $\\sqrt{k}$, is too small: the folds share most of their training data, so their errors are positively correlated.\n\nThe choice of $k$ trades three things:\n- **Bias**: with $k = 5$ each model sees 80% of the data, so if the learning curve (lesson 01.05) is still rising, CV is pessimistic. Larger $k$ reduces this.\n- **Variance**: leave-one-out ($k = n$) is nearly unbiased but its estimate can be highly variable, and each fold's score is a single 0/1 value for classification.\n- **Cost**: $k$ fits. For most tabular problems $k = 5$ or $10$ is a good default; **repeated** k-fold (several shuffles of the fold assignment) reduces the variance that comes from one particular partition.\n\n## Choosing the splitter\n| Data | Splitter | Why\n| Rare class, i.i.d. rows | StratifiedKFold | every fold has enough positives to score\n| Regression with a skewed target | stratify on binned target | folds see similar target ranges\n| Several rows per user, patient, device | GroupKFold | no entity on both sides\n| Rare class and groups | StratifiedGroupKFold | both constraints at once\n| Time-ordered data | TimeSeriesSplit with gap | train on the past only\n| Labels that span time windows | forward chaining with purge and embargo | no training label overlaps the test window\n\nFor time series the **gap** matters whenever features or labels use windows. If a label is \"churn in the next 30 days\" and features use the last 90 days, a training row from the day before the cut has a label window that overlaps the test period. Drop (purge) training rows whose label windows reach into the test block, and leave a gap (embargo) after it before training rows resume in expanding-window schemes.\n\n```python\nfrom sklearn.model_selection import TimeSeriesSplit, StratifiedGroupKFold\ntss = TimeSeriesSplit(n_splits=5, gap=30)            # rows sorted by time; 30 rows skipped at each cut\nsgk = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=0)\nfor tr, va in sgk.split(X, y, groups=user_id):\n    ...\n```\n\n## Nested CV: honest numbers after tuning\nIf you try 50 configurations and report the best mean CV score, you have selected the maximum of 50 noisy estimates, and that maximum is optimistic. Varma and Simon (2006) showed the bias can be large on small datasets. **Nested CV** fixes this by treating the entire selection procedure as the thing being evaluated.\n\n%%flow Nested CV: the inner loop chooses, the outer loop grades the choosing. The outer test fold never influences any choice.\nData -(outer split)-> Outer train fold -(inner CV over configs)-> *Best config -(refit on outer train)-> Model -(score)-> Outer test fold\nOuter test scores -(average over outer folds)-> Estimate of tuned-procedure error\n%%\n\nEach outer fold may pick a *different* best configuration; that is expected. The outer score is the estimate for \"run this tuning procedure and deploy what it picks\". Cost multiplies: 5 outer x 5 inner x 20 configs = 500 fits, plus refits. With a large dataset a single untouched test set does the same job much more cheaply; nested CV earns its cost when data is scarce.\n\n```python\nfrom sklearn.model_selection import GridSearchCV, cross_val_score, StratifiedKFold\ninner = GridSearchCV(pipe, {\"logisticregression__C\": [0.01, 0.1, 1, 10]},\n                     cv=StratifiedKFold(5, shuffle=True, random_state=1), scoring=\"roc_auc\")\nouter_scores = cross_val_score(inner, X, y, cv=StratifiedKFold(5, shuffle=True, random_state=2), scoring=\"roc_auc\")\n```\n\n## Comparing two models\nUse the **same folds** for both models and analyse the per-fold *differences* $d_j$. Pairing removes the variation that comes from fold difficulty, which is usually larger than the difference between models. A plain paired t-test on $d_j$ is still overconfident because the training sets overlap. Nadeau and Bengio's corrected resampled t-test inflates the variance:\n\n$$t = \\frac{\\bar d}{\\sqrt{\\left(\\frac1J + \\frac{n_{te}}{n_{tr}}\\right)\\hat\\sigma_d^2}}$$\n\nwhere $J$ is the number of resamples and $n_{te}/n_{tr}$ the test-to-train size ratio (0.25 for 5-fold). scikit-learn's model-comparison example implements this test and a Bayesian alternative.\n\n! Example: is 0.6 of a point real?\n! Five-fold CV repeated twice gives $J = 10$ paired AUC differences, model B minus model A: mean $\\bar d = 0.006$, standard deviation 0.008.\n! Naive paired t: $0.006 / (0.008/\\sqrt{10}) = 2.37$, \"significant at 5%\". Corrected: the variance factor is $1/10 + 0.2/0.8 = 0.35$, so the standard error is $0.008 \\times \\sqrt{0.35} = 0.0047$ and $t = 1.27$, nowhere near significant. Unless B is cheaper or simpler, keep A, or collect more data before claiming a win.\n\n## After CV\nCV picks a configuration; it does not hand you the model. Refit the chosen pipeline on all training data and report the CV (or nested CV, or test) score as its expected performance. Keep fold assignments fixed (seed them, or hash ids as in lesson 01.03) so that later experiments are compared on the same folds. And keep the predictions each fold made on its held-out rows: these **out-of-fold predictions** are what stacking and target encoding (lesson 07.02) are built from.\n\n> Takeaway: choose the splitter that mimics deployment, wrap tuning in nested CV or a final untouched test set, and compare models with paired, variance-corrected differences on shared folds.",
+   "q": "You have 600 labelled patients (several visits each, 8% positive), and you will tune a gradient-boosted model over 40 configurations. A teammate runs GroupKFold(5) over the grid and reports the best mean AUC, 0.88, as the expected deployment performance. What is wrong with the number, and what would you run instead, roughly how many fits would it take, and what would you do if that is too expensive?",
+   "s": "The 0.88 is the maximum over 40 noisy CV estimates, so it is biased upwards: with only about 48 positive patients per fold, the noise between configurations is large and the winner partly won by luck. Also plain GroupKFold does not balance the rare class, so some folds may have very few positives. Run **nested CV** with StratifiedGroupKFold in both loops (grouped by patient): for each of 5 outer folds, tune over the 40 configs with inner 5-fold CV, refit the winner on the outer training fold and score it on the outer test fold. That is about 5 x (40 x 5 + 1) = 1,005 fits. Report the mean and spread of the 5 outer scores. If too expensive, use random search over fewer configs or successive halving in the inner loop, or reserve a grouped held-out test set once and tune with ordinary CV on the rest.",
+   "r": [
+    [
+     "Cross-validation: what does it estimate and how well does it do it? (Bates, Hastie, Tibshirani)",
+     "https://arxiv.org/abs/2104.00673",
+     "Why CV estimates the procedure's average error and why naive CV intervals undercover; proposes nested CV for intervals."
+    ],
+    [
+     "Bias in error estimation when using cross-validation for model selection (Varma and Simon)",
+     "https://bmcbioinformatics.biomedcentral.com/articles/10.1186/1471-2105-7-91",
+     "Open-access demonstration of optimistic bias from tuning on CV and the nested CV fix."
+    ],
+    [
+     "scikit-learn: Statistical comparison of models using grid search",
+     "https://scikit-learn.org/stable/auto_examples/model_selection/plot_grid_search_stats.html",
+     "Implements the Nadeau-Bengio corrected t-test and a Bayesian comparison on CV results."
+    ],
+    [
+     "scikit-learn: Nested versus non-nested cross-validation",
+     "https://scikit-learn.org/stable/auto_examples/model_selection/plot_nested_cross_validation_iris.html",
+     "Short runnable example showing the optimism of non-nested scores."
+    ]
+   ],
+   "k": [
+    "cross-validation",
+    "nested CV",
+    "model comparison"
+   ],
+   "x": [
+    "scikit-learn"
+   ],
+   "p": [
+    "k-fold-cross-validation",
+    "stacking-ensemble",
+    "hashed-dataset-split",
+    "bootstrap-confidence-interval"
+   ]
+  },
+  {
+   "id": "06.05",
+   "t": "Hyperparameter search",
+   "n": [
+    "Hyperparameters are choices the training loss cannot make (regularisation strength, depth, learning rate). Search is optimisation of a noisy, expensive validation score, so the budget and the search space matter more than the algorithm.",
+    "Put scale parameters (learning rate, $C$, $\\lambda$) on a **log scale**. A badly bounded range wastes most trials no matter how clever the search.",
+    "**Random search** beats grid search when only a few hyperparameters matter: every trial tries a new value of each one. With 60 trials, the chance of hitting the top 5% of the space is $1 - 0.95^{60} \\approx 95\\%$.",
+    "**Bayesian optimisation** fits a surrogate of score versus config and picks the next trial by an acquisition function; **successive halving / Hyperband** spend little on bad configs by stopping them early.",
+    "The more configs you try, the more the best validation score overfits the validation set. Rerun the top few with new seeds and keep a final test set untouched."
+   ],
+   "a": "## Parameters versus hyperparameters\nTraining finds parameters (weights, split points) by minimising a loss. Hyperparameters are everything that loss cannot choose for you: regularisation strength, tree depth, number of neighbours, learning rate, batch size. Lesson 01.04 showed why some of them exist (capacity control); this lesson is about choosing them efficiently once you have a trustworthy validation scheme from 06.04.\n\nHyperparameter search is optimisation of a function $f(\\lambda)$ = validation score, with three nasty properties: each evaluation is expensive (a full training run), it is noisy (seed, fold assignment), and you have no gradient. That makes **budget** the central design variable.\n\n## Design the search space first\nMost wasted tuning comes from the space, not the search algorithm.\n- Use a **log scale** for anything that acts multiplicatively: learning rate in $[10^{-4}, 10^{-1}]$, $C$ or $\\lambda$ in $[10^{-3}, 10^{3}]$. A uniform range from 0.0001 to 0.1 puts 90% of samples above 0.01.\n- Tune the few parameters that matter and fix the rest at good defaults. For gradient boosting: learning rate, number of trees (via early stopping), depth or leaves, minimum samples per leaf, subsampling. For neural nets: learning rate first, by a wide margin.\n- Check the winner is not on the **edge** of the range. If the best $C$ is the largest one you tried, the range was wrong.\n- Handle **conditional** parameters (kernel width only when the kernel is RBF) with a search tool that supports them, rather than a grid of invalid combinations.\n\n## Grid versus random\nGrid search tries every combination of a few values per parameter. With 3 parameters at 5 values that is 125 runs, but only 5 distinct values of each. If only one parameter really matters, which Bergstra and Bengio found is typical, 120 of those runs repeat values you already tested for the one that counts.\n\nRandom search samples each parameter independently. With 125 random trials, the important parameter gets 125 distinct values. A useful rule: if a good region covers 5% of the space, $n$ random trials miss it with probability $0.95^n$, so 60 trials find it with about 95% probability, whatever the number of dimensions. Grid search still has a place for one or two parameters, where it is easy to read and plot.\n\n```python\nfrom scipy.stats import loguniform, randint\nfrom sklearn.model_selection import RandomizedSearchCV\nfrom sklearn.ensemble import HistGradientBoostingClassifier\nspace = {\"learning_rate\": loguniform(1e-3, 3e-1), \"max_leaf_nodes\": randint(8, 128),\n         \"min_samples_leaf\": randint(5, 200), \"l2_regularization\": loguniform(1e-4, 10)}\nsearch = RandomizedSearchCV(HistGradientBoostingClassifier(early_stopping=True), space,\n                            n_iter=60, cv=cv, scoring=\"average_precision\", random_state=0, n_jobs=-1)\n```\n\n## Bayesian optimisation\nRandom search ignores what earlier trials revealed. **Bayesian optimisation** keeps a surrogate model of $f$, a Gaussian process (Snoek et al., 2012) or a tree-structured Parzen estimator (as in Optuna and Hyperopt), and chooses the next config by maximising an **acquisition function** such as expected improvement, which balances trying near the current best against exploring regions the surrogate is unsure about.\n\n%%seq One round of Bayesian optimisation. Each round costs one training run; the surrogate update is cheap.\nOptimiser > Surrogate: fit to all (config, score) pairs so far\nSurrogate > Optimiser: mean and uncertainty for any config\nOptimiser > Optimiser: maximise expected improvement\nOptimiser > Trainer: train with the chosen config\nTrainer -> Optimiser: validation score\n%%\n\nIt typically reaches a given score in fewer trials than random search, which matters when one trial costs GPU-hours. Its weaknesses: it is sequential (parallel variants exist but lose some efficiency), and its advantage shrinks in high-dimensional or very noisy spaces. With a budget of under about 20 trials, a well-designed random search is hard to beat.\n\n## Spend less on bad configs\nMany configurations are obviously bad after a fraction of training. **Successive halving** starts many configs on a small budget (few epochs, a data subsample, few trees), keeps the best $1/\\eta$, multiplies their budget by $\\eta$, and repeats. **Hyperband** runs several such brackets with different starting sizes, hedging against configs that start slow and finish strong; ASHA is its asynchronous version for clusters. Optuna calls the same idea pruning: a trial reports intermediate scores and is stopped if it falls below the median of earlier trials at that step.\n\nSeparate this from **early stopping within one run** (lesson 01.04): stopping training when validation loss has not improved for `patience` epochs and keeping the best checkpoint. Early stopping turns the number of epochs or trees from a hyperparameter into something measured, so it is worth enabling inside every trial.\n\n! Example: the budget arithmetic of successive halving\n! 81 configs, $\\eta = 3$, full training is 81 epochs. Rung 1: 81 configs x 1 epoch. Rung 2: 27 x 3. Rung 3: 9 x 9. Rung 4: 3 x 27. Rung 5: 1 x 81. Each rung costs 81 epochs, 405 epochs in total.\n! Training all 81 configs fully costs 81 x 81 = 6,561 epochs, 16 times more. The risk is the configs that look bad at 1 epoch but would win at 81 (very small learning rates do this); Hyperband's extra brackets, which start fewer configs at a larger budget, exist to catch them.\n\n## Do not overfit the validation set\nEvery trial is a look at the validation data. After hundreds of trials the best score is partly selection noise, the same optimism nested CV addresses. Practical guards:\n1. Rerun the top 3 to 5 configs with several new seeds (and if possible new folds) and choose by the mean; differences smaller than the seed spread are ties.\n2. Prefer the simpler or cheaper of tied configs.\n3. Score the final choice once on an untouched test set, or use nested CV when data is small.\n4. Log every trial (config, seed, score, code version), so the search itself is reproducible; lesson 09.04 covers experiment tracking.\n\n> Takeaway: spend effort on a log-scaled, well-bounded space and a fixed budget; use random search by default, Bayesian optimisation when trials are expensive, early stopping and successive halving to cut losers early, and reseeded reruns to keep the winner honest.",
+   "q": "You have budget for about 100 training runs of a gradient-boosted model, each taking 10 minutes on one machine, and 8 machines. A teammate proposes a 5 x 5 x 4 grid over learning rate (0.01 to 0.3, linear steps), max depth and subsample rate. Critique the plan and propose a better use of the same budget.",
+   "s": "The grid gives only 5 distinct values of each parameter, and if learning rate dominates (it usually does) most of the 100 runs re-test the same 5 learning rates. Linear steps from 0.01 to 0.3 crowd values at the high end; learning rate should be log-scaled. The number of trees is not mentioned, so each run must either fix it (biased against small learning rates) or use early stopping, which it should. Better: enable early stopping on a validation split inside every run, then use random search (or a TPE sampler) with log-uniform learning rate, integer depth or leaves, and uniform subsample, about 80 trials across the 8 machines, ideally with successive halving so poor configs stop after a few hundred trees. Spend the remaining ~20 runs re-training the top 4 configs with new seeds and folds, pick by mean score, then evaluate once on the held-out test set.",
+   "r": [
+    [
+     "Random search for hyper-parameter optimization (Bergstra and Bengio, JMLR 2012)",
+     "https://www.jmlr.org/papers/v13/bergstra12a.html",
+     "The low effective dimensionality argument and experiments showing random beats grid."
+    ],
+    [
+     "Practical Bayesian optimization of machine learning algorithms (Snoek, Larochelle, Adams)",
+     "https://arxiv.org/abs/1206.2944",
+     "Gaussian-process surrogates, expected improvement, and cost-aware acquisition."
+    ],
+    [
+     "Hyperband (Li et al.)",
+     "https://arxiv.org/abs/1603.06560",
+     "Successive halving, the bracket trade-off, and budget analysis."
+    ],
+    [
+     "Deep Learning Tuning Playbook (Google Research)",
+     "https://github.com/google-research/tuning_playbook",
+     "A practitioner's process: scientific vs nuisance parameters, search spaces, and when to stop."
+    ]
+   ],
+   "k": [
+    "hyperparameter tuning",
+    "Bayesian optimisation",
+    "early stopping"
+   ],
+   "x": [
+    "scikit-learn",
+    "Optuna"
+   ],
+   "p": [
+    "cross-join",
+    "learning-rate-sweep",
+    "early-stopping",
+    "self-join"
+   ]
+  },
+  {
+   "id": "06.06",
+   "t": "Imbalanced data",
+   "n": [
+    "Imbalance is mostly a problem of **evaluation and decision**, not of learning: a well-specified probabilistic model trained on the true class mix produces good rankings and calibrated probabilities. What breaks is accuracy as a metric and 0.5 as a threshold.",
+    "Start with stratified splits, a threshold-free metric (PR AUC, recall at fixed precision, expected cost) and a tuned threshold. Often that is all you need.",
+    "Class weights and resampling change the effective prior, so predicted probabilities become inflated. Undersampling negatives with keep-rate $\\beta$ can be undone exactly: $p = \\beta p_s / (\\beta p_s - p_s + 1)$.",
+    "SMOTE interpolates synthetic minority points; it can help weak or unregularised models but rarely helps strong learners after threshold tuning, and it must only ever run inside the training fold.",
+    "The real constraint is the **absolute number of positives**: with 200 positives in validation, recall is uncertain by about $\\pm 3$ points. Collecting more positives beats any rebalancing trick."
+   ],
+   "a": "## What actually goes wrong\nA dataset with 1% positives breaks three things, and only one of them is the model.\n- **The metric**: accuracy rewards predicting the majority class, as lessons 01.05 and 06.01 showed. Use PR curves, recall at a fixed precision, or expected cost.\n- **The threshold**: a calibrated model rarely outputs probabilities above 0.5 for a rare event, so the default threshold predicts almost nothing positive. Tune the threshold (06.01, 06.02).\n- **The amount of signal**: 1,000 positives is a small dataset, however many negatives you have. Models with many parameters can overfit the minority class, and every metric about it is noisy.\n\nThe first two have cheap fixes. A common misconception is that the learner itself \"ignores\" the minority class; a logistic regression or gradient-boosted model trained with log loss on the true class mix estimates $P(y=1 \\mid x)$ fine, with good ranking. Many \"imbalance fixes\" in practice are just indirect ways of moving the threshold.\n\n%%flow Try the fixes in this order; stop when the cost metric stops improving on validation.\nStratified split -(threshold-free metric)-> Tune threshold -(still poor?)-> Class weights -(still poor?)-> Resampling -(still poor?)-> *More positive data or better features\n%%\n\n## Class weights\nMultiplying the loss of each positive by $w$ is equivalent, in expectation, to duplicating positives $w$ times. scikit-learn's `class_weight=\"balanced\"` sets each class's weight to $n / (K \\cdot n_k)$, so with 1% positives the positive weight is 50 and the negative weight about 0.5. Effects:\n- The model focuses more capacity on the minority region, which can help models whose loss is dominated by easy negatives.\n- The predicted probabilities now correspond to a world where classes are balanced: they are systematically too high. If anyone consumes the probabilities (pricing, risk scores, expected-value calculations), recalibrate on data with the true class mix (module 03).\n- Ranking (AUC, AP) often changes little, which tells you the weight mainly moved the threshold.\n\n## Resampling\n**Random undersampling** keeps every positive and a fraction $\\beta$ of negatives. It is mostly a compute tool: training on 10% of the negatives is 10 times faster and usually loses little ranking quality when negatives are plentiful. Because sampling negatives at rate $\\beta$ multiplies the odds by $1/\\beta$, the probabilities can be corrected exactly:\n\n$$p = \\frac{\\beta\\, p_s}{\\beta\\, p_s - p_s + 1}$$\n\nwhere $p_s$ is the model's output trained on the sampled data. With $\\beta = 0.1$, a sampled-model output of 0.5 means a true probability of $0.05 / 0.55 = 0.091$.\n\n**Random oversampling** duplicates positives, which is equivalent to weighting and encourages memorising them. **SMOTE** creates synthetic positives by interpolating between a positive and one of its $k$ nearest positive neighbours: $x_{new} = x_i + u\\,(x_{nn} - x_i)$ with $u \\sim U(0, 1)$. It fills in the minority region more smoothly but assumes straight lines between positives stay positive, which fails for categorical features and for overlapping classes. Benchmarks (Elor and Averbuch-Elor, 2022) found it helps weak learners such as unregularised trees, but for strong learners like gradient boosting, threshold tuning alone gives the same or better results. Van den Goorbergh et al. (2022) showed, for clinical risk models, that rebalancing produced badly miscalibrated risks with no gain in discrimination.\n\nHard rule: resample **only the training fold**. Oversampling before splitting puts copies or interpolations of validation positives into training, which inflates every score. `imblearn.pipeline.Pipeline` applies samplers during `fit` only, which makes this automatic inside CV.\n\n```python\nfrom imblearn.pipeline import make_pipeline\nfrom imblearn.over_sampling import SMOTE\nfrom sklearn.linear_model import LogisticRegression\npipe = make_pipeline(scaler, SMOTE(k_neighbors=5, random_state=0), LogisticRegression(max_iter=1000))\n# cross_val_score(pipe, X, y, cv=StratifiedKFold(5), scoring=\"average_precision\") resamples inside each fold\n```\n\n## Loss-level fixes in deep learning\nIn dense object detection, a one-stage detector sees about 100,000 candidate boxes per image, nearly all easy background. **Focal loss** multiplies cross-entropy by $(1 - p_t)^\\gamma$, where $p_t$ is the probability assigned to the true class, so confidently correct examples contribute almost nothing and training concentrates on the hard ones. With $\\gamma = 2$, an example classified at $p_t = 0.9$ is down-weighted 100 times. For classification with mini-batches, class-balanced batch sampling serves a similar purpose: every batch contains minority examples, so their gradient is not drowned out. Both distort probabilities in the same way as class weights.\n\n## Metrics and splits for rare classes\n- Use stratified (and, where needed, grouped) splits so each fold has enough positives.\n- Report PR AUC with the prevalence, recall at the precision the business needs, and expected cost; MCC and balanced accuracy are reasonable single-number summaries.\n- Compute uncertainty. Recall on $m$ positives has standard error about $\\sqrt{r(1-r)/m}$; with $m = 200$ and $r = 0.7$ that is 0.032, so two models 3 points apart are not distinguishable.\n\n! Example: credit default at 1%\n! 100,000 loans, 1,000 defaults; stratified split leaves 200 defaults in validation. Three logistic regressions with the threshold tuned on validation for minimum cost:\n! Plain (true class mix): AP 0.42, mean predicted probability 0.010 (matches the base rate). Balanced class weights: AP 0.42, mean predicted probability 0.19, so on average the probabilities are 19 times too high. SMOTE inside the training fold: AP 0.41.\n! After threshold tuning all three have nearly the same cost, within the $\\pm 3$-point noise on recall. The team ships the plain model because its probabilities feed the interest-rate calculation, and spends the effort on two new features and on labelling six more months of loans.\n\n> Takeaway: fix the metric and the threshold first; use class weights or resampling only when they measurably help on validation, recalibrate probabilities afterwards, resample inside training folds only, and remember that more positive examples beat any rebalancing.",
+   "q": "A medical team trains a gradient-boosted model on data with 3% positives, oversamples positives with SMOTE to 50%, and reports that cross-validated recall jumped from 0.41 to 0.83 and precision is \"still acceptable\" at 0.6. The oversampling was done on the full dataset before running 5-fold CV. List the problems with this result and describe how you would redo the evaluation.",
+   "s": "First, SMOTE before splitting leaks: synthetic positives are interpolations of real positives, so validation folds contain points nearly identical to training points (and possibly derived from validation positives themselves), inflating recall and precision. Second, the validation folds now have about 50% positives, so the precision of 0.6 is measured at the wrong prevalence; at the real 3% it would be far lower (precision depends on prevalence). Third, the jump in recall at the default 0.5 threshold is mostly a threshold shift: rebalancing inflates scores, which a tuned threshold on the original model could reproduce. Redo it with a pipeline that resamples only inside each training fold, stratified (and grouped by patient) folds evaluated on the true class mix, a threshold-free metric (PR AUC) plus recall at the clinically required precision, a threshold-tuned no-resampling baseline for comparison, and a calibration check if the probabilities will be shown to clinicians.",
+   "r": [
+    [
+     "The harm of class imbalance corrections for risk prediction models (van den Goorbergh et al.)",
+     "https://arxiv.org/abs/2202.09101",
+     "Shows resampling and weighting wreck calibration in clinical models without improving AUC."
+    ],
+    [
+     "To SMOTE, or not to SMOTE? (Elor and Averbuch-Elor)",
+     "https://arxiv.org/abs/2201.08528",
+     "Large benchmark: balancing helps weak learners; strong learners plus threshold tuning do as well."
+    ],
+    [
+     "SMOTE: Synthetic Minority Over-sampling Technique (Chawla et al.)",
+     "https://arxiv.org/abs/1106.1813",
+     "The original algorithm and its motivation."
+    ],
+    [
+     "imbalanced-learn: Over-sampling",
+     "https://imbalanced-learn.org/stable/over_sampling.html",
+     "SMOTE variants and how the imblearn Pipeline keeps sampling inside training folds."
+    ]
+   ],
+   "k": [
+    "class imbalance",
+    "resampling",
+    "class weights"
+   ],
+   "x": [
+    "scikit-learn",
+    "imbalanced-learn"
+   ],
+   "p": [
+    "balanced-dataloader",
+    "log-loss-binary-cross-entropy",
+    "sigmoid-focal-loss",
+    "precision-recall-curve-and-average-precision",
+    "softmax-cross-entropy-gradient"
+   ]
+  }
+ ]
+}

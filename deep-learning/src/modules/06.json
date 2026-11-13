@@ -1,0 +1,342 @@
+{
+ "n": "06",
+ "name": "Natural language processing",
+ "lessons": [
+  {
+   "id": "06.01",
+   "t": "Text preprocessing and tokenisation",
+   "n": [
+    "Every NLP model starts by mapping text to integer ids: normalise, pre-tokenise, split into subwords, look up ids. Each step is a modelling decision, and the model is tied to exactly the pipeline it was trained with.",
+    "Unicode normalisation (NFC, NFKC) makes visually identical strings byte-identical; case-folding and accent stripping are lossy choices that some tasks want and others do not.",
+    "Sentence splitting on '.' fails on abbreviations, decimals and initials. Use rules with exception lists or a trained splitter, and test on your own domain.",
+    "Subword tokenisers sit between words (huge vocabularies, unknown words) and characters (very long sequences). BPE learns merges by pair frequency; WordPiece encodes by greedy longest match with '##' continuations.",
+    "Byte-level BPE starts from the 256 byte values, so any string can be encoded and there is no unknown token."
+   ],
+   "a": "## Where this module sits\nModule 05 built the architectures that read sequences. This module is about text specifically: how raw strings become token ids, the classical counting models that still serve as baselines and features, word embeddings, token-level tasks, pretrained encoders, and how generated text is decoded and scored. It ends where the AI Engineering and AI Research courses pick up with large language models.\n\n%%flow Each stage is a choice the model is then locked into: the same text must go through the same stages at training and serving time.\nRaw text -(NFKC, lowercase?)-> Normalised -(regex split)-> Pre-tokens -(BPE / WordPiece)-> *Subwords -(vocab lookup)-> Ids + offsets\n%%\n\n## Normalisation\nUnicode allows the same visible text to have several byte sequences. \"é\" can be one code point (U+00E9) or \"e\" followed by a combining accent (U+0065 U+0301). NFC composes these into a canonical form; NFKC additionally folds compatibility characters, so the ligature \"ﬁ\" becomes \"fi\" and full-width \"Ａ\" becomes \"A\". Without normalisation the same word gets different ids depending on which keyboard or PDF extractor produced it.\n\nOther common steps, each with a cost:\n- **Lowercasing** merges \"Apple\" and \"apple\": good for small-data classifiers, bad for named-entity recognition, where case is a strong signal. BERT ships both cased and uncased models for this reason.\n- **Accent stripping** helps English search, hurts French and Vietnamese.\n- **Whitespace and control characters**: collapse runs of spaces, remove zero-width characters, normalise line endings.\n\n```python\nimport unicodedata, re\ndef normalise(s):\n    s = unicodedata.normalize(\"NFKC\", s)\n    s = re.sub(r\"[\\u200b\\u200c\\u200d\\ufeff]\", \"\", s)   # zero-width characters\n    return re.sub(r\"\\s+\", \" \", s).strip()\n```\n\n## Regular expressions and pre-tokenisation\nBefore subword splitting, most tokenisers pre-split text into words, numbers and punctuation with a regex, so merges never cross a word boundary. GPT-2's pattern, for instance, separates contractions (\"'s\", \"'re\"), runs of letters, runs of digits and runs of other symbols, and keeps a leading space attached to the word. Regexes are also the workhorse for extracting URLs, e-mail addresses, mentions and hashtags before they are mangled by later steps.\n\nTwo failure modes to know: greedy quantifiers that swallow too much (`.+` vs `.+?`), and nested quantifiers like `(a+)+` that cause catastrophic backtracking on adversarial input, which can hang a server.\n\n## Sentence splitting\n\"Splitting on full stops\" breaks on \"Dr. Smith\", \"3.14\", \"U.S. troops\" and \"e.g. this\". Practical splitters combine rules (a full stop followed by whitespace and a capital letter is a candidate boundary) with exception lists of abbreviations, or learn abbreviations from unlabelled text, as the Punkt algorithm does. Domain matters: legal text, chat messages and clinical notes all break general-purpose splitters in different ways, so evaluate on a sample of your own data.\n\n## Why subwords\nA word-level vocabulary for English web text needs millions of entries to cover names, typos and inflections, and anything unseen becomes `[UNK]`. A character-level model has no unknowns but makes sequences about 4-5× longer, which hurts attention cost (quadratic in length) and makes the model learn spelling from scratch. Subword vocabularies of 30k to 100k units give frequent words a single token and split rare words into meaningful pieces. English text averages about 4 characters, or roughly 0.75 words, per token with typical LLM tokenisers.\n\n## BPE and WordPiece\n**Byte-pair encoding** (Sennrich et al., 2016) learns a merge list from a corpus:\n1. Start with each word as a sequence of characters (or bytes), with word counts.\n2. Count every adjacent symbol pair, weighted by word frequency.\n3. Merge the most frequent pair into a new symbol, record the merge.\n4. Repeat until the vocabulary reaches the target size.\n\nEncoding a new word replays the merges in the order they were learned.\n\n! Example: the first BPE merges\n! Corpus: low ×5, lower ×2, newest ×6, widest ×3, with `_` marking word end.\n! Pair counts include e s = 9, s t = 9, t _ = 9, w e = 8, l o = 7, o w = 7. Three pairs tie at 9; with first-seen tie-breaking the first merge is e+s → es.\n! Then es+t → est (9) and est+_ → est_ (9), so \"newest\" and \"widest\" share a suffix token. Next come l+o and lo+w (7 each), giving the frequent stem \"low\".\n\n```python\nfrom collections import Counter\ndef bpe_step(words):                          # words: {tuple_of_symbols: count}\n    pairs = Counter()\n    for w, c in words.items():\n        for a, b in zip(w, w[1:]): pairs[a, b] += c\n    best = max(pairs, key=pairs.get)          # ties: first seen wins\n    merged = {}\n    for w, c in words.items():\n        out, i = [], 0\n        while i < len(w):\n            if i + 1 < len(w) and (w[i], w[i + 1]) == best: out.append(w[i] + w[i + 1]); i += 2\n            else: out.append(w[i]); i += 1\n        merged[tuple(out)] = c\n    return best, merged\n```\n\n**WordPiece** (BERT) differs in two ways. Training picks the pair that most increases corpus likelihood, roughly $\\text{count}(ab) / (\\text{count}(a)\\,\\text{count}(b))$, which favours pairs whose parts rarely appear apart. Encoding is greedy longest-match-first: take the longest vocabulary entry that prefixes the word, mark continuation pieces with `##`, repeat. \"unaffable\" becomes `un ##aff ##able`. If some remainder matches nothing, the whole word becomes `[UNK]`.\n\n**Byte-level BPE** (GPT-2 onward) runs BPE over UTF-8 bytes rather than characters. The base vocabulary is the 256 byte values, so every string, including emoji and any script, has an encoding and there is no unknown token; rare characters simply cost several tokens. SentencePiece's unigram model is a third option, which prunes a large candidate vocabulary by likelihood and treats whitespace as an ordinary symbol, which suits languages without spaces.\n\nKeep character offsets for every token. Token-level tasks (lesson 06.05) need them to map predictions back to the original text.\n\n> Takeaway: tokenisation is part of the model. Normalise deliberately, pre-split with a regex, and use a subword tokeniser so vocabulary stays bounded and unknown words decompose into known pieces; byte-level BPE removes unknowns entirely.\n",
+   "q": "Why can a byte-level BPE tokeniser (GPT-2 style) never produce an unknown token, while BERT's WordPiece can? What does each model actually receive for an emoji that never appeared in tokeniser training?",
+   "s": "Byte-level BPE's base vocabulary is all 256 byte values, and merges only combine symbols that already exist, so any UTF-8 string can at worst be encoded byte by byte. An unseen emoji (4 bytes in UTF-8) arrives as up to four byte-level tokens; the model gets the information, though it costs more tokens and the model may have seen those byte sequences rarely. WordPiece's base vocabulary is a fixed set of characters seen in training. Greedy longest-match encoding fails if no vocabulary entry matches a remaining piece of the word, and then the whole word is replaced by [UNK]. So BERT receives [UNK] for the emoji (and for the whole whitespace-delimited word containing it), which erases all information about it.",
+   "r": [
+    [
+     "Neural Machine Translation of Rare Words with Subword Units (Sennrich et al., 2016)",
+     "https://arxiv.org/abs/1508.07909",
+     "The BPE-for-NLP paper; the merge algorithm fits in a dozen lines in section 3.2."
+    ],
+    [
+     "Hugging Face LLM Course, chapter 6: Tokenizers",
+     "https://huggingface.co/learn/llm-course/chapter6/1",
+     "Normalisation, pre-tokenisation, and BPE, WordPiece and Unigram side by side with code."
+    ],
+    [
+     "SentencePiece (Kudo and Richardson, 2018)",
+     "https://arxiv.org/abs/1808.06226",
+     "Language-independent subword tokenisation treating whitespace as a symbol."
+    ],
+    [
+     "Python unicodedata",
+     "https://docs.python.org/3/library/unicodedata.html",
+     "NFC, NFD, NFKC and NFKD normalisation forms and what each folds."
+    ]
+   ],
+   "k": [
+    "tokenisation",
+    "BPE",
+    "WordPiece"
+   ],
+   "x": [
+    "Python"
+   ],
+   "p": [
+    "byte-pair-encoding",
+    "subword-tokenization",
+    "text-normalization",
+    "sentence-segmentation",
+    "regex-patterns-for-nlp"
+   ]
+  },
+  {
+   "id": "06.02",
+   "t": "Counting-based language models",
+   "n": [
+    "A language model assigns probabilities to sequences. The chain rule factors $P(w_1..w_N)$ into next-word probabilities; an n-gram model assumes each word depends only on the previous $n-1$.",
+    "Maximum-likelihood n-gram estimates are count ratios, and any unseen n-gram gets probability zero, which makes a test sentence containing it infinitely surprising.",
+    "Smoothing moves probability mass to unseen events: add-k (simple, steals too much), interpolation and backoff (mix orders), and Kneser-Ney (uses how many contexts a word appears in, the best classical method).",
+    "Perplexity is the exponential of average negative log-likelihood per token: the effective number of equally likely choices. A uniform model over $V$ words has perplexity $V$.",
+    "Perplexities are comparable only with the same tokenisation and test text. Convert to per-word or bits-per-byte figures to compare across tokenisers."
+   ],
+   "a": "## Language models before neural networks\nA language model assigns a probability to any sequence of tokens. The chain rule makes this exact:\n\n$$P(w_1, \\dots, w_N) = \\prod_{i=1}^{N} P(w_i \\mid w_1, \\dots, w_{i-1})$$\n\nEvery neural language model, including the RNN of 05.01 and every LLM, estimates these conditional probabilities. The n-gram model is the counting version, and it is still worth knowing: it is a fast baseline, a tool for data filtering and spelling correction, and it is where perplexity, smoothing and the sparsity problem come from.\n\n## The Markov assumption and counting\nAn n-gram model assumes the next word depends only on the previous $n - 1$ words. For a trigram model, $P(w_i \\mid w_{i-2}, w_{i-1})$, estimated by maximum likelihood as\n\n$$P_{\\text{MLE}}(w_i \\mid w_{i-2}, w_{i-1}) = \\frac{C(w_{i-2}, w_{i-1}, w_i)}{C(w_{i-2}, w_{i-1})}$$\n\nPad each sentence with start symbols `<s>` and an end symbol `</s>` so the first words have a history and the model learns where sentences end. Work in log space: multiplying hundreds of probabilities below 0.1 underflows a float.\n\nThe fatal problem is sparsity. With a 50,000-word vocabulary there are $1.25 \\times 10^{14}$ possible trigrams; even a billion-word corpus sees a tiny fraction. Any unseen trigram has MLE probability zero, so any test sentence containing one gets probability zero, and its perplexity is infinite.\n\n## Smoothing\n\n| Method | Idea | Weakness |\n| Add-k (Laplace when k = 1) | add $k$ to every count: $(C + k)/(C_{\\text{hist}} + kV)$ | with large $V$ it gives far too much mass to unseen events |\n| Interpolation | $\\lambda_3 P_3 + \\lambda_2 P_2 + \\lambda_1 P_1$, weights tuned on held-out data | lower orders still use raw frequency |\n| Backoff (Katz; \"stupid backoff\" at web scale) | use the trigram if seen, else a discounted bigram, else unigram | needs discounting to stay normalised |\n| Kneser-Ney | absolute discounting plus a continuation probability for the lower order | more bookkeeping; the standard choice |\n\nKneser-Ney's key idea concerns what the lower-order model should measure. \"Francisco\" may be frequent, but it appears almost only after \"San\". When the model backs off to unigrams because the bigram \"the Francisco\" is unseen, raw frequency says \"Francisco\" is likely; it should not be, since it virtually never starts a new context. KN replaces the unigram probability with a continuation probability proportional to the number of distinct words that precede $w$. Modified KN with interpolation remained the best n-gram method in Chen and Goodman's extensive comparison.\n\n```python\nfrom collections import Counter\ndef bigram_lm(sentences, k=1.0):\n    uni, bi = Counter(), Counter()\n    for s in sentences:\n        toks = [\"<s>\"] + s.split() + [\"</s>\"]\n        uni.update(toks[:-1]); bi.update(zip(toks, toks[1:]))\n    V = len(set(uni) | {\"</s>\"})\n    return lambda prev, w: (bi[prev, w] + k) / (uni[prev] + k * V)   # add-k\n```\n\n%%flow Building and scoring an n-gram model. Counts come from training text only; perplexity is measured on held-out text.\nTraining text -(pad with <s>, </s>)-> n-gram counts -> *Smoothed P(w given history) -(held-out text)-> Perplexity\n%%\n\n## Perplexity\nPerplexity on a held-out text of $N$ tokens is\n\n$$\\text{PPL} = \\exp\\Big(-\\frac{1}{N} \\sum_{i=1}^{N} \\log P(w_i \\mid \\text{history}_i)\\Big)$$\n\nIt is the inverse of the geometric-mean probability per token, and reads as the effective branching factor: perplexity 100 means the model is, on average, as uncertain as if choosing uniformly among 100 options. A uniform model over $V$ tokens has perplexity exactly $V$; lower is better. Cross-entropy in bits is $\\log_2 \\text{PPL}$.\n\n! Example: smoothing and perplexity by hand\n! Vocabulary $V = 10$, $C(\\text{the}) = 10$, $C(\\text{the cat}) = 3$, $C(\\text{the dog}) = 0$.\n! MLE: $P(\\text{cat} \\mid \\text{the}) = 0.3$, $P(\\text{dog} \\mid \\text{the}) = 0$. Add-1: $(3+1)/(10+10) = 0.2$ and $(0+1)/20 = 0.05$. Note how much the seen event lost.\n! A 3-token test text with probabilities 0.2, 0.1, 0.05: mean log-probability $(-1.609 - 2.303 - 2.996)/3 = -2.303$, so PPL $= e^{2.303} = 10$.\n\n## Comparing perplexities honestly\nPerplexity is per token, so it depends on what a token is. A model with a smaller subword vocabulary predicts more, easier tokens per word, and its per-token perplexity looks lower even if it is a worse model of the text. To compare across tokenisers, compare total log-likelihood of the same text: convert to per-word perplexity, or to bits per byte (total negative log-likelihood in bits divided by the UTF-8 byte count). The unknown-word token is another trap: mapping many rare words to one cheap `<unk>` lowers perplexity artificially. Fix the vocabulary and test text before comparing.\n\n## Where n-grams still matter\n- Fast baselines and features (lesson 06.03 uses n-gram counts as features).\n- Data pipelines: KenLM-style n-gram models score web text for quality filtering in LLM pretraining.\n- Candidate generation and rescoring in speech recognition and spelling correction.\n- Teaching: the n-gram's failure is exactly what neural LMs fix, by sharing statistics between similar contexts through embeddings rather than treating every history as a separate count.\n\n> Takeaway: an n-gram model is the chain rule plus a short memory, estimated by counting. Smoothing decides how much probability unseen events get, and perplexity measures average surprise per token, comparable only when the tokenisation and test text match.\n",
+   "q": "Model A uses a 50k word-level vocabulary and gets perplexity 120 on a test set. Model B uses an 8k BPE vocabulary and gets perplexity 40 on the same text, where B's tokeniser produces on average 1.4 tokens per word. Which model is better, and how do you know?",
+   "s": "The raw numbers are not comparable, because perplexity is per token and B has 1.4 tokens per word. Compare total log-likelihood of the same text instead. B's average negative log-likelihood is ln 40 ≈ 3.69 nats per token, so per word it is 1.4 × 3.69 ≈ 5.16 nats, a per-word perplexity of e^5.16 ≈ 175. A's per-word perplexity is 120 (ln 120 ≈ 4.79 nats per word). So A assigns higher probability to the test text and is the better model, despite B's lower number. Also check that A does not gain unfairly from mapping rare words to a cheap <unk>; bits per byte on raw text avoids both issues.",
+   "r": [
+    [
+     "Jurafsky and Martin, Speech and Language Processing (3rd ed. draft)",
+     "https://web.stanford.edu/~jurafsky/slp3/",
+     "The n-gram language model chapter: smoothing, Kneser-Ney and perplexity with worked examples."
+    ],
+    [
+     "An Empirical Study of Smoothing Techniques for Language Modeling (Chen and Goodman, 1996)",
+     "https://aclanthology.org/P96-1041/",
+     "The classic comparison establishing interpolated Kneser-Ney as the strongest n-gram method."
+    ]
+   ],
+   "k": [
+    "n-gram",
+    "smoothing",
+    "perplexity"
+   ],
+   "x": [
+    "Python"
+   ],
+   "p": [
+    "n-gram-language-model",
+    "perplexity-computation",
+    "conditional-perplexity"
+   ]
+  },
+  {
+   "id": "06.03",
+   "t": "Bag-of-words and TF-IDF",
+   "n": [
+    "Bag-of-words represents a document as a vector of term counts over the vocabulary, discarding order. Vectors are huge and about 99.9% zeros, so they are stored sparse.",
+    "TF-IDF reweights counts: terms frequent in this document but rare in the corpus score high; terms in every document score near the minimum.",
+    "With L2-normalised TF-IDF vectors, cosine similarity is a dot product, which makes ranking documents against a query a sparse matrix-vector multiply.",
+    "BM25 improves on TF-IDF for ranking with term-frequency saturation ($k_1$) and document-length normalisation ($b$). It remains the standard lexical baseline and half of most hybrid search systems.",
+    "Fit the vocabulary and IDF on training data only. A linear model on TF-IDF features is a strong, cheap text-classification baseline."
+   ],
+   "a": "## Documents as count vectors\nBefore embeddings, the standard way to give text to a model was to count words. Build a vocabulary of $V$ terms from the training corpus; represent each document as a length-$V$ vector whose entry $j$ is how often term $j$ appears. Order is gone (\"dog bites man\" equals \"man bites dog\"), which is why this is called a bag of words. The approach is still the first baseline to try for classification and the backbone of lexical search.\n\nThree details matter in practice:\n- **Sparsity.** A 200-word document over a 100,000-term vocabulary has at most 200 non-zeros: 99.8% zeros. Store it in a compressed sparse row (CSR) matrix: values, column indices and row pointers. A million documents then take hundreds of megabytes, not the 400 GB a dense float32 matrix would need.\n- **N-gram features.** Adding bigrams lets the model see \"not good\" and \"New York\" as units. Vocabulary grows fast, so cap it by minimum document frequency.\n- **The hashing trick.** Instead of storing a vocabulary, hash each term into one of $2^{20}$ columns. No vocabulary to fit or ship, at the cost of occasional collisions and no way to map columns back to words.\n\n%%flow Lexical search: the same vectoriser, fitted once on the corpus, is applied to documents and queries.\nDocuments -(tokenise)-> Vocabulary -(count)-> Sparse CSR counts -(× IDF, L2 norm)-> *TF-IDF matrix -(dot with query vector)-> Ranked documents\n%%\n\n## TF-IDF\nRaw counts overweight words that appear everywhere (\"the\", \"of\") and say nothing about what a document is about. TF-IDF multiplies a term-frequency part by an inverse-document-frequency part:\n\n$$\\text{tfidf}(t, d) = \\text{tf}(t, d) \\times \\text{idf}(t), \\qquad \\text{idf}(t) = \\ln\\frac{1 + N}{1 + \\text{df}(t)} + 1$$\n\nwhere $N$ is the number of documents and $\\text{df}(t)$ the number containing $t$. This is scikit-learn's smoothed form: the $+1$ inside avoids division by zero, the $+1$ outside keeps terms in every document from being zeroed out entirely. Common variants:\n- **Sublinear tf**: $1 + \\ln \\text{tf}$ for $\\text{tf} > 0$, so a word appearing 20 times does not count 20 times as much as one appearing once.\n- **L2 normalisation** of each document vector, so long documents do not dominate and cosine similarity becomes a plain dot product.\n\n! Example: IDF for a common and a rare term\n! $N = 1{,}000$ documents. \"the\" appears in all of them: $\\text{idf} = \\ln(1001/1001) + 1 = 1.0$.\n! \"transformer\" appears in 10: $\\text{idf} = \\ln(1001/11) + 1 = \\ln 91 + 1 = 5.51$.\n! One occurrence of \"transformer\" outweighs five occurrences of \"the\" before normalisation.\n\n```python\nfrom sklearn.feature_extraction.text import TfidfVectorizer\nvec = TfidfVectorizer(ngram_range=(1, 2), min_df=2, sublinear_tf=True)   # L2 norm by default\nX = vec.fit_transform(train_docs)          # fit vocabulary and IDF on training docs only\nq = vec.transform([\"sparse attention kernels\"])\nscores = (X @ q.T).toarray().ravel()       # cosine similarity, since rows are unit length\ntop10 = scores.argsort()[::-1][:10]\n```\n\nFitting on training data only matters: if IDF is computed over train plus test, test-set term statistics leak into the features, mildly inflating evaluation numbers.\n\n## BM25: TF-IDF tuned for ranking\nFor search, two weaknesses of TF-IDF show up. Term frequency should saturate: the tenth mention of \"python\" adds less evidence than the second. And long documents mention everything more often, so they should be discounted relative to the average length. BM25 handles both:\n\n$$\\text{BM25}(q, d) = \\sum_{t \\in q} \\text{idf}(t) \\cdot \\frac{\\text{tf}(t, d)\\,(k_1 + 1)}{\\text{tf}(t, d) + k_1\\big(1 - b + b\\,\\frac{|d|}{\\text{avgdl}}\\big)}$$\n\n- $k_1$ (typically 1.2 to 2.0) controls saturation: as tf grows the fraction approaches $k_1 + 1$, never more.\n- $b$ (typically 0.75) controls length normalisation: $b = 0$ ignores length, $b = 1$ fully divides by relative length.\n- IDF is usually $\\ln\\big(\\frac{N - \\text{df} + 0.5}{\\text{df} + 0.5} + 1\\big)$.\n\nBM25 is hard to beat on queries with rare, exact terms: product codes, error messages, names. Dense embedding retrieval (lesson 06.04 and the AI Engineering course) wins on paraphrase. Production search usually runs both and fuses the ranked lists, for example with reciprocal rank fusion.\n\n## As features for classification\nA linear model (logistic regression or a linear SVM) on TF-IDF unigrams and bigrams is a strong baseline for topic, spam and sentiment classification, often within a few points of fine-tuned transformers on long-document tasks, at a tiny fraction of the cost. Multinomial naive Bayes on raw counts is even cheaper; the Machine Learning course covers both models. Their weights are directly interpretable: the largest coefficients are the words that drive each class.\n\n> Takeaway: bag-of-words and TF-IDF turn text into sparse, interpretable vectors that make linear models and lexical search fast. BM25 adds term saturation and length normalisation and remains the lexical baseline every dense retriever should be compared against.\n",
+   "q": "Under BM25 with k1 = 1.2 and b = 0.75, why doesn't a 10,000-word document that mentions 'python' 20 times automatically outrank a 200-word document that mentions it 5 times, when the average document length is 500 words? Work out the term-frequency factor for each.",
+   "s": "The tf factor is tf(k1+1) / (tf + k1(1 - b + b|d|/avgdl)). Long doc: |d|/avgdl = 20, so the length term is 1.2 × (0.25 + 0.75 × 20) = 1.2 × 15.25 = 18.3; factor = 20 × 2.2 / (20 + 18.3) = 44 / 38.3 ≈ 1.15. Short doc: |d|/avgdl = 0.4, length term = 1.2 × (0.25 + 0.3) = 0.66; factor = 5 × 2.2 / (5 + 0.66) = 11 / 5.66 ≈ 1.94. The short document scores higher for this term: saturation caps how much repeated mentions can add (the factor can never exceed 2.2), and length normalisation recognises that 20 mentions in 10,000 words is a lower density than 5 in 200. Raw TF-IDF without normalisation would have favoured the long document.",
+   "r": [
+    [
+     "scikit-learn: Text feature extraction",
+     "https://scikit-learn.org/stable/modules/feature_extraction.html",
+     "CountVectorizer, TfidfVectorizer (exact IDF formula and options) and HashingVectorizer."
+    ],
+    [
+     "Okapi BM25 (Wikipedia)",
+     "https://en.wikipedia.org/wiki/Okapi_BM25",
+     "The BM25 formula, its IDF variants and the roles of k1 and b, with links to the original papers."
+    ],
+    [
+     "Jurafsky and Martin, Speech and Language Processing (3rd ed. draft)",
+     "https://web.stanford.edu/~jurafsky/slp3/",
+     "The vector semantics chapter covers term-document matrices, TF-IDF and cosine similarity."
+    ]
+   ],
+   "k": [
+    "TF-IDF",
+    "BM25",
+    "sparse vectors"
+   ],
+   "x": [
+    "scikit-learn",
+    "NumPy"
+   ],
+   "p": [
+    "tf-idf",
+    "bag-of-words",
+    "document-ranking",
+    "text-classification"
+   ]
+  },
+  {
+   "id": "06.04",
+   "t": "Word embeddings",
+   "n": [
+    "A word embedding is a dense vector (typically 100-300 dimensions) learned so that words appearing in similar contexts get similar vectors: the distributional hypothesis made trainable.",
+    "Skip-gram with negative sampling trains a logistic classifier to tell real (word, context) pairs from random ones. It replaces a $V$-way softmax with $k + 1$ binary decisions per pair.",
+    "GloVe fits word vectors so their dot products match log co-occurrence counts, by weighted least squares on the global count matrix.",
+    "fastText represents a word as the sum of its character n-gram vectors, so it can build vectors for misspellings and unseen inflections.",
+    "Static embeddings give one vector per word type, so 'bank' (river) and 'bank' (money) share one vector. Contextual models (lesson 06.06) fix that."
+   ],
+   "a": "## From sparse counts to dense vectors\nThe previous lesson's vectors are sparse and know nothing about meaning: \"car\" and \"automobile\" are orthogonal. Word embeddings learn a dense vector per word so that similarity in the space reflects similarity in usage. The idea behind every method here is the distributional hypothesis: words that occur in similar contexts tend to have similar meanings. The AI Engineering course covers embeddings as a retrieval tool; this lesson covers how word vectors are trained.\n\nMechanically, an embedding is a $V \\times D$ matrix and looking up a word is selecting a row. That is the same as multiplying a one-hot vector by the matrix, but far cheaper. The gradient of a lookup is sparse: only the rows used in the batch receive updates, and a word that appears twice in a batch gets both contributions added.\n\n## word2vec: skip-gram with negative sampling\nSkip-gram (Mikolov et al., 2013) slides a window over the corpus. For each centre word $c$ and each context word $o$ within, say, 5 positions, it wants the model to predict $o$ from $c$. Each word has two vectors: $v_w$ when it is the centre and $u_w$ when it is the context. The full softmax $P(o \\mid c) = \\exp(u_o^\\top v_c) / \\sum_w \\exp(u_w^\\top v_c)$ needs a sum over the whole vocabulary for every pair, too slow at $V = 10^6$.\n\nNegative sampling replaces it with a binary task: is this pair real or noise? For each real pair, sample $k$ noise words $n_1..n_k$ and maximise\n\n$$\\log \\sigma(u_o^\\top v_c) + \\sum_{j=1}^{k} \\log \\sigma(-u_{n_j}^\\top v_c)$$\n\n%%flow One skip-gram negative-sampling update for the centre word \"fox\".\nCentre \"fox\" -(lookup)-> v(fox) -(dot with u(quick), u(k noise words))-> *k+1 sigmoid scores -(1 real, k fake)-> Logistic loss\n%%\n\nThe details that make it work:\n- $k$ = 5 to 20 for small corpora, 2 to 5 for large ones.\n- Noise words are drawn from the unigram distribution raised to the 3/4 power, which samples rare words more often than their raw frequency.\n- Frequent words are subsampled: each occurrence of $w$ is dropped with probability $1 - \\sqrt{t / f(w)}$, $t \\approx 10^{-5}$, so \"the\" stops dominating the updates and the effective window widens.\n- CBOW is the mirror variant: predict the centre word from the average of its context vectors. Faster; skip-gram is better for rare words.\n\n! Example: what the 3/4 power does\n! \"the\" has frequency 0.05; a rare word has frequency $10^{-6}$. Raw ratio: 50,000 to 1.\n! After the 3/4 power: $50{,}000^{0.75} \\approx 3{,}340$ to 1. Rare words become about 15 times more likely to appear as negatives, so their vectors get pushed away from unrelated words more often.\n\n```python\nimport numpy as np\nsig = lambda z: 1 / (1 + np.exp(-z))\ndef sgns_step(V_in, U_out, c, o, negs, lr=0.025):\n    v = V_in[c]                                   # (D,)\n    ids = np.concatenate([[o], negs])             # 1 positive, k negatives\n    labels = np.r_[1.0, np.zeros(len(negs))]\n    g = sig(U_out[ids] @ v) - labels              # d loss / d score, (k+1,)\n    grad_v = g @ U_out[ids]\n    np.subtract.at(U_out, ids, lr * g[:, None] * v)   # handles repeated ids\n    V_in[c] -= lr * grad_v\n```\n\n## GloVe\nGloVe (Pennington et al., 2014) starts from the global co-occurrence matrix $X$, where $X_{ij}$ counts how often word $j$ appears in the context of word $i$, and fits\n\n$$J = \\sum_{i,j:\\,X_{ij} > 0} f(X_{ij})\\,\\big(w_i^\\top \\tilde w_j + b_i + \\tilde b_j - \\log X_{ij}\\big)^2, \\quad f(x) = \\min\\big(1, (x/x_{\\max})^{0.75}\\big)$$\n\nwith $x_{\\max} = 100$. The weighting stops very frequent pairs from dominating and ignores zero counts. The final vector is usually $w + \\tilde w$. In practice skip-gram and GloVe give similar quality; GloVe trains on a precomputed matrix, skip-gram streams over text.\n\n## fastText\nBoth methods above treat each word as an atom, so \"running\", \"runner\" and the typo \"runnning\" share nothing, and an unseen word has no vector. fastText (Bojanowski et al., 2017) represents a word as the sum of vectors for its character n-grams (lengths 3 to 6, with boundary markers, e.g. `<ru`, `run`, `unn`, ... plus the whole word), hashed into about 2 million buckets. Training is otherwise skip-gram. Any string, including an out-of-vocabulary word, gets a vector from its n-grams, which matters for morphologically rich languages and noisy text.\n\n| Method | Trains on | Unit | Unseen words |\n| word2vec (SGNS) | streaming windows | word | no vector |\n| GloVe | global co-occurrence counts | word | no vector |\n| fastText | streaming windows | character n-grams | built from n-grams |\n\n## Similarity, analogies and limits\nCompare vectors with cosine similarity: normalise to unit length, then dot. The famous analogy, $v_{king} - v_{man} + v_{woman} \\approx v_{queen}$, holds only if you exclude the three input words from the nearest-neighbour search; otherwise \"king\" itself often wins. Treat analogy benchmarks as a sanity check, not a quality measure.\n\nKnown limits:\n- **One vector per type**: \"bank\" gets a blend of its senses. Contextual models (06.06) produce a different vector per occurrence.\n- **Frequency effects**: very frequent and very rare words cluster in odd regions; rare words have noisy vectors.\n- **Social bias**: vectors absorb associations from the corpus (gender-occupation analogies are the classic demonstration) and pass them into downstream models.\n\n> Takeaway: word embeddings compress co-occurrence statistics into dense vectors where cosine similarity tracks usage. word2vec and GloVe learn one vector per word; fastText builds vectors from subword pieces; all are static, which is the limitation contextual models remove.\n",
+   "q": "You need word vectors for a domain of clinical notes full of rare drug names, abbreviations and misspellings. Compare word2vec and fastText for this, including one way fastText could mislead you.",
+   "s": "word2vec learns one vector per vocabulary entry, so misspellings and rare drug names either fall below the minimum count and get no vector, or get noisy vectors from very few contexts; every unseen variant at test time has nothing. fastText builds each word from character n-gram vectors, so 'amoxicilin' (misspelt) shares most n-grams with 'amoxicillin' and lands near it, and inflections and unseen words get usable vectors. It also shares statistical strength across words with common pieces. The risk is that surface similarity is not semantic similarity: drug names that differ by a few characters but are clinically unrelated (sound-alike or look-alike medications) will get similar vectors, and short abbreviations with few n-grams can collide. Check nearest neighbours for critical terms before trusting them.",
+   "r": [
+    [
+     "Efficient Estimation of Word Representations in Vector Space (Mikolov et al., 2013)",
+     "https://arxiv.org/abs/1301.3781",
+     "Introduces skip-gram and CBOW."
+    ],
+    [
+     "Distributed Representations of Words and Phrases (Mikolov et al., 2013)",
+     "https://arxiv.org/abs/1310.4546",
+     "Negative sampling, the 3/4-power noise distribution and frequent-word subsampling."
+    ],
+    [
+     "GloVe: Global Vectors for Word Representation (Pennington et al., 2014)",
+     "https://aclanthology.org/D14-1162/",
+     "The weighted least-squares objective and its motivation from co-occurrence ratios."
+    ],
+    [
+     "Enriching Word Vectors with Subword Information (Bojanowski et al., 2017)",
+     "https://arxiv.org/abs/1607.04606",
+     "fastText's character n-gram model and results on rare words."
+    ]
+   ],
+   "k": [
+    "word embeddings",
+    "word2vec"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "word2vec",
+    "glove",
+    "fasttext",
+    "embedding-similarity",
+    "cosine-similarity-matrix"
+   ]
+  },
+  {
+   "id": "06.05",
+   "t": "Sequence labelling",
+   "n": [
+    "Sequence labelling assigns one label per token: part-of-speech tags, or named-entity tags in the BIO scheme (B- begins an entity, I- continues it, O is outside).",
+    "Per-token argmax can output invalid sequences (I-PER right after O or after B-LOC). Constrained or CRF decoding with the Viterbi algorithm finds the best valid sequence in $O(TK^2)$.",
+    "With subword tokenisers, label only the first subword of each word and mask the rest out of the loss; map predictions back to words via offsets.",
+    "Evaluate NER with entity-level F1 (exact span and type match), not token accuracy, which is inflated by the many O tokens.",
+    "Extractive question answering is span labelling: predict start and end logits per token, then choose the best valid pair with start ≤ end and a length cap."
+   ],
+   "a": "## One label per token\nMany NLP tasks label every token rather than the whole text:\n- **Part-of-speech tagging**: noun, verb, adjective and so on, with 17 tags in Universal Dependencies or 45 in the Penn Treebank.\n- **Named-entity recognition (NER)**: find spans that name people, organisations, locations, dates, drugs.\n- **Span extraction**: find the answer to a question as a contiguous span of a passage.\n\nAll share one model shape: an encoder produces a vector per token (bidirectional LSTM from 05.02, or a pretrained transformer from the next lesson), a linear layer maps each to $K$ label logits, and a decoding step turns logits into labels or spans.\n\n%%flow The token-classification pipeline. Decoding and evaluation happen at the word or span level, not the subword level.\nWords -(tokeniser, keep offsets)-> Subwords -> Encoder -> *Per-token logits -(argmax or Viterbi)-> BIO tags -(group)-> Entity spans\n%%\n\n## Tagging schemes\nEntities span several tokens, so labels encode position within the entity. In BIO, B-X starts an entity of type X, I-X continues it, O is outside:\n\n| Token | Barack | Obama | visited | New | York | yesterday |\n| Tag | B-PER | I-PER | O | B-LOC | I-LOC | O |\n\nThe B tag is what separates two adjacent entities of the same type. BIOES adds E (end) and S (single-token) tags, which gives the model more explicit boundary signals and sometimes helps a little. Plain BIO cannot represent nested entities (\"Bank of [England]\" inside an organisation); those need span-based models that score every candidate span.\n\n```python\ndef bio_to_spans(tags):\n    spans, start, typ = [], None, None\n    for i, t in enumerate(tags + [\"O\"]):              # sentinel closes a trailing span\n        if t == \"O\" or t.startswith(\"B-\") or (t.startswith(\"I-\") and t[2:] != typ):\n            if start is not None: spans.append((start, i, typ))\n            start, typ = (i, t[2:]) if t != \"O\" else (None, None)   # stray I- starts a span\n    return spans                                      # [(start, end_exclusive, type)]\n```\n\nHow to treat an I- tag that follows O or a different type is a policy choice; the lenient policy above starts a new entity, a strict one discards it. Use the same policy as your evaluation script.\n\n## Baselines and decoding\nFor POS tagging, simply assigning each word its most frequent training tag (and the most common open-class tag to unknown words) already gets about 92% accuracy on English newswire; good models reach about 97%. Most of the remaining errors are genuinely ambiguous words such as \"that\" or \"back\".\n\nGreedy decoding takes the argmax at each token independently. It is fast but can emit invalid sequences like `O I-PER` or `B-LOC I-PER`, because nothing ties neighbouring decisions together. Two fixes:\n- **Constrained decoding**: forbid invalid transitions, then find the highest-scoring valid sequence.\n- **A CRF layer** on top of the encoder (BiLSTM-CRF was the standard NER architecture before transformers): learn a $K \\times K$ transition score matrix and train on whole-sequence likelihood.\n\nBoth use the Viterbi algorithm: dynamic programming that keeps, for each position and each tag, the best score of any path ending there, plus a back-pointer. Cost is $O(T K^2)$, trivial for a dozen tags. The same algorithm decodes hidden Markov models, the classical tagger.\n\n## Subword alignment\nA transformer tokeniser splits \"Kaczynski\" into several pieces, but the labels belong to words. The standard recipe: give the word's label to its first subword, and give the remaining subwords the ignore label (-100 in PyTorch's cross-entropy) so they are excluded from the loss. At prediction time read the label from each word's first subword. Character offsets from the tokeniser (lesson 06.01) map spans back to the original string. Getting this alignment wrong shifts every label by a token, and accuracy collapses without any error being raised.\n\n## Evaluating NER\nToken accuracy is misleading: most tokens are O, so a model that predicts O everywhere can score above 80%. The CoNLL standard is entity-level precision, recall and F1, where a predicted entity counts only if both its boundaries and its type match exactly.\n\n! Example: token accuracy versus entity F1\n! A test set has 10 gold entities. The model predicts 8, of which 6 match exactly; the other 2 have one boundary token wrong.\n! Precision $= 6/8 = 0.75$, recall $= 6/10 = 0.60$, F1 $= 2 \\times 0.75 \\times 0.6 / 1.35 = 0.667$.\n! Token accuracy could still be 97%, because the two near-misses are each a single wrong token among hundreds of correct O tags.\n\n## Span extraction\nFor extractive question answering (SQuAD-style), the input is `[CLS] question [SEP] passage [SEP]`, and the model outputs two logits per token: start score $s_i$ and end score $e_j$. The answer is the pair maximising $s_i + e_j$ subject to $i \\le j$, $j - i < L_{\\max}$ (say 30 tokens), and both positions inside the passage rather than the question. Taking the two argmaxes independently can produce an end before the start; search over valid pairs, which is $O(T \\cdot L_{\\max})$. If the dataset allows unanswerable questions, compare the best span's score against the score of pointing both at `[CLS]`.\n\n> Takeaway: sequence labelling is per-token classification plus structure. Encode tokens, constrain or Viterbi-decode so labels form valid spans, align subwords to words carefully, and measure with entity-level F1.\n",
+   "q": "A NER model's per-token argmax output for five words is: O, B-LOC, I-PER, I-PER, O. How would a lenient BIO decoder, a strict decoder, and Viterbi decoding with transition constraints each handle this, and how does each outcome affect entity-level F1 if the gold answer is a single PER entity over words 2-4?",
+   "s": "A lenient decoder closes LOC at word 2 and starts a new PER entity at word 3 from the stray I-PER, giving LOC(2) and PER(3-4). A strict decoder keeps LOC(2) and discards the I-PER tokens, since they lack a B-PER. Viterbi with constraints forbids B-LOC followed by I-PER and finds the best valid sequence; if the PER logits on words 3-4 are strong, it is likely to choose B-PER I-PER I-PER for words 2-4, or B-LOC O O if the LOC evidence on word 2 dominates. Against the gold PER(2-4): lenient produces two false positives and one miss (P = 0, R = 0); strict produces one false positive and one miss; only the constrained decode can produce an exact match, giving P = R = F1 = 1 for this sentence. Structured decoding converts per-token evidence into consistent spans.",
+   "r": [
+    [
+     "Neural Architectures for Named Entity Recognition (Lample et al., 2016)",
+     "https://arxiv.org/abs/1603.01360",
+     "BiLSTM-CRF for NER and the IOBES scheme; section 2 explains the CRF layer and Viterbi decoding."
+    ],
+    [
+     "Bidirectional LSTM-CRF Models for Sequence Tagging (Huang et al., 2015)",
+     "https://arxiv.org/abs/1508.01991",
+     "Compares LSTM, BiLSTM and BiLSTM-CRF taggers on POS, chunking and NER."
+    ],
+    [
+     "Introduction to the CoNLL-2003 Shared Task",
+     "https://aclanthology.org/W03-0419/",
+     "Defines the standard NER dataset and the exact-match entity F1 evaluation."
+    ],
+    [
+     "SQuAD: 100,000+ Questions for Machine Comprehension",
+     "https://arxiv.org/abs/1606.05250",
+     "The extractive QA task framing that start/end span prediction solves."
+    ]
+   ],
+   "k": [
+    "NER",
+    "BIO tagging",
+    "Viterbi"
+   ],
+   "x": [
+    "Python",
+    "NumPy"
+   ],
+   "p": [
+    "named-entity-recognition",
+    "greedy-sequence-tagging",
+    "token-classification",
+    "span-extraction",
+    "pos-tagging"
+   ]
+  },
+  {
+   "id": "06.06",
+   "t": "Pretrained language models",
+   "n": [
+    "Pretrain once on unlabelled text, fine-tune cheaply per task: a pretrained encoder plus a small head beats task-specific architectures trained from scratch on most NLP benchmarks.",
+    "BERT's masked language modelling picks 15% of tokens and predicts the originals; of those, 80% become [MASK], 10% a random token and 10% stay unchanged, because [MASK] never appears at fine-tuning time.",
+    "Next-sentence prediction asked whether segment B followed segment A. RoBERTa showed that dropping it, and training longer on more data with dynamic masking, works better.",
+    "For classification, put a linear head on the final [CLS] vector (or mean-pooled tokens) and fine-tune all weights with a small learning rate (2e-5 to 5e-5) for 2 to 4 epochs.",
+    "Encoders see both directions, so they suit understanding tasks; they do not generate text naturally, which is what decoder-only models are for."
+   ],
+   "a": "## Pretrain, then fine-tune\nUntil 2018, most NLP systems were trained from scratch per task, starting at best from static word vectors (lesson 06.04). BERT (Devlin et al., 2018) made a different recipe standard: pretrain a large transformer encoder on unlabelled text with a self-supervised objective, then fine-tune the whole network with a small task head on a few thousand labelled examples. Contextual vectors replaced static ones: \"bank\" gets a different representation in \"river bank\" and \"bank account\" because every layer attends over the whole sentence.\n\nThis lesson covers encoder pretraining and classic fine-tuning. Decoder-only LLMs and parameter-efficient fine-tuning (LoRA and friends) are covered in the AI Research course.\n\n%%flow The two phases. Only the small head is new at fine-tuning time; every pretrained weight is updated too.\n[Pretrain] Unlabelled text -(mask 15%)-> Corrupted tokens -> *Transformer encoder -> Predict original tokens\n[Fine-tune] Labelled sentence -> Pretrained encoder -(final CLS vector)-> *Linear head -> Class label\n%%\n\n## BERT's input format\n- WordPiece vocabulary of about 30,000 tokens (lesson 06.01), maximum length 512.\n- Input: `[CLS] segment A [SEP] segment B [SEP]`. Each token's input vector is the sum of a token embedding, a learned position embedding and a segment embedding (A or B).\n- BERT-base: 12 layers, width 768, 12 heads, 110M parameters. BERT-large: 24 layers, width 1024, 16 heads, 340M.\n\n## Masked language modelling\nA left-to-right LM cannot use the right context, and a bidirectional encoder trained to predict the next token would trivially see the answer. MLM sidesteps this: corrupt some input tokens and train the encoder to recover them using context on both sides.\n\n1. Choose 15% of token positions at random.\n2. Of those, replace 80% with `[MASK]`, 10% with a random token, and leave 10% unchanged.\n3. Compute cross-entropy only at the chosen positions; all others get the ignore label.\n\n```python\nimport numpy as np\ndef mlm_corrupt(ids, mask_id, vocab_size, special, rng, p=0.15):\n    ids = ids.copy()\n    labels = np.full_like(ids, -100)                   # -100 = ignored by the loss\n    cand = ~np.isin(ids, special)                      # never mask [CLS], [SEP], [PAD]\n    chosen = cand & (rng.random(ids.shape) < p)\n    labels[chosen] = ids[chosen]                       # copy labels before corrupting\n    r = rng.random(ids.shape)\n    ids[chosen & (r < 0.8)] = mask_id\n    rand = chosen & (r >= 0.8) & (r < 0.9)\n    ids[rand] = rng.integers(0, vocab_size, rand.sum())\n    return ids, labels                                 # remaining 10% left unchanged\n```\n\nWhy not always use `[MASK]`? Fine-tuning inputs never contain `[MASK]`, so a model that only ever predicted at `[MASK]` positions would learn representations specialised for a token it will never see again. The random 10% forces the model to keep a good representation of every token, since any token might be corrupted; the unchanged 10% biases representations toward the actual observed word. Copying labels before corrupting matters: overwrite first and the \"labels\" become the corrupted ids.\n\n! Example: how much signal one sequence gives\n! A 512-token sequence has about $0.15 \\times 512 \\approx 77$ prediction targets: about 61 `[MASK]`, 8 random replacements, 8 unchanged.\n! A causal LM on the same sequence predicts 511 targets. MLM learns from about 15% as many positions per sequence, one reason it needs long training, and the motivation for ELECTRA, which trains a discriminator on every position.\n\n## Next-sentence prediction\nBERT also trained a binary classifier on the final `[CLS]` vector: is segment B the actual next segment after A (50%), or a random segment from another document (50%)? The aim was to help sentence-pair tasks like entailment and QA. RoBERTa (Liu et al., 2019) found that removing NSP and packing full-length contiguous text matched or improved results, and that most of BERT's headroom came from training longer, on 10× more data, with bigger batches and dynamic masking (a fresh mask each time a sequence is seen). The lesson generalises: an auxiliary objective that looks sensible can be neutral or harmful, so ablate it.\n\n## Fine-tuning for classification\nAdd a linear layer on top of the final `[CLS]` vector (or the masked mean of all token vectors) and train everything end to end with cross-entropy. The BERT paper's ranges remain good defaults:\n- Learning rate 2e-5 to 5e-5 with AdamW, linear warmup over about 10% of steps, then linear decay.\n- 2 to 4 epochs; batch size 16 or 32.\n- A larger learning rate quickly destroys the pretrained features (catastrophic forgetting) and often gives a model that predicts one class.\n\nOn small datasets (a few thousand examples) fine-tuning is unstable: different random seeds, which change the head's initialisation and the data order, can give very different dev scores. Run several seeds and report the mean and spread; train a bit longer with warmup and bias-corrected Adam, both of which were found to reduce the variance.\n\nOther heads use the same encoder: a per-token linear layer for tagging (lesson 06.05), start and end logits for span extraction, or two sentences in one input for pair classification.\n\n## Encoders versus decoders\nAn encoder's bidirectional attention is ideal for understanding tasks: classification, tagging, retrieval embeddings, reranking. It has no natural way to generate text left to right. Decoder-only models trained with next-token prediction generate naturally and, at scale, solve many classification tasks by prompting. For a high-volume, fixed-label task, a fine-tuned 110M-parameter encoder is still often the cheapest accurate option.\n\n> Takeaway: masked language modelling turns unlabelled text into a bidirectional encoder whose contextual vectors transfer to almost any understanding task. Fine-tune all of it gently with a small head, and treat seed variance on small datasets as part of the result.\n",
+   "q": "Suppose you pretrain BERT but replace every chosen token with [MASK] (100/0/0 instead of 80/10/10). What goes wrong when you fine-tune and use the model, and what specific job does the 10% 'left unchanged' bucket do?",
+   "s": "With 100% [MASK], the model only ever has to make predictions at [MASK] positions, so it can learn that ordinary visible tokens never need a carefully built representation of their own identity: the useful computation is focused on [MASK] slots. At fine-tuning and inference there are no [MASK] tokens, so every input looks unlike pretraining, and the representations of real tokens are less suited to the downstream task (a pretrain-finetune mismatch). The 10% random replacement means any visible token might be wrong, so the model must keep a contextual representation for every position. The 10% unchanged bucket means a visible token is sometimes also the correct answer, which teaches the model that the observed word is informative and anchors each position's representation toward the actual token, which is exactly the situation at fine-tuning time.",
+   "r": [
+    [
+     "BERT: Pre-training of Deep Bidirectional Transformers (Devlin et al., 2018)",
+     "https://arxiv.org/abs/1810.04805",
+     "MLM and NSP (section 3.1), the 80/10/10 ablation (appendix C.2) and fine-tuning hyperparameters (appendix A.3)."
+    ],
+    [
+     "RoBERTa: A Robustly Optimized BERT Pretraining Approach",
+     "https://arxiv.org/abs/1907.11692",
+     "Ablations of NSP, dynamic masking, batch size and data scale."
+    ],
+    [
+     "Hugging Face Transformers: Fine-tuning a pretrained model",
+     "https://huggingface.co/docs/transformers/training",
+     "The practical classification fine-tuning loop with Trainer or plain PyTorch."
+    ]
+   ],
+   "k": [
+    "BERT",
+    "masked language modelling",
+    "fine-tuning"
+   ],
+   "x": [
+    "PyTorch",
+    "Hugging Face Transformers"
+   ],
+   "p": [
+    "masked-language-modeling",
+    "mutation-trap",
+    "next-sentence-prediction",
+    "masked-mean-pooling"
+   ]
+  },
+  {
+   "id": "06.07",
+   "t": "Decoding and evaluation",
+   "n": [
+    "Greedy decoding takes the most likely token at each step; beam search keeps the $B$ best partial sequences by total log-probability and approximates the most likely complete output.",
+    "Summed log-probabilities favour short outputs, so beam search needs length normalisation. Very wide beams often lower quality: the most probable sequence is not the best one.",
+    "For open-ended generation, likelihood-maximising search produces dull, repetitive text; sampling with temperature, top-k or top-p (nucleus) is the norm.",
+    "BLEU is clipped n-gram precision (n = 1 to 4, geometric mean) times a brevity penalty, computed at corpus level; ROUGE is recall-oriented overlap, with ROUGE-L based on the longest common subsequence. Both measure surface overlap, not meaning.",
+    "Deduplicate training data, exactly by hash and approximately with MinHash and LSH. Duplicates waste compute, increase memorisation, and leak test examples into training so scores are inflated."
+   ],
+   "a": "## From probabilities to text\nA sequence model (05.03, 05.04) gives $P(y_t \\mid y_{<t}, x)$. Producing text means choosing tokens one at a time, and the choice rule matters as much as the model. This lesson covers the rules, the classic metrics for scoring the result, and the data hygiene that keeps those scores honest. Sampling mechanics for LLM serving (temperature, top-k, top-p, speculative decoding) are covered in more depth in the Inference Engineering course; here the focus is on search and evaluation.\n\n%%flow Every generated output passes through a decoding rule, and its score depends on references and on the test set being clean.\nModel logits -> *Decoding rule (greedy, beam, sampling) -> Output text -(compare with references)-> BLEU / ROUGE\n%%\n\n## Greedy and beam search\nGreedy decoding picks $\\arg\\max$ at every step. It is fast and deterministic but myopic: a token that looks best now can lead to a poor continuation.\n\nBeam search keeps the $B$ highest-scoring partial hypotheses. At each step it expands each by every vocabulary token, scores by cumulative log-probability $\\sum_t \\log P(y_t \\mid y_{<t}, x)$, and keeps the top $B$ of the $B \\times V$ candidates. Hypotheses that emit the end token move to a finished list; search stops when no live beam can beat the best finished one, or at a length limit. Typical widths are 4 to 5 for translation and summarisation.\n\nTwo known problems:\n- **Length bias.** Every token adds a negative log-probability, so shorter hypotheses score higher. Normalise by length, $\\text{score} / |y|^{\\alpha}$ with $\\alpha$ between about 0.6 and 1.0 (GNMT used $((5 + |y|)/6)^{\\alpha}$).\n- **Wider is not better.** Raising $B$ finds higher-probability outputs, but for translation these are often shorter and worse; at extreme widths the empty output can win. The model's highest-probability sequence is not the best translation, so beam width is a hyperparameter to tune on a dev set, not a quality knob to max out.\n\n## Sampling for open-ended text\nFor stories, dialogue and chat, maximising likelihood produces generic and repetitive text that falls into loops. Holtzman et al. (2019) showed that human text is not the most probable text under a model: it regularly contains lower-probability tokens. Sampling restores that variety, with controls on the tail:\n- **Temperature** $\\tau$: sample from $\\text{softmax}(z / \\tau)$. $\\tau < 1$ sharpens, $\\tau > 1$ flattens, $\\tau \\to 0$ approaches greedy.\n- **Top-k**: sample only among the $k$ most likely tokens (e.g. 40).\n- **Top-p (nucleus)**: sample from the smallest set of tokens whose probabilities sum to at least $p$ (e.g. 0.9). The set adapts: a few tokens when the model is confident, many when it is not.\n\nUse beam search where there is roughly one right answer (translation, extraction), and sampling where variety is the point.\n\n## BLEU\nBLEU (Papineni et al., 2002) scores a candidate translation against one or more references. For each $n$ from 1 to 4 it computes a modified precision: n-gram matches divided by candidate n-grams, where each n-gram's count is clipped at the most times it appears in any single reference. The score is\n\n$$\\text{BLEU} = \\text{BP} \\cdot \\exp\\Big(\\sum_{n=1}^{4} \\tfrac{1}{4} \\log p_n\\Big), \\qquad \\text{BP} = \\begin{cases} 1 & c > r \\\\ e^{\\,1 - r/c} & c \\le r \\end{cases}$$\n\nwith $c$ the total candidate length and $r$ the reference length. Precision alone rewards short, safe outputs, so the brevity penalty punishes outputs shorter than the reference.\n\n! Example: clipping and the brevity penalty\n! Candidate \"the the the the the the the\" against reference \"the cat is on the mat\": unclipped unigram precision is 7/7; \"the\" appears at most twice in the reference, so the clipped precision is 2/7.\n! A 10-token candidate against a 12-token reference gets $\\text{BP} = e^{1 - 12/10} = e^{-0.2} = 0.82$, an 18% penalty regardless of quality.\n\n```python\nfrom collections import Counter\ndef clipped_precision(cand, refs, n):\n    grams = lambda t: Counter(zip(*[t[i:] for i in range(n)]))\n    c = grams(cand)\n    max_ref = Counter()\n    for r in refs: max_ref |= grams(r)                  # elementwise max over references\n    return sum(min(k, max_ref[g]) for g, k in c.items()), max(sum(c.values()), 1)\n```\n\nBLEU is designed for corpus level: sum matches and totals over all sentences, then combine. Sentence-level BLEU is noisy and needs smoothing, since a single missing 4-gram makes the geometric mean zero. Scores also depend on tokenisation, which is why sacreBLEU standardises it and prints a signature; never compare BLEU numbers computed with different tokenisers.\n\n## ROUGE\nROUGE (Lin, 2004) was built for summarisation and is recall-oriented: how much of the reference does the candidate cover? ROUGE-N is n-gram recall (ROUGE-1, ROUGE-2). ROUGE-L uses the longest common subsequence, which rewards in-order matches without requiring them to be contiguous, and is usually reported as an F-measure combining LCS-based precision and recall.\n\nBoth metrics measure surface overlap. A correct paraphrase can score poorly and a fluent but wrong output can score well. Use them to track progress within one system and dataset, and pair them with human evaluation or model-based judges for decisions that matter.\n\n## Deduplication\nEvaluation is only meaningful if test examples were not in the training data, and web-scale corpora are full of repeats. Lee et al. (2021) found substantial train-test overlap in standard datasets and showed that deduplicated training data led models to emit memorised text far less often, with no loss in quality.\n- **Exact duplicates**: normalise (lowercase, collapse whitespace), hash each document, keep the first occurrence of each hash. Linear time, stable order.\n- **Near duplicates**: represent each document by its set of word or character shingles (e.g. 5-grams) and estimate Jaccard similarity with MinHash: the probability that two documents share the minimum hash under a random hash function equals their Jaccard similarity. With LSH, split a 100-value signature into $b$ bands of $r$ rows; two documents become candidates if any band matches exactly, which happens with probability $1 - (1 - s^r)^b$.\n\nWith $b = 20$, $r = 5$: documents with Jaccard 0.8 become candidates with probability 0.9996; documents at 0.3 only 0.05. Candidates are then checked exactly. Deduplicate before splitting into train and test, or check the test set against the training set explicitly.\n\n> Takeaway: the decoding rule shapes the output as much as the model does: beam search with length normalisation for single-answer tasks, sampling for open-ended ones. BLEU and ROUGE measure n-gram overlap under fixed tokenisation, and they are only honest on deduplicated data.\n",
+   "q": "You raise the beam width of a translation model from 5 to 50. Model log-probability of the outputs goes up, but BLEU goes down and outputs get noticeably shorter. Explain why, and what you would change.",
+   "s": "Beam search maximises the total log-probability, a sum of negative terms, so every extra token lowers the score; short hypotheses that end early have an advantage. A narrow beam rarely finds those short, high-probability hypotheses, but a 50-wide beam explores enough to find them. It is succeeding at search while exposing a mismatch between the model's probability and translation quality. BLEU drops because the outputs omit content (lower n-gram matches) and because the brevity penalty e^(1 - r/c) applies once candidates are shorter than the references. Fixes: add length normalisation (divide by length to the power α, about 0.6-1.0, or GNMT's penalty), possibly a coverage penalty, and tune both the beam width and α on a dev set; often a beam of 4-8 with normalisation is best.",
+   "r": [
+    [
+     "The Curious Case of Neural Text Degeneration (Holtzman et al., 2019)",
+     "https://arxiv.org/abs/1904.09751",
+     "Why likelihood-maximising decoding degenerates on open-ended text, and nucleus sampling."
+    ],
+    [
+     "BLEU: a Method for Automatic Evaluation of Machine Translation (Papineni et al., 2002)",
+     "https://aclanthology.org/P02-1040/",
+     "Clipped n-gram precision and the brevity penalty, defined in sections 2.1 to 2.3."
+    ],
+    [
+     "ROUGE: A Package for Automatic Evaluation of Summaries (Lin, 2004)",
+     "https://aclanthology.org/W04-1013/",
+     "Definitions of ROUGE-N, ROUGE-L and their variants."
+    ],
+    [
+     "Deduplicating Training Data Makes Language Models Better (Lee et al., 2021)",
+     "https://arxiv.org/abs/2107.06499",
+     "Exact and MinHash near-duplicate removal at scale, and its effect on memorisation and train-test overlap."
+    ]
+   ],
+   "k": [
+    "beam search",
+    "BLEU",
+    "deduplication"
+   ],
+   "x": [
+    "Python",
+    "NumPy"
+   ],
+   "p": [
+    "beam-search-decoding",
+    "evaluation-metrics-bleu-rouge",
+    "text-generation-sampling",
+    "text-deduplication-minhash",
+    "perform-stable-exact-deduplication"
+   ]
+  }
+ ]
+}

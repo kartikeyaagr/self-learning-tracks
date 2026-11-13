@@ -1,0 +1,208 @@
+{
+ "n": "05",
+ "name": "Sequence models",
+ "lessons": [
+  {
+   "id": "05.01",
+   "t": "Recurrent networks",
+   "n": [
+    "An RNN applies the same cell at every time step, carrying a hidden state: $h_t = \\tanh(W_{xh}x_t + W_{hh}h_{t-1} + b)$. Weight sharing over time lets one model handle any sequence length.",
+    "Unrolled over $T$ steps, an RNN is a $T$-layer deep network with tied weights. Backprop through time (BPTT) is ordinary backprop on that unrolled graph, with gradients for the shared weights summed over steps.",
+    "The gradient from step $t$ to step $k$ is a product of $t-k$ Jacobians. If their norms sit below 1 the signal vanishes exponentially; above 1 it explodes.",
+    "Clip gradients by global norm to tame explosions; use gated cells (next lesson) to fight vanishing; use truncated BPTT to bound memory on long sequences.",
+    "Recurrence is inherently sequential in time, which is the main reason transformers replaced RNNs for training on large datasets."
+   ],
+   "a": "## Why sequences need their own architecture\nThis module covers models that read ordered data: text, audio, sensor streams, event logs. An MLP needs a fixed input size and treats position 3 and position 30 as unrelated features. A sequence model should handle any length and reuse what it learns about a pattern wherever the pattern occurs. Recurrent networks do this by sharing weights across time. Later lessons add gates (05.02), attention between two sequences (05.03), and finally replace recurrence with attention altogether (05.04). The NLP module that follows uses all of these.\n\n## The RNN cell\nAt each step the cell combines the current input $x_t \\in \\mathbb{R}^d$ with the previous hidden state $h_{t-1} \\in \\mathbb{R}^H$:\n\n$$h_t = \\tanh(W_{xh} x_t + W_{hh} h_{t-1} + b_h), \\qquad y_t = W_{hy} h_t + b_y$$\n\nThe same $W_{xh}$ ($H \\times d$), $W_{hh}$ ($H \\times H$) and $b_h$ are used at every step, so the cell has $H(d + H + 1)$ parameters regardless of length. With $d = 128$ and $H = 256$ that is 98,560. The hidden state is the network's entire memory of the past: a fixed-size summary it must keep updating.\n\n```python\nimport numpy as np\ndef rnn_forward(X, Wxh, Whh, b, h0):       # X: (T, B, d)\n    h, hs = h0, []                          # h: (B, H)\n    for x in X:                             # strictly one step after another\n        h = np.tanh(x @ Wxh.T + h @ Whh.T + b)\n        hs.append(h)\n    return np.stack(hs)                     # (T, B, H)\n```\n\nFor batches of different-length sequences, pad to the longest and mask: padded steps must not update the hidden state that later steps or the loss rely on, and padded outputs must be excluded from the loss. PyTorch's packed sequences do this by skipping padded steps entirely.\n\n## Backpropagation through time\nUnroll the loop and you have a $T$-layer feed-forward network whose layers share weights. BPTT is backprop on that graph. Because $W_{hh}$ appears at every step, its gradient is the sum of the contributions from every step.\n\n%%flow The unrolled RNN. Forward runs left to right; the gradient of a late loss must travel back through every intermediate state.\n[Forward] h0 -(x1)-> h1 -(x2)-> h2 -(x3)-> h3 -(x4)-> *h4 -> Loss\n[Backward] Loss -> *dL/dh4 -(× J4)-> dL/dh3 -(× J3)-> dL/dh2 -(× J2)-> dL/dh1\n%%\n\nEach backward hop multiplies by the step Jacobian $J_i = \\partial h_i / \\partial h_{i-1} = \\text{diag}(1 - h_i^2)\\, W_{hh}$. So the gradient that a loss at step $t$ sends to the state at step $k$ is\n\n$$\\frac{\\partial h_t}{\\partial h_k} = \\prod_{i=k+1}^{t} \\text{diag}(1 - h_i^2)\\, W_{hh}$$\n\nMemory is the other cost: BPTT must store every hidden state from the forward pass, so activation memory grows linearly in $T$.\n\n## Vanishing and exploding gradients\nThe product of $t - k$ matrices behaves roughly like the largest singular value raised to the power $t-k$. The tanh derivative $1 - h^2$ is at most 1 and often much smaller, which pushes toward vanishing.\n\n! Example: what 50 steps does to a gradient\n! If each step scales the gradient by 0.9, after 50 steps it is $0.9^{50} \\approx 0.005$: the loss barely affects what happened 50 steps earlier.\n! If each step scales it by 1.1, it is $1.1^{50} \\approx 117$, and a slightly larger spectral radius gives inf or NaN.\n! A plain RNN in practice learns dependencies of about 10 to 20 steps, not hundreds.\n\nVanishing is silent: training runs, loss falls, and the model just never learns long-range structure. Exploding is loud: loss spikes or becomes NaN. The fixes differ:\n- **Gradient clipping** for explosions. Compute the global norm over all parameter gradients and, if it exceeds a threshold (commonly 1 or 5), rescale all of them by threshold / norm. Direction is kept, step size bounded.\n- **Gated cells** (LSTM, GRU) for vanishing: they add a path through time that is not multiplied by $W_{hh}$ at every step.\n- **Initialisation**: orthogonal $W_{hh}$ starts with all singular values at 1, which delays both problems.\n\n## Truncated BPTT\nFor long streams (a book, a year of sensor data) you cannot backprop through the entire history. Truncated BPTT splits the stream into chunks of $k$ steps (e.g. 35 or 128). The hidden state is carried from one chunk to the next, but detached, so gradients stop at the chunk boundary.\n\n```python\nh = h0\nfor chunk in chunks(stream, k=128):\n    out, h = rnn(chunk, h)\n    loss = criterion(out, targets_for(chunk))\n    loss.backward(); clip_grad_norm_(params, 1.0); opt.step(); opt.zero_grad()\n    h = h.detach()                       # keep the state, drop the graph\n```\n\nThe model still sees information from earlier chunks through $h$, but it is never trained by gradient to put information into $h$ for use more than $k$ steps later.\n\n## The sequential bottleneck\nStep $t$ cannot start until step $t-1$ finishes, so a 1,000-step sequence is 1,000 dependent matrix multiplies, regardless of how many GPU cores are idle. Batching across sequences helps, but not across time. This is the main reason transformers, which process all positions of a training sequence in parallel, took over (lesson 05.04). RNNs remain useful for streaming inference with constant memory per step, and modern state-space models revive the recurrent form for exactly that.\n\n> Takeaway: an RNN is a deep network unrolled in time with shared weights. Gradients through it are products of Jacobians, so they vanish or explode with distance; clip for explosions, gate for vanishing, truncate for memory.\n",
+   "q": "You train a character-level RNN with truncated BPTT, chunk length k = 35, carrying the hidden state across chunks. Can the model use information from 100 characters back? Explain what the truncation does and does not prevent.",
+   "s": "It can use such information only by accident, not by design. Truncation stops gradients at chunk boundaries, so no loss term ever adjusts the weights to store information in h for longer than 35 steps; the model is never trained to keep a fact for 100 characters. But the forward pass does carry h across boundaries, so whatever the network has learned to keep for short-range reasons (for example 'inside a quotation', or the current topic) persists and can influence predictions far later. So dependencies longer than k are not impossible, just not directly learnable. To learn them you need longer chunks (more memory), a gated cell whose state decays slowly, or an architecture with direct access to earlier positions, such as attention.",
+   "r": [
+    [
+     "Dive into Deep Learning: Recurrent Neural Networks",
+     "https://d2l.ai/chapter_recurrent-neural-networks/rnn.html",
+     "The RNN cell with runnable code and shapes."
+    ],
+    [
+     "Dive into Deep Learning: Backpropagation Through Time",
+     "https://d2l.ai/chapter_recurrent-neural-networks/bptt.html",
+     "Derives the Jacobian product and compares full, truncated and randomised truncation."
+    ],
+    [
+     "On the difficulty of training Recurrent Neural Networks (Pascanu et al., 2012)",
+     "https://arxiv.org/abs/1211.5063",
+     "The analysis of vanishing and exploding gradients and the case for norm clipping."
+    ],
+    [
+     "The Unreasonable Effectiveness of Recurrent Neural Networks (Karpathy)",
+     "https://karpathy.github.io/2015/05/21/rnn-effectiveness/",
+     "Character-level RNNs in practice, with visualisations of what hidden units track."
+    ]
+   ],
+   "k": [
+    "RNN",
+    "BPTT",
+    "vanishing gradients"
+   ],
+   "x": [
+    "NumPy",
+    "PyTorch"
+   ],
+   "p": [
+    "vanilla-rnn-cell",
+    "rnn-cell",
+    "language-modeling",
+    "gradient-clipping-global-norm-rescaling"
+   ]
+  },
+  {
+   "id": "05.02",
+   "t": "LSTMs and GRUs",
+   "n": [
+    "An LSTM keeps a separate cell state updated additively: $c_t = f_t \\odot c_{t-1} + i_t \\odot g_t$. Gradients along $c$ are scaled by the forget gate, not by a repeated weight matrix, so they survive when $f_t \\approx 1$.",
+    "Gates are sigmoids in $(0, 1)$ computed from $x_t$ and $h_{t-1}$: forget ($f$), input ($i$), output ($o$), plus a tanh candidate $g$. An LSTM has 4× the parameters of a plain RNN of the same width.",
+    "Initialise the forget-gate bias to about 1 so the cell starts out remembering; at zero it starts out forgetting half its state every step.",
+    "A GRU merges cell and hidden state and uses two gates (update, reset): 3× the RNN's parameters, usually similar accuracy. Watch the convention for which side of the interpolation $z$ multiplies.",
+    "In large comparisons, the forget gate and the output activation matter most; most other LSTM variants make little difference."
+   ],
+   "a": "## The fix for vanishing gradients\nThe previous lesson showed that in a plain RNN the gradient across $n$ steps is a product of $n$ Jacobians, each containing $W_{hh}$ and a tanh derivative, so it decays or blows up exponentially. The LSTM (Hochreiter and Schmidhuber, 1997; forget gate added by Gers et al., 2000) adds a second state, the cell $c_t$, whose update is mostly additive. That changes the gradient path from a matrix product into an elementwise product of gate values that the network can choose to keep near 1.\n\n## LSTM equations\nWith $[h_{t-1}, x_t]$ the concatenation of the previous hidden state and the input, and $\\sigma$ the sigmoid:\n\n$$f_t = \\sigma(W_f [h_{t-1}, x_t] + b_f), \\quad i_t = \\sigma(W_i [h_{t-1}, x_t] + b_i), \\quad o_t = \\sigma(W_o [h_{t-1}, x_t] + b_o)$$\n\n$$g_t = \\tanh(W_g [h_{t-1}, x_t] + b_g), \\quad c_t = f_t \\odot c_{t-1} + i_t \\odot g_t, \\quad h_t = o_t \\odot \\tanh(c_t)$$\n\n- The **forget gate** $f$ decides what fraction of each cell unit to keep.\n- The **input gate** $i$ decides how much of the new candidate $g$ to write.\n- The **output gate** $o$ decides how much of the cell to expose as $h_t$, which is what the next layer and the next step's gates see.\n\n%%flow The cell-state path through one LSTM step. Nothing on it multiplies by a weight matrix.\nc(t-1) -(× forget gate)-> kept memory -(+ input gate × candidate)-> *c(t) -(tanh, × output gate)-> h(t)\n%%\n\nAlong this path, $\\partial c_t / \\partial c_{t-1} = \\text{diag}(f_t)$ (plus smaller terms through the gates). If the network learns $f \\approx 1$ for a unit, the gradient flows back through hundreds of steps almost unchanged. Hochreiter called this the constant error carousel. The same idea, an identity-like additive path, reappears in ResNets (module 03) and in the residual stream of transformers.\n\n```python\nimport numpy as np\nsig = lambda z: 1 / (1 + np.exp(-z))\ndef lstm_step(x, h, c, W, b):             # W: (4H, d+H), rows in order i, f, g, o\n    z = W @ np.concatenate([x, h]) + b\n    i, f, g, o = np.split(z, 4)\n    c = sig(f) * c + sig(i) * np.tanh(g)\n    h = sig(o) * np.tanh(c)\n    return h, c\n```\n\nPyTorch stacks the four blocks of `weight_ih_l0` in the order input, forget, cell (candidate), output, and keeps two bias vectors (`bias_ih` and `bias_hh`) that are simply added. Loading weights from another framework with a different gate order is a classic silent bug.\n\n## Forget-gate bias\nAt initialisation with zero bias, $f_t \\approx \\sigma(0) = 0.5$: every unit halves its memory each step, so after 10 steps only $0.5^{10} \\approx 0.001$ of the original remains. The gradient path the LSTM was designed to provide is closed until training opens it. Setting $b_f \\approx 1$ gives $f \\approx 0.73$ at the start, and many implementations go higher. Setting it strongly negative would make the LSTM behave like a forgetful plain RNN.\n\n! Example: parameter counts for one layer\n! Input $d = 300$ (word vectors), hidden $H = 512$.\n! Plain RNN: $512 \\times (300 + 512 + 1) = 416{,}256$.\n! LSTM: $4 \\times 416{,}256 = 1{,}665{,}024$ (PyTorch's two bias vectors add another 2,048).\n! GRU: $3 \\times 416{,}256 = 1{,}248{,}768$, a quarter fewer than the LSTM.\n\n## The GRU\nThe gated recurrent unit (Cho et al., 2014) has no separate cell. An update gate $z$ interpolates between the old state and a candidate; a reset gate $r$ controls how much of the old state the candidate may read:\n\n$$r_t = \\sigma(W_r x_t + U_r h_{t-1}), \\quad z_t = \\sigma(W_z x_t + U_z h_{t-1})$$\n\n$$n_t = \\tanh(W_n x_t + r_t \\odot (U_n h_{t-1})), \\quad h_t = (1 - z_t) \\odot n_t + z_t \\odot h_{t-1}$$\n\nIn this convention (Cho's and PyTorch's), $z \\approx 1$ keeps the old state. Some textbooks swap $z$ and $1 - z$; check before porting weights. The interpolation is again an additive path, so the GRU fights vanishing gradients for the same reason as the LSTM.\n\n| | Plain RNN | LSTM | GRU |\n| States | $h$ | $h$ and $c$ | $h$ |\n| Gates | none | forget, input, output | update, reset |\n| Parameters (relative) | 1× | 4× | 3× |\n| Long-range memory | poor (about 10-20 steps) | good | good |\n\n## Practical choices\n- **Which cell?** Greff et al. (2015) compared eight LSTM variants over thousands of runs: none beat the standard LSTM significantly, and removing the forget gate or the output activation hurt most. GRUs perform comparably on most tasks; pick the GRU when parameters or speed matter.\n- **Stacking**: 2 to 4 layers are typical, with dropout between layers (not on the recurrent connection, unless you use the same mask at every step).\n- **Bidirectional**: run one LSTM forward and one backward and concatenate their states. Each position then sees both past and future, which is right for tagging (06.05) and encoding (05.03), and wrong for generation, which must not see the future.\n- **Gradient clipping** is still needed; gates mitigate vanishing, not exploding.\n\n> Takeaway: gates give recurrent networks an additive memory path whose gradient is scaled by learned gate values instead of a repeated weight matrix. LSTMs and GRUs differ in bookkeeping, not in principle; initialise the forget gate to remember.\n",
+   "q": "Why does initialising the LSTM forget-gate bias to 1 help early training, and what would you expect if it were initialised to -3 instead?",
+   "s": "With bias 0 the forget gate starts at about 0.5, so each cell unit loses half its content per step and the gradient along the cell path also shrinks by half per step; information and credit vanish over about 10 steps, exactly the plain-RNN problem the LSTM was meant to avoid, and the network must first learn to open the gate before it can learn long dependencies. Bias 1 gives f ≈ 0.73 initially (higher bias gives more), so memory and gradients persist much longer from the first update, and the model can discover long-range patterns early. With bias -3, f ≈ 0.05: the cell is wiped almost completely every step, the gradient along c is multiplied by about 0.05 per step, and the LSTM behaves like a memoryless RNN until (and unless) training drives the bias up.",
+   "r": [
+    [
+     "Understanding LSTM Networks (Olah, 2015)",
+     "https://colah.github.io/posts/2015-08-Understanding-LSTMs/",
+     "The standard visual walkthrough of each gate, plus GRU and peephole variants."
+    ],
+    [
+     "Learning Phrase Representations using RNN Encoder-Decoder (Cho et al., 2014)",
+     "https://arxiv.org/abs/1406.1078",
+     "Introduces the GRU (section 2.3) alongside the encoder-decoder."
+    ],
+    [
+     "LSTM: A Search Space Odyssey (Greff et al., 2015)",
+     "https://arxiv.org/abs/1503.04069",
+     "Large ablation of LSTM variants; read the conclusions on which components matter."
+    ],
+    [
+     "PyTorch nn.LSTM",
+     "https://pytorch.org/docs/stable/generated/torch.nn.LSTM.html",
+     "Exact equations, gate order and weight shapes used by PyTorch."
+    ]
+   ],
+   "k": [
+    "LSTM",
+    "GRU",
+    "gating"
+   ],
+   "x": [
+    "NumPy",
+    "PyTorch"
+   ],
+   "p": [
+    "lstm-cell",
+    "gru-cell",
+    "lstm-cell-2"
+   ]
+  },
+  {
+   "id": "05.03",
+   "t": "Sequence-to-sequence and attention",
+   "n": [
+    "An encoder-decoder maps an input sequence to an output sequence of a different length: the encoder reads the source, the decoder generates the target one token at a time conditioned on it.",
+    "Without attention, everything about the source must pass through one fixed-size vector, and quality drops sharply on long inputs.",
+    "Attention lets each decoder step compute a weighted average of all encoder states, with weights from a learned score between the decoder state and each encoder state.",
+    "Additive (Bahdanau) attention scores with a small MLP, $v^\\top \\tanh(W_s s + W_h h_i)$; multiplicative (Luong) attention uses $s^\\top W h_i$ or a plain dot product, which is cheaper and is what transformers scale up.",
+    "Training uses teacher forcing (feed the true previous token); inference feeds the model's own predictions. Mask padded source positions before the softmax."
+   ],
+   "a": "## Mapping one sequence to another\nTranslation, summarisation, speech recognition and code generation all map an input sequence to an output sequence whose length differs and is not known in advance. The sequence-to-sequence architecture (Sutskever et al., 2014; Cho et al., 2014) handles this with two recurrent networks:\n- The **encoder** reads the source $x_1, \\dots, x_S$ and produces hidden states $h_1, \\dots, h_S$.\n- The **decoder** is a language model over the target that is conditioned on the source. It starts from a summary of the encoder and emits $y_1, y_2, \\dots$ until it produces an end token.\n\nIn the original form the conditioning is just the encoder's final state, used to initialise the decoder. Sutskever et al. reached strong translation results with 4-layer LSTMs and one surprising trick: reversing the source sentence, which puts the first source words close to the first target words and shortens the gradient path between them.\n\n## Teacher forcing and exposure bias\nDuring training the decoder at step $t$ receives the true previous token $y_{t-1}$, not its own prediction. This is teacher forcing: every step's loss is computed in parallel from ground truth inputs, and training is stable. At inference there is no ground truth, so the decoder consumes its own outputs, and an early mistake puts it in states it never saw during training. The mismatch is called exposure bias. Mitigations include scheduled sampling (sometimes feeding model predictions during training) and better search at decoding time (lesson 06.07).\n\n## The bottleneck\nCompressing a 50-word sentence into one 1,000-dimensional vector loses information, and the encoder's early states have the longest path to the decoder's outputs. Bahdanau et al. (2014) showed that BLEU for a basic encoder-decoder falls steeply as sentence length grows past about 30 words, while their attention model stays roughly flat.\n\n## Attention: a soft lookup into the source\nInstead of one summary, keep all encoder states and let each decoder step choose what to read. At step $t$, with decoder state $s_{t-1}$:\n\n$$e_{t,i} = \\text{score}(s_{t-1}, h_i), \\qquad \\alpha_{t,i} = \\frac{\\exp(e_{t,i})}{\\sum_j \\exp(e_{t,j})}, \\qquad c_t = \\sum_i \\alpha_{t,i}\\, h_i$$\n\nThe context vector $c_t$ is fed into the decoder along with the previous token, and the decoder produces $s_t$ and the next-token distribution.\n\n%%seq One decoder step with attention over the encoder states.\nDecoder > Attention: query s(t-1)\nAttention > Encoder states: score every h(i)\nEncoder states -> Attention: softmax weights α(t,i)\nAttention -> Decoder: context c(t) = Σ α h\nDecoder > Decoder: update state, emit y(t)\n%%\n\nScore functions:\n- **Additive** (Bahdanau): $\\text{score}(s, h) = v^\\top \\tanh(W_s s + W_h h)$, a one-hidden-layer MLP. Works well when $s$ and $h$ have different sizes.\n- **General / bilinear** (Luong): $s^\\top W h$.\n- **Dot** (Luong): $s^\\top h$. No parameters, and it turns a whole step into one matrix multiply. Scaled by $1/\\sqrt{d}$, this is the scaled dot-product attention of transformers.\n\nBahdanau used a bidirectional encoder so each $h_i$ summarises context on both sides of source word $i$, and scored with the previous decoder state $s_{t-1}$; Luong scored with the current state $s_t$. The differences are small in practice.\n\n```python\nimport numpy as np\ndef additive_attention(s, H, Ws, Wh, v, mask):   # s: (D,), H: (S, E), mask: (S,) bool\n    e = np.tanh(H @ Wh.T + Ws @ s) @ v            # (S,) one score per source position\n    e = np.where(mask, e, -np.inf)                # padded positions get zero weight\n    a = np.exp(e - e.max()); a /= a.sum()\n    return a @ H, a                               # context (E,), weights (S,)\n```\n\n! Example: three attention weights by hand\n! Scores for three source words: $e = (2.0, 0.5, -1.0)$.\n! Exponentials: $7.389, 1.649, 0.368$, total $9.406$. Weights: $\\alpha = (0.786, 0.175, 0.039)$.\n! The context vector is 79% the first encoder state. If a fourth position were padding and not masked, it would steal weight from real words.\n\n## What attention changes\n- **Gradient path**: the decoder's loss at step $t$ reaches encoder state $h_i$ directly through $\\alpha_{t,i}$, in one hop, instead of through every intervening recurrent step.\n- **Interpretability**: the matrix of $\\alpha_{t,i}$ is a soft alignment; in translation it is roughly diagonal, with visible reorderings such as adjective-noun swaps between English and French.\n- **Cost**: computing all weights is $O(S \\cdot T)$ for source length $S$ and target length $T$, negligible next to the recurrent work at these lengths.\n\nOnce every decoder step can look anywhere in the source, the next question is why the encoder and decoder need recurrence at all. If each position can attend to every other position, including within the same sequence, the sequential loop can go. That is the transformer, next lesson.\n\n> Takeaway: seq2seq models separate reading from writing. Attention replaces a single fixed-size summary with a learned, per-step weighted average of all encoder states, removing the length bottleneck and giving gradients a one-hop path to every source position.\n",
+   "q": "A seq2seq LSTM translator without attention handles 10-word sentences well but produces poor translations for 50-word sentences. Explain the failure mechanistically, and explain what attention changes in both the forward pass and the backward pass.",
+   "s": "Forward: the decoder sees the source only through the encoder's final state, a fixed-size vector. A 10-word sentence fits; a 50-word sentence must be compressed into the same capacity, so details, especially from early words that have been overwritten by many updates, are lost. Backward: the loss at an early target word must reach the corresponding early source word through roughly 50 encoder steps plus the decoder steps, and the gradient weakens over that path, so the alignment is hard to learn. With attention, each decoder step reads a weighted average of all encoder states, so capacity grows with source length and the decoder can attend to whichever word it needs. The gradient reaches each encoder state directly through its attention weight, so the path length no longer depends on the distance between source and target positions.",
+   "r": [
+    [
+     "Sequence to Sequence Learning with Neural Networks (Sutskever et al., 2014)",
+     "https://arxiv.org/abs/1409.3215",
+     "The encoder-decoder LSTM and the source-reversal trick."
+    ],
+    [
+     "Neural Machine Translation by Jointly Learning to Align and Translate (Bahdanau et al., 2014)",
+     "https://arxiv.org/abs/1409.0473",
+     "Additive attention; figure 2 shows the length-robustness result."
+    ],
+    [
+     "Effective Approaches to Attention-based NMT (Luong et al., 2015)",
+     "https://arxiv.org/abs/1508.04025",
+     "Dot, general and concat scores, and global versus local attention."
+    ],
+    [
+     "Dive into Deep Learning: Bahdanau Attention",
+     "https://d2l.ai/chapter_attention-mechanisms-and-transformers/bahdanau-attention.html",
+     "Runnable encoder-decoder with additive attention."
+    ]
+   ],
+   "k": [
+    "seq2seq",
+    "attention"
+   ],
+   "x": [
+    "NumPy",
+    "PyTorch"
+   ],
+   "p": [
+    "sequence-to-sequence-forward-pass",
+    "attention-mechanism",
+    "scaled-dot-product-attention"
+   ]
+  },
+  {
+   "id": "05.04",
+   "t": "Transformers for sequences",
+   "n": [
+    "A transformer drops recurrence: self-attention connects every pair of positions in one step, so a whole training sequence is processed in parallel at $O(T^2)$ attention cost.",
+    "An encoder block is self-attention plus a position-wise MLP, each wrapped in a residual connection and layer norm. A decoder block adds a causal mask and a cross-attention sublayer that reads the encoder's output.",
+    "Pre-LN (normalise before each sublayer) trains stably without long warmup; the original post-LN layout normalises after the residual add and is fragile when deep.",
+    "Attention is permutation-equivariant, so order must be injected. Sinusoidal and learned embeddings are added to the inputs; rotary embeddings (RoPE) rotate queries and keys so that attention scores depend on the relative offset.",
+    "Three families follow from which blocks you keep: encoder-only (BERT), decoder-only (GPT), encoder-decoder (T5, the original transformer)."
+   ],
+   "a": "## From attention-plus-RNN to attention only\nLesson 05.03 ended with a decoder attending over encoder states. The transformer (Vaswani et al., 2017) asks every position in a sequence to attend to every other position in the same sequence (self-attention), and removes the recurrent loop entirely. Two consequences:\n- **Parallel training**: all $T$ positions are computed at once with matrix multiplies, instead of $T$ dependent steps. This is why transformers scale to large datasets.\n- **Constant path length**: any two positions interact within one layer, compared with $O(T)$ steps in an RNN. The price is $O(T^2)$ attention compute and memory per layer.\n\nThis lesson stays at block level. For the mechanics of queries, keys, values, multi-head attention and shape tracing, see the AI Engineering course (LLM internals and the transformer walkthrough), and the AI Research course for building GPT from scratch.\n\n## Encoder and decoder blocks\nAn **encoder block** has two sublayers, each wrapped as $x + \\text{Sublayer}(\\text{LN}(x))$ in the pre-LN layout:\n1. Multi-head self-attention, every position attending to every non-padding position.\n2. A position-wise feed-forward network, typically $D \\to 4D \\to D$ with GELU or a gated variant.\n\nA **decoder block** has three:\n1. Masked self-attention: a causal mask sets scores for future positions to $-\\infty$, so position $t$ sees only positions up to $t$. This is what makes teacher-forced training parallel: all target positions are predicted at once without peeking.\n2. Cross-attention: queries come from the decoder, keys and values from the final encoder output. This is exactly the seq2seq attention of the previous lesson.\n3. The feed-forward network.\n\n%%flow Original encoder-decoder transformer, one block of each. Every sublayer has a residual connection and layer norm.\n[Encoder block] Source tokens -> *Self-attention -> Feed-forward -> Encoder output\n[Decoder block] Target so far -> *Masked self-attention -(K, V from encoder)-> Cross-attention -> Feed-forward -> Next-token logits\n%%\n\n**Pre-LN vs post-LN.** The 2017 paper used post-LN, $\\text{LN}(x + \\text{Sublayer}(x))$. Xiong et al. (2020) showed that post-LN produces large gradients near the output at initialisation, which is why it needs a careful learning-rate warmup and becomes unstable when deep. Pre-LN keeps an un-normalised residual stream from input to output and trains reliably; almost all large models use it, with a final layer norm before the output head.\n\n## Three families\n\n| Family | Blocks | Attention | Typical use |\n| Encoder-only | encoder | bidirectional | classification, tagging, retrieval (BERT, lesson 06.06) |\n| Decoder-only | decoder without cross-attention | causal | generation, chat (GPT and most LLMs) |\n| Encoder-decoder | both | bidirectional encoder, causal decoder | translation, summarisation (T5, original transformer) |\n\n## Giving attention a sense of order\nSelf-attention treats its input as a set: permute the tokens and the outputs are permuted identically. Without position information, \"dog bites man\" and \"man bites dog\" look the same.\n\n- **Sinusoidal** (original): add a fixed vector with $PE_{(p, 2i)} = \\sin(p / 10000^{2i/D})$ and $PE_{(p, 2i+1)} = \\cos(p / 10000^{2i/D})$ to each token embedding. Different dimensions oscillate at geometrically spaced frequencies.\n- **Learned absolute**: a trainable embedding per position (BERT, GPT-2, ViT). Simple, but undefined beyond the trained length.\n- **Rotary (RoPE)**: instead of adding anything to the residual stream, rotate each query and key. Split a $d$-dimensional head vector into $d/2$ pairs; rotate pair $i$ at position $m$ by angle $m\\theta_i$ with $\\theta_i = 10000^{-2i/d}$.\n\nThe point of RoPE is that rotations compose. If $q$ is rotated by $m\\theta$ and $k$ by $n\\theta$, their dot product equals the dot product of the unrotated vectors with one of them rotated by $(m - n)\\theta$. Attention scores therefore depend on content and relative offset only, and the same offset means the same thing anywhere in the sequence. Values are not rotated, so the information moved by attention is position-free. RoPE is the default in most current LLMs (the Inference Engineering course covers fusing it into kernels).\n\n```python\nimport numpy as np\ndef rope(x, pos, base=10000.0):           # x: (T, d) queries or keys, d even\n    d = x.shape[-1]\n    theta = base ** (-np.arange(0, d, 2) / d)          # (d/2,)\n    ang = pos[:, None] * theta[None, :]                # (T, d/2)\n    cos, sin = np.cos(ang), np.sin(ang)\n    x1, x2 = x[:, 0::2], x[:, 1::2]                    # interleaved pairs\n    out = np.empty_like(x)\n    out[:, 0::2] = x1 * cos - x2 * sin\n    out[:, 1::2] = x1 * sin + x2 * cos\n    return out\n```\n\nTwo layouts exist: interleaved pairs (as above, the original paper) and split halves (first half paired with second half, used by many Hugging Face models). Weights trained with one layout give garbage with the other.\n\n! Example: RoPE depends only on the offset\n! One 2-D pair, $\\theta = 0.5$. Query $q = (1, 0)$ at position 3 is rotated by 1.5 rad to $(0.071, 0.997)$. Key $k = (1, 0)$ at position 1 is rotated by 0.5 rad to $(0.878, 0.479)$.\n! Dot product: $0.071 \\times 0.878 + 0.997 \\times 0.479 = 0.540 = \\cos(1.0)$.\n! Move both to positions 10 and 8: angles 5.0 and 4.0, dot product $\\cos(1.0) = 0.540$ again. Same offset, same score.\n\n## What changes in practice\nTraining is parallel, but generation is still one token at a time; the KV cache that makes that efficient is covered in the Inference Engineering course. Length generalisation is the weak spot: models trained on 4k tokens degrade beyond that, and RoPE-scaling methods (position interpolation, NTK-aware scaling) stretch the angles so longer contexts map into the trained range.\n\n> Takeaway: a transformer is a stack of residual blocks of attention and feed-forward layers, with masks deciding who sees whom and a position scheme supplying order. RoPE encodes position by rotating queries and keys, so attention depends on relative distance.\n",
+   "q": "RoPE is applied to queries and keys but not to values, and not added to the token embeddings like sinusoidal encodings. Why is that design chosen, and what would be lost if you instead added the rotation result to the input embeddings once at the bottom of the network?",
+   "s": "Rotating q and k makes each attention score a function of content and the relative offset m - n, because the two rotations combine into a single rotation by the difference. That gives every layer a clean relative-position signal exactly where it is used, in the scores. Values are left unrotated so the information attention moves between positions is not tagged with an absolute position, and the residual stream stays position-free. If you added a positional vector to the input embeddings once, position would be mixed into the content representation, would have to survive many layers of updates, and the dot product between two such vectors contains content-position cross terms that depend on absolute positions, not just their difference. You would lose the exact relative-offset property and get weaker length generalisation.",
+   "r": [
+    [
+     "Attention Is All You Need (Vaswani et al., 2017)",
+     "https://arxiv.org/abs/1706.03762",
+     "The original encoder-decoder transformer; section 3 for blocks and 3.5 for sinusoidal positions."
+    ],
+    [
+     "RoFormer: Enhanced Transformer with Rotary Position Embedding",
+     "https://arxiv.org/abs/2104.09864",
+     "Derivation of RoPE and its relative-position property, section 3.4."
+    ],
+    [
+     "The Annotated Transformer (Harvard NLP)",
+     "https://nlp.seas.harvard.edu/annotated-transformer/",
+     "Line-by-line PyTorch implementation of the full encoder-decoder."
+    ],
+    [
+     "On Layer Normalization in the Transformer Architecture (Xiong et al., 2020)",
+     "https://arxiv.org/abs/2002.04745",
+     "Why post-LN needs warmup and pre-LN does not."
+    ]
+   ],
+   "k": [
+    "transformer",
+    "positional encoding",
+    "RoPE"
+   ],
+   "x": [
+    "NumPy",
+    "PyTorch"
+   ],
+   "p": [
+    "transformer-encoder-block",
+    "transformer-decoder-block",
+    "rotary-position-embedding-rope",
+    "sinusoidal-positional-encoding",
+    "masked-causal-attention"
+   ]
+  }
+ ]
+}

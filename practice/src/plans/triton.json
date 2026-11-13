@@ -1,0 +1,70 @@
+{
+ "id": "triton",
+ "group": "Systems and GPU Programming",
+ "title": "Triton Kernels",
+ "blurb": "Thirty GPU kernel exercises, most of them written block by block in Triton, from a masked elementwise add to FlashAttention, split-K and block-pointer matmuls. Triton kernels are graded on a real GPU in Colab against a PyTorch reference of the same spec, and each explanation covers memory traffic, masking and the bugs that bite in practice.",
+ "prereq": "You should be at home with PyTorch tensors, shapes and strides; CUDA experience helps but is not required.",
+ "next": "Take the attention, KV-cache and normalisation kernels into serving with the Inference Engineering course, or compare them with their thread-level versions in the CUDA plan.",
+ "sections": [
+  {
+   "name": "Foundations and the block model",
+   "problems": [
+    "vector-addition",
+    "fused-multiply-add",
+    "relu",
+    "gelu",
+    "silu"
+   ]
+  },
+  {
+   "name": "Reductions",
+   "problems": [
+    "vector-sum-reduction",
+    "vector-max-reduction",
+    "single-pass-mean-and-variance",
+    "l2-vector-norm",
+    "fused-row-wise-softmax",
+    "row-wise-logsumexp"
+   ]
+  },
+  {
+   "name": "Matrix multiply and autotuning",
+   "problems": [
+    "tiled-matrix-multiplication",
+    "autotuned-matrix-multiplication",
+    "tiled-transpose",
+    "gemv-matrix-vector-product",
+    "fused-matmul-bias-relu"
+   ]
+  },
+  {
+   "name": "Normalisation and training ops",
+   "problems": [
+    "layernorm-forward",
+    "rmsnorm-forward",
+    "dropout-inverted-scaling",
+    "cross-entropy-loss-mean-reduction",
+    "layernorm-backward"
+   ]
+  },
+  {
+   "name": "Attention and LLM kernels",
+   "problems": [
+    "flashattention-forward",
+    "scaled-dot-product-attention-2",
+    "rotary-position-embedding",
+    "kv-cache-append",
+    "online-softmax"
+   ]
+  },
+  {
+   "name": "Performance patterns",
+   "problems": [
+    "grouped-program-id-matmul",
+    "split-k-matmul",
+    "block-pointer-matmul",
+    "vectorized-vector-add"
+   ]
+  }
+ ]
+}

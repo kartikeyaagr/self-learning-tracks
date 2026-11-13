@@ -1,329 +1,681 @@
 @18.01
-## A note on sources
-Both prescribed Instagram posts are on Instagram's engineering blog, which refused automated access in this session (the same happened in Module 4). This lesson is written from my memory of the two posts. The overall picture is reliable, but treat exact counts and instance types as approximate.
-
 ## The situation
-Instagram launched in October 2010 and grew to millions of users within months, while its engineering team was famously tiny: two or three engineers in the early period. "What Powers Instagram" (late 2011) described the stack that carried it to roughly 14 million users. Its point was that a tiny team could serve millions **because** the choices were boring.
+Instagram launched on the iPhone in October 2010. About 25,000 people signed up on the first day, it passed 1 million users within about two months, and by late 2011 it had roughly 14 million users. Through that period the engineering team was famously tiny: two or three engineers for most of the first year. When Facebook bought the company in April 2012, it had about 13 employees and over 30 million users.
+
+In late 2011 the team published a description of the stack that carried them to roughly 14 million users. Its message was that a tiny team could serve millions of users **because** the technology choices were boring, not in spite of it. This case study looks at what those choices were, why they worked, and the one genuinely hard problem they solved themselves: sharding PostgreSQL and generating IDs.
+
+%%timeline Instagram's early growth against the size of its engineering team.
+Oct 2010 | Launch on iPhone, 25,000 sign-ups on day one
+Dec 2010 | 1 million users
+Jun 2011 | 5 million users
+Late 2011 | *About 14 million users, 3 engineers
+Apr 2012 | Android launch; acquired with 30M+ users
+%%
 
 ## The principles
-The post's three guiding rules:
+The team followed three rules:
 1. **Keep it very simple.**
-2. **Don't reinvent the wheel.**
+2. **Do not reinvent the wheel.**
 3. **Go with proven and solid technologies** when you can.
 
-With so few engineers, every bespoke system would be something only one person understood, needing care at 3 a.m. Off-the-shelf tools come with documentation, community knowledge and known failure modes.
+The reasoning is about people, not machines. With three engineers, every bespoke system is something only one person understands, and that person must fix it at 3 a.m. Off-the-shelf tools come with documentation, community knowledge, known failure modes and other people who have already hit the bugs. Every hour spent building infrastructure was an hour not spent on the product, and the product was growing faster than anyone could hire.
+
+This is the same principle as lesson 01.13 ("when not to add infrastructure"), seen from the other side: Instagram added infrastructure only when a measured problem demanded it, and when it did, it chose the most familiar tool that solved the problem.
 
 ## The stack
 %%flow Instagram around 2011: boring parts, each doing one job.
 [Web] App -(HTTPS)-> Load balancer -(nginx)-> Django app servers
 [Data] Django app servers -(sharded)-> *PostgreSQL + replicas -(cache)-> memcached
 [Media] App -(photo upload)-> Amazon S3 -(served via)-> CloudFront CDN
-[Async] Django app servers -(tasks)-> Task queue workers -(feeds, sessions)-> Redis
+[Async] Django app servers -(tasks)-> Queue workers -(feeds)-> Redis
 %%
 
-- **Hosting**: everything on Amazon EC2, running Ubuntu. No data centre to run.
-- **Front**: Amazon's load balancer in front of nginx, then **Django** (Python) app servers. The app servers were **stateless**, so adding capacity meant adding machines.
-- **Data**: **PostgreSQL** for users, photo metadata, likes and comments. As it grew, the data was **sharded** across several Postgres servers, each with a **streaming replica** for failover. They used EBS volumes with software RAID and filesystem snapshots for backups.
-- **Photos**: stored in **Amazon S3** (terabytes even then) and served through **CloudFront**. The app servers never served image bytes.
-- **Redis**: the main **feed** (lists of photo IDs per user, pushed on post) and sessions, things that are small, hot and list-shaped.
-- **memcached**: general caching in front of Postgres.
-- **Task queue** with a pool of workers: anything slow went async, such as fanning a new photo out to followers' feeds and sharing to other networks.
+- **Hosting.** Everything ran on Amazon EC2 with Ubuntu Linux. No data centre, no hardware purchasing, no racks. When a server died, they started another.
+- **Front end.** Amazon's Elastic Load Balancer in front of nginx, then **Django** (Python) app servers running under a WSGI server. The app servers were **stateless**: no user session lived only in one server's memory. Adding capacity meant adding identical machines, and losing one meant nothing.
+- **Data.** **PostgreSQL** held users, photo metadata, likes, comments and follows. As it grew, the data was **sharded** across several PostgreSQL servers, each with a **streaming replica** (a second server that continuously applies the primary's write-ahead log) for failover. They used EBS volumes with software RAID for throughput and filesystem snapshots for backups.
+- **Photos.** Stored in **Amazon S3**, already terabytes of them, and served through **CloudFront**, Amazon's CDN. The app servers never served or stored image bytes.
+- **Redis.** The main **feed** (a list of photo IDs per user, pushed when someone they follow posts) and sessions: data that is small, hot and list-shaped, where Redis's in-memory lists are a natural fit.
+- **memcached.** General caching in front of PostgreSQL.
+- **Task queue.** A pool of workers took anything slow off the request path: fanning a new photo out to followers' feeds, sharing to Twitter and Facebook, sending notifications.
 - **Push notifications** through Apple's push service.
-- **Monitoring**: error tracking (Sentry), graphs (Munin), external uptime checks (Pingdom) and paging (PagerDuty).
+- **Monitoring.** Error tracking (Sentry), system graphs (Munin), external uptime checks (Pingdom) and paging (PagerDuty).
 
-## Sharding and IDs
-The second post, "Sharding & IDs at Instagram", solved the hardest problem: once data is split over many Postgres servers, how do you generate IDs?
+%%layers The early Instagram stack, from the user's phone down to storage.
+iPhone app | uploads photos, reads feed
+Load balancer and nginx | spreads traffic, terminates HTTP
+*Django app servers | stateless, scale by adding machines
+Redis and memcached | feeds, sessions, cached rows
+PostgreSQL shards | users, photos, likes, follows
+S3 and CloudFront | photo bytes, served from the edge
+%%
 
-Their requirements: IDs **sortable by time** (so a list of photo IDs is already in time order without fetching timestamps), **64 bits** (so they fit Redis and indexes efficiently), and **no new moving parts**.
+## The numbers behind the choices
+! Example: why S3 and a CDN were non-negotiable
+! Suppose 14 million users, 2 million daily actives each viewing 100 photos a day: 200 million photo views a day, about 2,300 per second on average and perhaps 10,000 at peak.
+! At around 100 KB per photo, that is 1 GB per second at peak, about 8 Gbit/s. Serving that from a handful of EC2 app servers would have needed many more machines and constant attention.
+! Through CloudFront, those bytes never touch the app servers. The Django tier only returns small JSON documents with photo URLs, perhaps 2 KB per feed page, so the same peak costs the app tier about 20 MB per second instead of 1 GB.
+
+! Example: why the feed lived in Redis
+! Each user's feed is a list of the latest few hundred photo IDs. At 8 bytes per ID and, say, 300 IDs, that is 2.4 KB per user; 14 million users need about 34 GB, which fits in the memory of one or two large instances in 2011.
+! Reading a feed page is one `LRANGE` returning 30 IDs in well under a millisecond, followed by a memcached multi-get for the photo rows. The same query in PostgreSQL ("photos by anyone I follow, newest first") would join follows and photos across shards on every app open.
+
+## Sharding and IDs: the one hard problem
+Everything above is assembling existing parts. The genuinely hard problem was the database. By 2011 the PostgreSQL data no longer fitted comfortably on one machine, and writes (new photos, likes, comments) were growing fast. They needed to split data across many servers, which raises a question that is easy to underestimate: **how do you generate IDs once data lives on many servers?**
+
+With one database, an auto-increment column hands out 1, 2, 3, and so on. With many, each server's counter would hand out the same numbers. Their requirements for a new scheme:
+- IDs **sortable by time**, so a list of photo IDs is already in time order without fetching timestamps. Feeds and profile pages depend on this.
+- **64 bits**, so IDs fit efficiently in Redis, in indexes and in every language's integer type.
+- **No new moving parts**: no additional service that three engineers would have to keep alive.
+
+%%compare The ID schemes Instagram considered. Generating IDs inside PostgreSQL won on "no new moving parts".
+[UUIDs]
+App -> Random 128-bit ID
+- Twice the size
+- Not time-ordered
+[Ticket server]
+App -(next ID)-> Central DB
+- Extra service to run
+- Single point of failure
+[Snowflake]
+App -> ID service + ZooKeeper
+- Two more systems to operate
+[*In-shard function]
+Insert -> PostgreSQL function
++ Time-sortable, 64 bits
++ Nothing new to run
+%%
 
 They rejected:
-- **UUIDs**: 128 bits and not time-ordered.
-- **A central ticket server** (Flickr's approach): one more service to keep up, and a single point of failure.
-- **Twitter's Snowflake**: a separate ID service plus ZooKeeper, more infrastructure to run.
+- **UUIDs**: 128 bits (twice the size in every index and cache) and, in their random form, not time-ordered, so sorting needs a separate timestamp.
+- **A central ticket server** (Flickr's approach, lesson 03.09): a dedicated database whose only job is handing out increasing numbers. One more service to keep up, and if it is down, nobody can post.
+- **Twitter's Snowflake** (lesson 04.10): a separate ID service plus ZooKeeper to coordinate machine IDs. Elegant, but more infrastructure to run for a three-person team.
 
-Their answer used Postgres itself:
-- **Logical shards**: thousands of logical shards, each a Postgres **schema**, spread over a few physical servers. Moving a logical shard to a new server later means moving a schema, not re-splitting data.
-- **IDs generated inside each shard** by a stored function, packing 64 bits as:
+Their answer used PostgreSQL itself.
+- **Logical shards.** They created thousands of **logical shards**, each a PostgreSQL **schema** (a namespace with its own copy of the tables), and spread them over a few physical servers. A user's data lives in one logical shard, chosen from the user ID. When a physical server gets too full, some of its schemas are moved to a new server. Moving a schema is a copy of a self-contained set of tables, not a re-split of rows, and the mapping from logical shard to physical server is a small table in configuration.
+- **IDs generated inside each shard** by a PL/pgSQL function used as the column default, packing 64 bits as:
 
 | Bits | Contents |
 | 41 | milliseconds since a custom epoch (2^41 ms is about 69 years) |
 | 13 | logical shard ID (up to 8,192 shards) |
 | 10 | per-shard sequence, mod 1024 (1,024 IDs per shard per millisecond) |
 
-Any ID tells you **when** it was made and **which shard** holds it, with no lookup table. Module 4 (04.08) covers this layout.
+Any ID tells you **when** it was made and **which shard** holds it, with no lookup table. Lesson 04.08 covers this layout alongside the alternatives.
 
-%%flow An Instagram-style ID carries its time and its shard, so the ID is also the routing key.
-[Generate] Insert photo on logical shard 1341 -(stored function)-> *ID = time 41 bits + shard 13 bits + seq 10 bits
-[Route] Later read of that ID -(extract shard bits)-> Logical shard 1341 -(schema on)-> Physical Postgres server 3
+%%tree Logical shards are schemas spread over a few physical servers. Moving a shard means moving one schema.
+Shard map
+  Physical server 1
+    Schema shard 0000
+    Schema shard 0001
+    more schemas
+  Physical server 2
+    Schema shard 2048
+    *Schema shard 1341 | user 31341 lives here
+  Physical server 3
 %%
 
+! Example: decoding an ID
+! A photo is inserted on logical shard 1341 at 12:00:00.123 on 1 December 2011, and the shard's sequence gives 5,000. Taken mod 1024, the sequence part is 5,000 - 4 x 1,024 = 904.
+! If the custom epoch was 1 January 2011, about 334 days earlier, the timestamp part is 334 x 86,400,000 + 43,200,123 ms = about 28.9 billion ms, which needs 35 bits, well within 41.
+! The ID is (timestamp shifted left 23 bits) OR (1341 shifted left 10 bits) OR 904. Reading it back, the app shifts right 10 bits and masks 13 bits to get shard 1341, looks up which physical server holds shard 1341, and queries it directly. No directory service, no extra round trip.
+
+### Limits worth knowing
+- 1,024 IDs per shard per millisecond is about 1 million inserts per second per shard, far beyond what one shard needed.
+- Clock problems: if a server's clock jumps backwards, IDs may be generated out of order or, in a narrow case, could collide with earlier ones on the same shard. The per-shard sequence reduces the risk, and NTP keeps clocks close (lesson 04.11).
+- 8,192 logical shards is the ceiling; choosing thousands up front, far more than the number of physical servers, is what makes later rebalancing cheap.
+
 ## Why the boring choices worked
-- **Managed infrastructure** (EC2, S3, CloudFront, load balancers) meant no hardware or storage clusters to run.
+- **Managed infrastructure** (EC2, S3, CloudFront, load balancers) meant no hardware and no storage clusters to run.
 - **Stateless app servers** made scaling the web tier a matter of adding instances.
-- **One well-understood database**, sharded by the team in a simple, explicit way, instead of a newer distributed database nobody knew how to debug.
+- **One well-understood database**, sharded in a simple, explicit way, instead of a newer distributed database nobody knew how to debug at 3 a.m.
 - **Media outside the app** (S3 plus a CDN) kept the heaviest traffic off their servers entirely.
-- **Async work in a queue** kept requests fast and made spikes survivable.
-- **Each tool did one job**: Postgres for durable relational data, Redis for list-shaped hot data, memcached for caching.
+- **Async work in a queue** kept requests fast and made traffic spikes survivable: work piled up in the queue instead of timing out requests.
+- **Each tool did one job**: PostgreSQL for durable relational data, Redis for hot list-shaped data, memcached for caching.
 - **Monitoring from day one**, so a small team found problems before users told them.
 
-> Takeaway: Instagram's early team scaled to millions of users by choosing simple, proven, managed parts (EC2, Django, PostgreSQL, Redis, memcached, S3 with CloudFront, a task queue) and by solving the one hard problem, sharding, with Postgres itself: thousands of logical shards as schemas and 64-bit IDs that embed the time and the shard.
+## What it did not do
+It is equally instructive what is absent: no microservices, no custom storage engine, no service mesh, no multi-region active-active setup, no Kubernetes (which did not exist yet), no event-sourcing framework. Those solve problems of large organisations and extreme scale. Instagram had neither yet, and adding them would have consumed the team.
 
-?? They used well-understood, mostly managed technology: Amazon EC2 and load balancers instead of their own hardware; stateless Django app servers that scaled by adding machines; PostgreSQL with streaming replicas, later sharded into many logical shards (schemas) on a few servers with 64-bit time-sortable IDs generated inside Postgres; photos on S3 served via CloudFront so app servers never handled image bytes; Redis for feeds and sessions; memcached for caching; a task queue for slow work like fan-out; and monitoring and paging from the start. Each piece did one job and could be run by a handful of people.
+## Common misreadings
+- "Boring means unscalable." The stack scaled to tens of millions of users and the same core (Django, PostgreSQL, Cassandra later for some data) stayed for years.
+- "They never built anything custom." They did, exactly where it mattered: the sharding scheme and ID function. The skill is choosing where to be clever.
+- "Use exactly these tools." The lesson is the selection rule, not the list. Today the equivalent might be a managed PostgreSQL, a managed Redis and a serverless queue.
+
+## In an interview
+When asked to design something for a small team or an early-stage product, say this out loud: stateless app tier, one relational database with replicas, a cache, object storage and a CDN for media, a queue for slow work, and monitoring. Add sharding only when the numbers say so, and describe how (logical shards, IDs that encode the shard). Then name what you are deliberately not adding.
+
+> Takeaway: Instagram's early team scaled to millions of users by choosing simple, proven, managed parts (EC2, Django, PostgreSQL, Redis, memcached, S3 with CloudFront, a task queue) so that a few people could run them, and by solving the one hard problem, sharding, with PostgreSQL itself: thousands of logical shards as schemas and 64-bit IDs that embed the time and the shard.
+
+?? They used well-understood, mostly managed technology so three engineers could run it: Amazon EC2 and load balancers instead of their own hardware; stateless Django app servers that scaled by adding machines; PostgreSQL with streaming replicas, later sharded into thousands of logical shards (schemas) on a few servers, with 64-bit time-sortable IDs (41 bits of time, 13 bits of shard, 10 bits of sequence) generated by a function inside PostgreSQL instead of a separate ID service; photos on S3 served via CloudFront so app servers never handled image bytes; Redis for feeds and sessions; memcached for caching; a task queue for slow work such as fan-out; and monitoring and paging from the start. Each piece did one job and had known failure modes.
 
 @18.02
 ## The problem
-Stripe's API moves money, and its clients talk to it over networks that fail. As 16.03 described, a call can fail before reaching Stripe, partway through, or after it succeeded but before the response arrived. Stripe's answer, in the post *Designing robust and predictable APIs with idempotency*, is the **idempotency key**: the client sends `Idempotency-Key: <unique value>` on a `POST`, and reuses the same value when retrying that operation.
+Stripe's API moves money, and its clients talk to it over networks that fail. As lesson 16.03 described, a call can fail before reaching Stripe, partway through, or after it succeeded but before the response arrived. From the client's side those look identical: a timeout or a dropped connection. Retrying blindly can charge a customer twice; not retrying can lose a payment.
+
+Stripe's answer is the **idempotency key**. The client sends a header `Idempotency-Key: <unique value>` on a `POST` request, and reuses the same value whenever it retries that same operation. The server guarantees that, for one key, the operation's side effects happen at most once, and every retry gets back the same response as the first attempt. (GET and DELETE requests are idempotent by definition, so keys only matter for POST.)
+
+This lesson looks inside a production-quality implementation: what is stored per key, how long it is kept, and how a request that calls other systems can crash halfway and still be safely retried.
 
 ## What the server stores per key
-Stripe's post describes the behaviour; Brandur Leach (then a Stripe engineer) shows a full implementation in Postgres. His `idempotency_keys` table:
+A full implementation in PostgreSQL uses an `idempotency_keys` table like this:
 
-| Column | Why it's there |
+| Column | Why it is there |
 | `user_id` + `idempotency_key` | the key is scoped per account; a **unique index** on the pair means only one request can create it |
-| `request_method`, `request_path`, `request_params` | what the original request was, so a retry with **different parameters** is caught as a client bug (409) |
-| `locked_at` | set while a request is working on this key; a second concurrent request gets **409 Conflict** ("in progress") |
+| `request_method`, `request_path`, `request_params` | what the original request was, so a retry with **different parameters** is caught as a client bug |
+| `locked_at` | set while a request is working on this key; a second concurrent request gets **409 Conflict** |
 | `recovery_point` | how far the request got: `started`, `ride_created`, `charge_created`, `finished` |
-| `response_code`, `response_body` | the final response, returned as-is to any later request with this key |
-| `created_at`, `last_run_at` | for expiry and for finding abandoned requests |
+| `response_code`, `response_body` | the final response, returned unchanged to any later request with this key |
+| `created_at`, `last_run_at` | for expiry, and for finding abandoned requests |
 
-So the answer to "what does Stripe store?" is: the key (scoped to the account), the original request's parameters, a lock, progress so far, and **the response** once there is one. From Stripe's API documentation (my knowledge, not the blog post): Stripe saves the status code and body of the first request that starts executing for a key, **whether it succeeded or failed**, including 500 errors, and returns that same result for every retry. Requests rejected before executing (failed validation, or a conflict with a concurrent request) don't save a result, so they can simply be retried.
+So the answer to "what does Stripe store per key?" is: the key scoped to the account, a record of the original request's parameters, a lock, the progress so far, and **the response** once there is one.
 
-## How long
-Keys are for **short-term** safety, not a permanent archive. Stripe's API docs say keys can be removed once they are at least **24 hours** old, after which the same key is treated as new. Brandur's article recommends recycling keys after about **24 hours**, and has a "reaper" job delete them at around **72 hours** so a bug over a weekend can still be fixed and the affected requests completed on Monday.
+Two rules about the stored response are worth knowing precisely:
+- Stripe saves the status code and body of the first request that **starts executing** for a key, **whether it succeeded or failed**, including 500 errors, and returns that same result for every retry. A retry of a request that failed with a 500 returns the same 500; to try again, the client must use a new key. This prevents a retry from running a half-understood failure a second time.
+- Requests **rejected before executing** (failed validation, or a conflict with a concurrent request using the same key) do not save a result, so they can simply be retried with the same key.
+
+%%tree The idempotency key record, grouped by what each part protects against.
+Key record
+  Identity | user_id + key, unique
+  Request fingerprint | method, path, params
+    Guards against reuse with new params
+  Lock | locked_at
+    Guards against concurrent retries
+  Progress | recovery_point
+    Lets a retry resume
+  *Result | response code + body
+    Returned on every retry
+%%
+
+! Example: three requests with one key
+! 10:00:00 A client sends `POST /v1/charges {amount: 5000}` with key `k-1`. The server inserts the key row (unique index succeeds), sets `locked_at`, runs the charge, stores `200 {id: ch_9}` and clears the lock. The response is lost in transit.
+! 10:00:03 The client retries with `k-1` and the same body. The server finds the row with a stored response and returns `200 {id: ch_9}` without touching the card network. One charge.
+! 10:00:05 A buggy client retries with `k-1` but `{amount: 6000}`. The server compares the stored parameters, sees a mismatch, and returns an error saying the key was reused with different parameters. Nothing is charged.
+
+## Concurrency: the unique index and the lock
+Two copies of the same request can arrive at almost the same moment (a client with an aggressive timeout retries while the first attempt is still running). The design handles this with two mechanisms:
+- The **unique index** on `(user_id, idempotency_key)` means only one `INSERT` can create the row. The second request's insert fails with a unique violation, so it reads the existing row instead.
+- If that row is **locked** (`locked_at` is set and recent), the second request returns **409 Conflict** straight away. The client waits and retries later, by which time the first attempt has finished and stored its response.
+
+A lock older than a timeout (say 90 seconds, longer than any request should take) is considered abandoned: the process that held it probably crashed. A later request may take it over and resume from the recovery point.
+
+%%state One idempotency key's lifecycle. A key is locked while a request works on it and finished once a response is stored.
+[*] -> Created
+Created -> Locked : request starts
+Locked -> Unlocked : error, lock released
+Unlocked -> Locked : retry resumes
+Locked -> *Finished : response stored
+Finished -> Reaped : older than 24 to 72 h
+%%
+
+## How long are keys kept?
+Keys are for **short-term** safety against retries, not a permanent ledger. Stripe removes keys once they are at least **24 hours** old, after which the same key value is treated as new. A sensible scheme for your own system recycles keys after about **24 hours**, and has a **reaper** job that deletes rows at around **72 hours**. The extra two days are deliberate: if a bug strands requests mid-flight on a Friday night, the rows are still there on Monday so engineers can fix the bug and push those requests to completion.
+
+Why not keep keys forever? Storage grows without bound (at millions of requests a day, each row with a stored response body of a few kilobytes), the unique index gets bigger and slower, and no legitimate retry happens days later. Clients retry within seconds or minutes.
 
 %%flow Life of an idempotency key: created, locked while working, finished with a stored response, reaped later.
-[First call] POST with key k-1 -(unique insert, lock)-> *Key row: started -(atomic phases)-> finished + stored response
-[Retry] POST with key k-1 -(same params)-> stored response returned, nothing re-run
-[Later] Reaper job -(older than 24 to 72 h)-> key deleted; k-1 would now be new
+[First call] POST with key k-1 -(unique insert, lock)-> *Key row: started -(atomic phases)-> Finished + response
+[Retry] POST with key k-1 -(same params)-> Stored response returned
+[Later] Reaper job -(older than 24 to 72 h)-> Key deleted
 %%
 
 ## Atomic phases and recovery points
-The interesting part of Brandur's design is how a request that touches **other systems** recovers. His example ("Rocket Rides") does: create the key, create a ride record and audit record, **charge the card through Stripe**, record the charge on the ride, send a receipt email, and store the response.
+The most instructive part of this design is how a request that touches **other systems** recovers after a crash. The worked example is a ride-sharing API ("Rocket Rides") whose `POST /rides` endpoint must:
+1. create the idempotency key;
+2. create a ride record and an audit record;
+3. **charge the rider's card through Stripe**;
+4. record the charge on the ride;
+5. send a receipt email;
+6. store the response.
 
-The charge is a **foreign state mutation**: once it happens it can't be rolled back by your database. So the work is split into **atomic phases**, each one database transaction, with the foreign calls between them:
+The charge is a **foreign state mutation**: once it happens, your database cannot roll it back. If you wrapped all six steps in one database transaction and crashed after step 3, the transaction would roll back, the ride would vanish, and the customer would still be charged. So the work is split into **atomic phases**, each one database transaction, with the foreign calls between them:
 - `tx1`: insert or lock the key (`recovery_point = started`).
 - `tx2`: create the ride and audit records, set `recovery_point = ride_created`.
-- Call Stripe to charge, with its own idempotency key.
+- Call Stripe to charge, with **its own idempotency key** derived from this one (for example `rocket-rides-k-1`).
 - `tx3`: save the charge ID on the ride, set `recovery_point = charge_created`.
-- `tx4`: **stage** the receipt email job in a `staged_jobs` table (so it only exists if this transaction commits), store the response, set `recovery_point = finished`.
+- `tx4`: **stage** the receipt email job in a `staged_jobs` table (so the job exists only if this transaction commits), store the response, set `recovery_point = finished`.
 
-Each phase updates the recovery point **in the same transaction** as its work, so progress and work commit together. A retry with the same key reads the recovery point and **resumes from the next step**. If it crashed after the charge but before `tx3`, the retry calls Stripe again with the same Stripe idempotency key, gets the same charge back, and carries on.
+Each phase updates the recovery point **in the same transaction** as its work, so progress and work commit together or not at all. A retry with the same key reads the recovery point and **resumes from the next step**, skipping completed ones.
 
-%%seq A crash after the charge: the retry resumes from the recovery point and doesn't charge twice.
+%%seq A crash after the charge: the retry resumes from the recovery point and does not charge twice.
 Client > API : POST /rides, key k-1
-API > DB : tx1 key started, tx2 ride_created
-API > Stripe : charge (Stripe key ride-k-1)
+API > DB : tx1 started, tx2 ride_created
+API > Stripe : charge (key rides-k-1)
 Stripe -> API : ch_9 (then API crashes)
 Client > API : retry POST /rides, key k-1
 API > DB : read recovery_point = ride_created
-API > Stripe : charge again, same Stripe key
+API > Stripe : charge again, same key
 Stripe -> API : same ch_9, no new charge
-API > DB : tx3 charge_created, tx4 finished + response
+API > DB : tx3 charge_created, tx4 finished
 %%
 
-Other details:
-- Phases run at **SERIALIZABLE** isolation; a serialization failure returns 409 so the client retries.
-- On any error, the lock is released so a retry can proceed. Locks older than a timeout are considered abandoned and can be taken over.
-- A **completer** process can push abandoned requests (the client gave up) to completion.
-- Calls to services **without** idempotency support that fail ambiguously (a timeout) are usually marked failed rather than retried.
+! Example: crash at every possible point
+! Crash during tx2: the transaction rolls back, recovery point is still `started`. The retry creates the ride.
+! Crash after tx2 but before the Stripe call returns: recovery point is `ride_created`. The retry calls Stripe with the same derived key. If the first call never reached Stripe, it charges now; if it did, Stripe returns the stored charge.
+! Crash after tx3: recovery point `charge_created`. The retry skips the charge entirely and runs tx4.
+! Crash after tx4: recovery point `finished`, response stored. The retry just returns the stored response.
+! In every case: exactly one ride, exactly one charge, exactly one receipt.
+
+### Why stage the email?
+Sending email is also a foreign side effect, and email providers rarely support idempotency keys. Inserting a row into `staged_jobs` inside tx4 makes "the email will be sent" part of the same atomic commit as "the request is finished". A separate enqueuer moves staged jobs to the real job queue after commit. If tx4 rolls back, the job never existed. This is the transactional outbox pattern again.
+
+## Other details
+- Phases run at **SERIALIZABLE** isolation (lesson 03.06), the strictest level, so concurrent requests cannot interleave in ways that break invariants. A serialisation failure returns 409, and the client retries.
+- On any error, the lock is released so a retry can proceed.
+- A **completer** process finds keys that are locked or unfinished and old, and pushes those requests to completion even if the client has given up. Customers who were charged then still get their ride and receipt.
+- Calls to services **without** idempotency support that fail ambiguously (a timeout) are usually marked as failed for manual review rather than retried, because a retry could repeat the effect.
 
 ## The client side
-Stripe's post adds what clients must do: generate a fresh key per operation (a random UUID), keep it for retries, and retry with **exponential backoff and jitter**. Stripe's own client libraries do this automatically.
+Clients have a job too:
+- Generate a fresh key per **operation** (a random UUID v4 is typical), not per HTTP attempt.
+- Keep the key with the pending operation so a retry, even after a client restart, reuses it.
+- Retry with **exponential backoff and jitter**: wait roughly 2^n seconds times a random factor, so thousands of clients do not retry in lockstep after an outage.
+- Treat 409 as "try again later" and 400-class validation errors as final.
+Stripe's own client libraries generate keys and retry automatically for network errors.
 
-> Takeaway: per idempotency key, Stripe-style systems store the account and key (unique together), the original request parameters, a lock, a recovery point, and the final status code and body, which are returned on every retry. Keys are kept around 24 hours (Brandur's reaper uses about 72). Long requests are split into atomic phases between foreign calls, so a retry resumes where the last one stopped.
+## Common mistakes
+- Generating a new key inside the retry loop.
+- Storing only "seen this key" without the response, so retries cannot return the original result.
+- Not checking that a retry's parameters match.
+- Wrapping foreign calls inside one database transaction.
+- Reading key rows from a replica, where lag hides the stored response.
+- Keeping keys forever.
 
-?? Per key (scoped to the account), the server stores the original request's method, path and parameters (to reject a reuse with different parameters), a lock while it's being processed, the progress so far (a recovery point, in Brandur's Postgres design), and once finished the response status code and body, which are returned unchanged for any retry. Stripe saves the first result whether it succeeded or failed. Keys are short-lived: Stripe can prune them after 24 hours, after which the key counts as new; Brandur's implementation reaps them at about 72 hours.
+## In an interview
+When asked about idempotency, name what is stored (scoped key, request fingerprint, lock, recovery point, response) and for how long (about 24 hours, reaped by about 72), then explain the concurrent-retry case (unique index plus 409) and the crash-midway case (atomic phases with recovery points). That covers almost every follow-up.
+
+> Takeaway: per idempotency key, Stripe-style systems store the account and key (unique together), the original request parameters, a lock, a recovery point, and the final status code and body, which are returned on every retry. Keys are kept around 24 hours, with a reaper deleting them at about 72. Long requests are split into atomic phases between foreign calls, each recording its recovery point in the same transaction, so a retry resumes exactly where the last attempt stopped.
+
+?? Per key, scoped to the account by a unique index on account plus key, the server stores the original request's method, path and parameters (to reject a reuse with different parameters), a lock while a request is working on it (a concurrent duplicate gets 409 Conflict), the progress so far as a recovery point, and once finished the response status code and body, which are returned unchanged to every retry. Stripe saves the first result of a request that started executing whether it succeeded or failed, including 500s; requests rejected before executing save nothing. Keys are short-lived: Stripe prunes them after they are at least 24 hours old, after which the same value counts as a new key; a typical implementation lets a reaper delete them at about 72 hours so stranded requests can still be completed after a weekend.
 
 @18.03
-## From MongoDB to Cassandra (2015 to 2017)
-Discord's first post, *How Discord Stores Billions of Messages* (2017), starts with MongoDB. Messages lived in one replica set with an index on `(channel_id, created_at)`. Around November 2015, at about **100 million** stored messages, the data and index no longer fit in RAM and latency became unpredictable.
+## Why this case is worth studying
+Discord is a chat platform where messages are kept forever. A user can scroll back years in a channel, search old messages, or jump to a message linked from elsewhere. Storing billions, then trillions, of messages and serving them with low, predictable latency took Discord through three databases in seven years: MongoDB, Cassandra and ScyllaDB. Each move teaches something general about data modelling for wide-column stores, partition sizing, tombstones, hot partitions and migrations.
 
-Their access pattern made this worse. Reads and writes were roughly **50/50** and very **random**: small private servers ask for old history that's never in cache; big public servers ask mostly for the last hour. They needed linear scaling without manual resharding, automatic failover, low maintenance, predictable latency (alert at p95 of 80 ms) **without** a cache, and open source. They chose **Cassandra**.
+The central modelling decision, partitioning messages by `(channel_id, time bucket)`, is what this lesson's question asks about. It only makes sense once you see the access pattern and how wide-column databases lay out data.
+
+%%timeline Discord's message storage over seven years.
+2015 | MongoDB replica set, one index
+Nov 2015 | About 100M messages, index outgrows RAM
+2016 to 2017 | Move to Cassandra, (channel, bucket) key
+2017 | 12 nodes, about 1 TB each, 120M messages a day
+Early 2022 | 177 Cassandra nodes, hot partitions, GC pauses
+May 2022 | *Migration to 72 ScyllaDB nodes
+Dec 2022 | World Cup final spikes handled smoothly
+%%
+
+## From MongoDB to Cassandra
+Messages first lived in a single MongoDB replica set with a compound index on `(channel_id, created_at)`. Around November 2015, at about **100 million** stored messages, the data and index no longer fitted in RAM and latency became unpredictable. Every read that missed memory went to disk.
+
+The access pattern made this worse:
+- Reads and writes were roughly **50/50**, unusual for a consumer app.
+- Reads were very **random**. Small private servers (a group of friends) post rarely, and when someone opens the channel they read history that has long left any cache. Big public servers have heavy traffic but read mostly the last hour or so.
+- Everything is **"messages in this channel, newest first"**. There are almost no queries across channels.
+
+Discord's requirements for a replacement: linear scaling without manual resharding, automatic failover, low maintenance, predictable latency (alerting at a p95 of 80 ms) **without** relying on a cache, and open source. They chose **Cassandra**.
+
+## How a wide-column store lays out data
+Cassandra (and ScyllaDB, which is compatible with it) stores rows grouped by a **partition key**. The partition key is hashed to decide which nodes hold the data (with replication factor 3, three nodes), and all rows with the same partition key are stored together, contiguously, in each on-disk file. Within a partition, rows are kept sorted by a **clustering key**.
+
+So the cost of a query depends heavily on whether it reads **one partition** (one hash, one replica set, one sequential range on disk) or many. A table design starts from the queries.
+
+%%tree How one channel's messages are laid out: partitions by channel and bucket, rows sorted by message ID inside each.
+messages table
+  Partition (42, bucket 1630) | newest 10 days
+    msg 1129...901
+    msg 1129...877
+  Partition (42, bucket 1629) | 10 days earlier
+    msg 1121...350
+  *Partition (77, bucket 1630) | another channel
+%%
 
 ## Why (channel_id, bucket)
-Cassandra stores rows by **partition key** (which node holds them, and kept together on disk) and sorts them within the partition by a **clustering key**. Discord's design:
-- **Partition by `channel_id`**: every query is "messages in this channel", so one channel's messages should live together, read in one go from one set of replicas.
-- **Cluster by `message_id`**: a **Snowflake** ID, unique and sortable by time. `created_at` couldn't be used because two messages can share a timestamp.
+### Step 1: partition by channel
+Every query is "messages in this channel". So one channel's messages should live together and be read in one go from one set of replicas. `channel_id` is the natural partition key.
 
-Importing data triggered warnings about partitions over **100 MB**. Cassandra allows up to 2 GB, but big partitions cause garbage collection pressure during compaction and can't be spread across the cluster. A busy channel's partition would grow forever.
+### Step 2: cluster by message ID
+Within the partition, messages are sorted by `message_id`, a **Snowflake** ID (lesson 04.10): 64 bits made of a millisecond timestamp, a worker ID and a sequence. It is unique and sorts by time, so "the latest 50 messages" is the first 50 rows of the partition in descending order, and "messages before X" is a range scan from X. `created_at` could not be the clustering key, because two messages can share a timestamp and the second would overwrite the first.
 
-So they added a **time bucket**: the primary key became `((channel_id, bucket), message_id)`, with buckets of about **10 days**, sized so even the busiest channels stayed under 100 MB. The bucket is computed from the Snowflake ID's timestamp, so no lookup is needed.
+### Step 3: the partition size problem
+When Discord imported its existing data, Cassandra logged warnings about partitions over **100 MB**. Cassandra allows partitions up to about 2 GB, but large partitions cause real trouble:
+- **Compaction and repair** process a partition as a unit, so a huge one causes long garbage-collection pauses on the Java heap.
+- A partition lives on exactly one replica set, so it **cannot be spread** across the cluster no matter how many nodes you add.
+- A busy channel's partition would **grow forever**, so a design that is fine today fails in two years.
 
-%%flow Partition key (channel, 10-day bucket) bounds each partition; message_id orders inside it.
-[Write] New message in channel 42 -(snowflake time gives bucket 1630)-> *Partition (42, 1630) -(sorted by message_id)-> stored on 3 replicas
-[Read] Load channel 42 -(newest bucket first)-> Partition (42, 1630) -(not enough? previous bucket)-> Partition (42, 1629)
+### Step 4: add a time bucket
+So the primary key became `((channel_id, bucket), message_id)`. The double parentheses mark the composite partition key. Each bucket covers about **10 days**, a size chosen so that even the busiest channels stay under 100 MB per partition. The bucket number is computed from the Snowflake ID's timestamp (`bucket = timestamp_ms / (10 x 86,400,000)`), so no lookup table is needed: given a message ID or a time, you know its partition.
+
+%%compare Three possible partition keys for messages, and what each costs.
+[channel_id only]
+Channel -> One growing partition
++ One read for any history
+- Busy channels grow without bound
+[*channel_id + 10-day bucket]
+Channel + bucket -> Bounded partitions
++ Partitions stay under 100 MB
++ Recent history still one read
+- Hot channel hits one bucket
+[message_id only]
+Each message -> Own partition
++ Perfect spread
+- Reading history = thousands of lookups
 %%
 
-Reading recent history: generate buckets from now back to the channel's creation and query them newest first until you have enough messages. Busy channels fill from the first bucket; quiet channels may need several queries, which is fine because they're small.
+! Example: sizing the bucket
+! A busy channel averages 1 message per second around the clock: 86,400 messages a day. At about 100 bytes stored per message, that is 8.6 MB a day.
+! With no bucket, its partition passes 100 MB in under two weeks and reaches about 3 GB in a year, past Cassandra's practical limit. With a 10-day bucket, each partition holds about 86 MB, just under the 100 MB warning line. That is the logic behind the bucket size: pick it from the busiest real channels so they stay under the limit.
+! A channel ten times busier would produce about 860 MB per bucket, which is why extreme outliers later needed more care.
+! A typical small server's channel with 50 messages a day produces 50 KB per 10-day bucket: tiny partitions, read in one go.
 
-Hello Interview's write-up summarises the trade-off. `channel_id` keeps a channel together for efficient reads; the bucket **caps partition size**; `message_id` gives the newest-first order the app needs. The cost is that live traffic for a popular channel all hits the **newest bucket**, the same 3 replicas.
+### Reading history across buckets
+To load recent messages, the service generates bucket numbers from the current time backwards to the channel's creation, and queries them newest first until it has enough messages:
 
-## Lessons from Cassandra
-- **Upserts and missing columns.** Cassandra resolves conflicts per column, last write wins. When one user edited a message while another deleted it, the result was a row with only a primary key and text, no author. Fix: treat rows missing a required column as corrupt and delete them.
-- **Nulls are tombstones.** Writing `null` creates a tombstone, just like a delete. Messages had 16 columns but typically set 4, so each insert wrote about 12 needless tombstones. Fix: write only non-null fields.
-- **The tombstone surprise.** Six months in, Cassandra started having 10-second garbage collection pauses. A public channel had had millions of messages deleted through the API, leaving one message. Loading it scanned millions of tombstones. Fixes: keep tombstones 2 days instead of 10 (nightly repairs made that safe), and track and skip empty buckets.
+%%seq Loading the latest 50 messages: busy channels are served by one bucket, quiet ones may need a few.
+App > Messages API : latest 50 in channel 42
+Messages API > Cassandra : partition (42, 1630) LIMIT 50
+Cassandra -> Messages API : 12 messages
+Messages API > Cassandra : partition (42, 1629) LIMIT 38
+Cassandra -> Messages API : 38 messages
+Messages API -> App : 50 messages, newest first
+%%
 
-At that point the cluster had 12 nodes, replication factor 3, nearly 1 TB per node, and over 120 million messages a day.
+Busy channels fill the page from the first bucket. Quiet channels may need several queries, which is fine because their partitions are tiny. Later, Discord tracked empty buckets per channel so it could skip them.
+
+### The trade-off
+`channel_id` keeps a channel together for efficient reads; the bucket **caps partition size**; `message_id` gives newest-first order without sorting. The cost is that all live traffic for a popular channel hits the **newest bucket**, which lives on the same three replicas. That concentrated load came back to bite them years later.
+
+## Lessons from running Cassandra
+- **Upserts and missing columns.** Cassandra resolves conflicts per column with last write wins. When one user edited a message at the same moment another deleted it, the result was a row containing only the primary key and the edited text, with no author or channel. Fix: treat rows missing a required column as corrupt and delete them on read.
+- **Nulls are tombstones.** Writing `null` to a column creates a **tombstone** (a deletion marker), just like a delete. Messages had 16 columns but typically set 4, so each insert wrote about 12 needless tombstones. Fix: write only non-null fields.
+- **The tombstone surprise.** Six months in, Cassandra started having 10-second garbage-collection pauses. A public channel had had millions of messages deleted through the API, leaving one visible message. Loading it meant scanning millions of tombstones to find that one row. Fixes: keep tombstones for 2 days instead of the default 10 (safe because repairs ran nightly, so no replica would miss a delete for longer), and skip empty buckets.
+
+At that point the cluster had 12 nodes, replication factor 3, nearly 1 TB per node, and took over 120 million messages a day.
 
 ## Trillions: hot partitions and the move to ScyllaDB
-The 2023 post, *How Discord Stores Trillions of Messages*, picks up when the cluster had grown to **177 nodes**. Problems:
-- **Hot partitions**: a huge server's busy channel sends heavy concurrent reads to one `(channel, bucket)` partition. Because reads use quorum, an overloaded node also slows unrelated queries that touch it.
-- **Reads cost more than writes** in Cassandra (memtable plus several on-disk files), and **compaction backlogs** made it worse.
-- **Java garbage collection pauses** caused latency spikes and manual restarts.
-- p99 latency for fetching history was **40 to 125 ms**, inserts 5 to 70 ms.
+By early 2022 the cluster had grown to **177 nodes** storing trillions of messages, and it was painful:
+- **Hot partitions.** A huge server's busy channel sends heavy concurrent reads to one `(channel, bucket)` partition. Because reads use quorum consistency, an overloaded node also slows unrelated queries that touch it, so one popular announcement could degrade latency across the cluster.
+- **Reads cost more than writes** in Cassandra's LSM design (memtable plus several SSTables per read, lesson 07.11), and **compaction backlogs** made reads slower still.
+- **Java garbage-collection pauses** caused latency spikes and frequent manual restarts.
+- p99 latency for fetching history was **40 to 125 ms**, and inserts 5 to 70 ms.
 
-**Data services in Rust**, between the API and the database:
-- **Request coalescing**: if many users ask for the same rows at once, only one database query runs and every waiting request gets its result. Hello Interview stresses this isn't a cache: it never serves stale data, it just deduplicates concurrent identical requests.
-- **Consistent hash routing on channel ID**: all requests for a channel reach the same data service instance, which is what makes coalescing work across a fleet.
+### Data services: fixing the traffic problem
+Discord put **data services written in Rust** between the API and the database:
+- **Request coalescing**: if many users ask for the same rows at the same time, only one database query runs and every waiting request receives its result. This is not a cache: it never serves stale data, it only deduplicates concurrent identical requests.
+- **Consistent hash routing on channel ID**: all requests for a channel reach the same data service instance, which is what makes coalescing effective across a fleet of instances.
 
 %%flow Coalescing: a thousand identical reads become one database query.
-[Route] 1,000 clients load channel 42 -(consistent hash on channel_id)-> *Same data service instance
-[Coalesce] Same data service instance -(one in-flight query)-> ScyllaDB partition (42, newest) -(one result)-> all 1,000 requests
+[Route] 1,000 clients load channel 42 -(hash on channel_id)-> *Same data service
+[Coalesce] Same data service -(one in-flight query)-> Partition (42, newest) -(one result)-> All 1,000 requests
 %%
 
-**ScyllaDB**, a Cassandra-compatible database written in C++ with no garbage collector, replaced Cassandra. Discord wrote its own migrator in Rust (estimated **9 days** instead of 3 months, peaking at **3.2 million messages per second**), compared reads from both databases before switching, and cut over in May 2022.
+! Example: what coalescing saves
+! A large server posts an announcement and 50,000 online members open the channel within 2 seconds. Without coalescing, that is 50,000 reads of the same partition, about 25,000 per second, against three replicas.
+! A single read takes about 5 ms. With coalescing, each data service instance runs at most one query for that partition at a time, so roughly 200 queries per second (1 / 5 ms) reach the database instead of 25,000, with every caller receiving the same fresh rows.
+
+### ScyllaDB: fixing the storage engine problem
+**ScyllaDB** is a Cassandra-compatible database written in C++, with no garbage collector and a shard-per-core architecture. Discord replaced Cassandra with it. It wrote its own migrator in Rust, estimated to take **9 days** instead of the 3 months a generic tool predicted, peaking at **3.2 million messages per second**. It compared reads from both databases before switching (shadow reads, lesson 14.06), and cut over in May 2022.
 
 | | Cassandra | ScyllaDB |
 | Nodes | 177 | 72 (9 TB each) |
 | p99 history read | 40 to 125 ms | about 15 ms |
 | p99 insert | 5 to 70 ms | about 5 ms |
 
-During the 2022 World Cup final, message traffic spiked at every goal without trouble.
+During the 2022 World Cup final, message traffic spiked at every goal and the system handled it without trouble.
 
-Hello Interview's lesson: separate **storage engine** problems (garbage collection, compaction, which ScyllaDB fixed) from **traffic** problems (many identical reads, which coalescing fixed). A faster database alone doesn't stop a hot partition.
+## The general lessons
+- **Design partitions from queries.** One query, one partition.
+- **Bound every partition.** Anything keyed only by an entity that grows forever eventually breaks.
+- **Separate storage-engine problems from traffic problems.** Garbage collection and compaction were fixed by ScyllaDB; many identical concurrent reads were fixed by coalescing. A faster database alone does not stop a hot partition.
+- **Know your database's write semantics**: per-column last write wins and null-as-tombstone surprised an experienced team.
 
-> Takeaway: Discord partitions messages by (channel_id, time bucket) so a channel's messages sit together for fast in-order reads, while the bucket caps partition size; Snowflake message IDs order rows within it. The cost is that hot channels concentrate reads on the newest bucket, which Discord handled with Rust data services that route by channel and coalesce identical requests, plus a move to ScyllaDB.
+## In an interview
+For any chat or timeline store, propose `((conversation_id, time_bucket), message_id)` with a Snowflake ID, explain the bucket as a partition size cap, and mention the hot newest bucket and request coalescing before you are asked.
 
-?? Every query reads messages from one channel in time order, so channel_id as the partition key keeps a channel's messages together on one replica set and on disk, making "latest messages in this channel" a single sequential read. But a busy channel's partition would grow without bound, and Cassandra partitions over about 100 MB hurt compaction and garbage collection and can't be spread out. Adding a time bucket (about 10 days, derived from the Snowflake message ID) caps each partition's size while keeping messages in order, with message_id as the clustering key. The trade-off is that live reads concentrate on the newest bucket of hot channels.
+> Takeaway: Discord partitions messages by (channel_id, time bucket) so a channel's recent messages sit together for fast in-order reads, while the bucket caps partition size; Snowflake message IDs order rows within it and give the bucket without a lookup. The cost is that hot channels concentrate reads on the newest bucket, which Discord handled with Rust data services that route by channel and coalesce identical requests, plus a move from 177 Cassandra nodes to 72 ScyllaDB nodes.
+
+?? Every query reads messages from one channel in time order, so channel_id in the partition key keeps a channel's messages together on one replica set and contiguous on disk, making "latest messages in this channel" a single sequential read, with message_id (a time-sortable Snowflake) as the clustering key giving newest-first order. But a busy channel's partition would grow without bound, and Cassandra partitions over about 100 MB hurt compaction and garbage collection and cannot be spread across nodes. Adding a time bucket (about 10 days, computed from the Snowflake timestamp, so no lookup is needed) caps each partition's size while keeping messages in order; older history is read bucket by bucket. The trade-off is that live reads for hot channels concentrate on the newest bucket.
 
 @18.04
 ## Why Amazon built Dynamo
-Werner Vogels' post and the 2007 Dynamo paper describe the store behind Amazon's shopping cart, sessions, best-seller lists, preferences and product catalogue. Amazon ran tens of thousands of servers for tens of millions of customers, so **something is always failing**. Two requirements shaped everything:
-- **Always writeable.** A customer must be able to add to their cart even while servers or a whole data centre are failing. Rejecting a write is lost revenue.
-- **Latency at the 99.9th percentile.** The SLA was 99.9% of requests within **300 ms**, because averages hide the customers having a bad time.
+Dynamo, described publicly in 2007, is the key-value store that sat behind Amazon's shopping cart, customer sessions, best-seller lists, preferences and parts of the product catalogue. It is one of the most influential designs in distributed systems: Cassandra, Riak and Voldemort copied its techniques, and almost every "leaderless replication" discussion (lesson 06.03) uses its vocabulary.
 
-Most of these services only needed get and put by key on small objects, so a relational database was unnecessary cost and complexity. Dynamo trades strong consistency for availability.
+Amazon ran tens of thousands of servers across several data centres for tens of millions of customers. At that size, **something is always failing**: a disk, a server, a switch, a network link between data centres. Dynamo was designed on the assumption that failure is the normal state, not an exception. Two business requirements shaped everything:
+- **Always writeable.** A customer must be able to add an item to their cart even while servers, or a whole data centre, are failing. Rejecting a write is lost revenue and a worse experience than almost any inconsistency.
+- **Latency at the 99.9th percentile.** The service level agreement was 99.9% of requests answered within **300 ms** at peak load. Measuring the average would hide the customers having a bad time, and those are often the most valuable customers (with the longest histories and biggest carts).
 
-## The techniques
-The paper's Table 1:
-| Problem | Technique | Advantage |
-| Partitioning | consistent hashing | add nodes incrementally |
-| Writes always available | vector clocks, reconciled on read | keep conflicting versions instead of rejecting |
-| Temporary failures | sloppy quorum and **hinted handoff** | stay available and durable when some replicas are down |
-| Permanent failures | anti-entropy with Merkle trees | repair diverged replicas in the background |
-| Membership, failure detection | gossip | no central registry |
+Most of these services only needed `get(key)` and `put(key, value)` on small objects (under 1 MB). A relational database would have brought joins, transactions and a single primary that they did not need, and the single primary was exactly the availability risk they wanted to remove. So Dynamo deliberately trades strong consistency for availability: in CAP terms (lesson 06.04), it chooses availability during partitions, and it returns conflicting versions to the application rather than refusing writes.
 
-**Placement**: keys are hashed (MD5) onto a ring. Each physical node owns several **virtual nodes** (tokens), spreading load and letting bigger machines own more. A key is stored on **N** nodes: the first node clockwise from its hash and the next N−1 distinct physical nodes, called its **preference list**.
+## The techniques at a glance
+%%matrix Dynamo's problems and the technique it used for each, with what each technique gives and costs.
+Problem | Technique | Gives | Costs
+Partitioning | consistent hashing, virtual nodes | yes, add nodes incrementally | uneven load without many tokens
+Always writeable | vector clocks, reconcile on read | yes, no rejected writes | app must merge versions
+Temporary failures | sloppy quorum, hinted handoff | yes, writes during outages | hint lost if stand-in dies
+Permanent failures | Merkle tree anti-entropy | yes, cheap background repair | trees rebuilt when ranges change
+Membership | gossip, failure detection | yes, no central registry | limits cluster size
+%%
 
-**Quorums**: a read waits for **R** replies, a write for **W** acknowledgements. With R + W > N, reads overlap writes. The common setting is **(N, R, W) = (3, 2, 2)**.
+The rest of this lesson walks through placement and quorums briefly, then spends most of its time on the question: what is hinted handoff, and what availability problem does it solve?
+
+## Placement: the ring and preference lists
+Keys are hashed with MD5 into a 128-bit space arranged as a **ring** (consistent hashing, lesson 04.07). Each physical node owns several positions on the ring, called **virtual nodes** or tokens. Virtual nodes spread each machine's load across many small ranges, so when a node joins or leaves, its load is taken from or given to many others instead of one neighbour; a bigger machine simply gets more tokens.
+
+A key is stored on **N** nodes: walk clockwise from the key's hash, and take the first N **distinct physical** nodes you meet (skipping virtual nodes of a machine already chosen). That ordered list is the key's **preference list**. Any node can act as **coordinator** for a request, but typically it is the first healthy node in the preference list.
+
+## Quorums
+A read waits for **R** replies, a write for **W** acknowledgements, out of the N replicas. If R + W > N, every read set overlaps every write set in at least one node, so a read sees the latest acknowledged write (as long as the sets are drawn from the same N nodes, which, as we will see, sloppy quorums relax). The common setting is **(N, R, W) = (3, 2, 2)**. Services tuned this per use: a read-heavy catalogue might use R = 1, W = 3 for very fast reads; a session store might use W = 1 for very fast writes and accept more risk.
+
+! Example: what a strict quorum does during a failure
+! Key `cart:alice` hashes to a ring position whose preference list is A, B, C. N = 3, W = 2.
+! Node A's rack loses power and node B is cut off from the coordinator by a network problem. Only C is reachable.
+! A strict quorum needs 2 acknowledgements from {A, B, C}. Only C can answer. The write fails, and Alice sees "Sorry, we couldn't add that item". Repeat that for every key whose preference list includes A and B, and a single rack failure plus one network glitch has stopped sales for a slice of customers.
 
 ## The availability problem
-With a strict quorum, if two of a key's three home nodes are down, or just unreachable from this coordinator, a W = 2 write **fails**. For a shopping cart, that's exactly the outage Dynamo exists to prevent.
+That example is exactly the outage Dynamo exists to prevent. With **strict quorums**, a request can only count acknowledgements from the key's N home nodes. If enough of them are down, or merely unreachable from this coordinator (which happens during network partitions even when the nodes are healthy), the write fails. Making N larger does not help much: more replicas also means more nodes that can be unreachable. The problem is the rule that only the home nodes count.
 
-## Hinted handoff
-Dynamo uses a **sloppy quorum**: a write goes to the first **N healthy** nodes walking the ring, not necessarily the N home nodes.
+## Sloppy quorums and hinted handoff
+Dynamo relaxes the rule. With a **sloppy quorum**, a write goes to the first **N healthy** nodes walking the ring from the key's position, not necessarily the N home nodes. If a home node is down, the next healthy node beyond the preference list stands in for it.
 
-The paper's example, with N = 3: key K normally lives on A, B and C. Node A is down.
-1. The coordinator sends the write to B and C as usual, and to **D**, the next healthy node on the ring.
-2. The copy sent to D carries a **hint** saying "this really belongs to A".
-3. D stores hinted replicas in a separate local store and keeps serving reads and writes.
-4. D periodically checks whether A is back. When it is, D **delivers the replica to A** and then deletes its own copy.
+Here is the full mechanism, with N = 3. Key K normally lives on A, B and C. Node A is down.
+1. The coordinator sends the write to B and C as usual, and to **D**, the next healthy node on the ring after C.
+2. The copy sent to D carries a **hint** in its metadata: "this replica really belongs to A".
+3. D stores hinted replicas in a **separate local database**, apart from the data it owns, and counts its acknowledgement towards W. The write succeeds with W = 2 easily, and the data still exists on N = 3 nodes.
+4. D periodically checks whether A is reachable again (failure detection comes from gossip).
+5. When A is back, D **delivers the hinted replica to A**. Once A confirms, D **deletes** its own copy.
 
-%%flow Hinted handoff: when A is down, D holds A's copy and hands it back later.
-[Normal] Key K -(preference list)-> A, B, C
-[A down] Write K -(sloppy quorum: first 3 healthy)-> B, C and *D with hint for A
-[A back] D -(detects A recovered, sends hinted copy)-> A -(then)-> D deletes its copy
+That is **hinted handoff**: a healthy node temporarily holds a replica on behalf of an unavailable one, then hands it back.
+
+%%seq Hinted handoff with N = 3: A is down, so D holds A's copy with a hint and hands it back when A recovers.
+Coordinator > B : put K (home replica)
+Coordinator > C : put K (home replica)
+Coordinator > D : put K, hint: belongs to A
+B -> Coordinator : ack
+D -> Coordinator : ack, W = 2 met
+D > D : store in hinted store, check A
+D > A : A is back: deliver K
+A -> D : stored
+D > D : delete hinted copy
 %%
 
-**What it solves:** writes (and reads) keep succeeding during **temporary** failures and network partitions. The quorum is still met, using healthy stand-ins, and the data still has N copies. Placing preference lists across **data centres** extends this so a whole data centre can fail.
+%%timeline The same key during a two-hour outage of node A.
+09:00 | A fails; writes for K go to B, C and D (hint)
+09:05 | *Cart write succeeds; data on 3 nodes
+10:30 | Reads of K answered by B, C (and D)
+11:00 | A recovers, gossip spreads the news
+11:02 | D hands hinted replicas to A, deletes its copies
+11:10 | Merkle sync confirms A matches B and C
+%%
 
-**What it doesn't solve:** if D itself dies before handing the data back, the hinted copy can be lost. That's what the next mechanism is for.
+### What it solves
+- **Availability during temporary failures and partitions.** Writes and reads keep succeeding when some home replicas are down or unreachable, because healthy stand-ins count towards the quorum.
+- **Durability during the outage.** The data still has N copies, just not all on their home nodes.
+- **Data-centre failure.** Dynamo builds preference lists that span multiple data centres, so the stand-ins can be in another data centre and a whole site can fail without stopping writes.
+
+### What it does not solve
+- **Read-your-writes is no longer guaranteed.** With a sloppy quorum, the W nodes that took a write and the R nodes that answer a later read may not overlap (D held the write; the read went to A, which just came back and has not received the handoff yet). R + W > N no longer implies overlap. This is why sloppy quorums are a durability and availability tool, not a consistency guarantee.
+- **The stand-in can die.** If D fails permanently before handing the data back, the hinted copy is lost; K now has only two up-to-date replicas. Long-term divergence needs a separate repair mechanism.
+- **Concurrent versions.** Two coordinators on different sides of a partition can both accept writes for K. Someone must reconcile them later.
+
+%%compare Strict quorum versus sloppy quorum with hinted handoff when two of three home replicas are unreachable.
+[Strict quorum]
+Write K -(only A, B, C count)-> 1 of 3 reachable
+- Write rejected
++ Reads always overlap writes
+[*Sloppy quorum + hints]
+Write K -(first 3 healthy)-> C, D, E with hints
++ Write accepted, 3 copies kept
++ Handed back on recovery
+- Reads may miss it briefly
+%%
 
 ## Repairing permanent divergence: Merkle trees
-Each node keeps a **Merkle tree** per key range: leaves are hashes of values, and each parent is a hash of its children. Two replicas compare root hashes. If equal, the whole range matches. If not, they compare children and walk down only the branches that differ, finding the out-of-sync keys while exchanging very little data.
+For failures that outlast hinted handoff, replicas run **anti-entropy**: they compare their data and fix differences in the background. Comparing every key would mean sending all the data. Instead each node keeps a **Merkle tree** per key range: the leaves are hashes of individual values, and each parent is the hash of its children. Two replicas compare root hashes. If equal, the entire range matches and nothing more is sent. If not, they compare the children and walk down only the branches that differ, finding the out-of-sync keys while exchanging very little data.
+
+! Example: what Merkle trees save
+! A key range holds 1 million keys, and 10 differ between two replicas. Sending all keys and hashes would be about 1 million x 40 bytes = 40 MB.
+! A binary Merkle tree over the range has about 20 levels. Each differing key adds one path of 20 hash comparisons; 10 differing keys need at most about 200 node hashes exchanged (plus siblings), a few kilobytes, then the 10 values themselves.
+! The cost is that trees must be recomputed when a node's key ranges change (a node joins or leaves), which is expensive. Background repair is throttled so it does not hurt foreground latency.
 
 ## Conflicts: vector clocks and the shopping cart
-Sloppy quorums mean two nodes can accept different writes for the same key. Each version carries a **vector clock**, a list of (node, counter) pairs. The paper's example:
-1. Sx writes D1 [(Sx,1)], then D2 [(Sx,2)], which supersedes D1.
-2. Sy writes D3 [(Sx,2),(Sy,1)]; separately, Sz writes D4 [(Sx,2),(Sz,1)].
-3. Neither D3 nor D4 descends from the other, so both are kept and returned together on read.
-4. The client merges them; the write through Sx becomes D5 [(Sx,3),(Sy,1),(Sz,1)].
+Sloppy quorums and partitions mean two nodes can accept different writes for the same key. Dynamo does not pick a winner by timestamp. Each version carries a **vector clock**: a list of (node, counter) pairs recording which coordinators have updated it (lesson 06.05). If one version's clock is greater than or equal to the other's in every entry, it descends from it and supersedes it. If neither dominates, they are **concurrent** and both are kept.
+1. A write through node Sx creates D1 [(Sx,1)]; another through Sx creates D2 [(Sx,2)], which supersedes D1.
+2. A write through Sy creates D3 [(Sx,2),(Sy,1)]; separately, during a partition, a write through Sz creates D4 [(Sx,2),(Sz,1)].
+3. Neither D3 nor D4 descends from the other, so both are kept and returned together on the next read.
+4. The client merges them and writes the result through Sx, producing D5 [(Sx,3),(Sy,1),(Sz,1)], which supersedes both.
 
-%%flow Vector clocks: D3 and D4 conflict, the client merges them into D5.
+%%flow Vector clocks: D3 and D4 conflict, and the client merges them into D5.
 [Branch] D2 (Sx,2) -(update via Sy)-> D3 (Sx,2)(Sy,1)
 [Branch] D2 (Sx,2) -(update via Sz)-> D4 (Sx,2)(Sz,1)
-[Merge] D3 + D4 -(client reconciles, write via Sx)-> *D5 (Sx,3)(Sy,1)(Sz,1)
+[Merge] D3 + D4 -(client merges via Sx)-> *D5 (Sx,3)(Sy,1)(Sz,1)
 %%
 
-For the cart, merging means taking the union of items: an "add to cart" is **never lost**, though a deleted item can occasionally reappear. Other services used last-write-wins (sessions), or R = 1, W = N for read-heavy catalogue data.
+For the shopping cart, merging means taking the **union** of items: an "add to cart" is never lost, though an item the customer deleted can occasionally reappear. Amazon judged that far better than losing an addition. Other services chose simpler rules: last write wins for sessions, or R = 1 and W = N for read-heavy catalogue data that rarely conflicts.
 
 ## Results
-- Over 24 hours of shopping cart traffic, **99.94%** of requests saw exactly one version; divergence was rare, and mostly caused by busy automated clients, not failures.
-- 99.9th percentile latency was about **200 ms**, around 10× the average. Moving request coordination into the client library cut it from about 69 ms to 30 ms.
+- Over 24 hours of shopping cart traffic, **99.94%** of requests saw exactly one version. Divergence was rare, and mostly caused by busy automated clients writing concurrently, not by failures.
+- 99.9th percentile latency was about **200 ms**, around 10 times the average. Moving request coordination into the client library (so the client contacts replicas directly instead of going through a random node) cut 99.9th percentile read latency from about 69 ms to 30 ms in one measurement.
 - **99.9995%** of requests succeeded, with no data loss reported.
-- Lessons: let each service tune N, R and W; measure at the 99.9th percentile; throttle background repair so it doesn't hurt foreground latency; full-membership gossip works for hundreds of nodes but not tens of thousands.
+- Lessons: let each service tune N, R and W; measure at the 99.9th percentile; throttle background work so it does not hurt foreground requests; full-membership gossip works for hundreds of nodes but would not scale to tens of thousands.
 
-Dynamo's ideas live on in Cassandra, Riak and Voldemort, and its name in DynamoDB (a different, managed design).
+Dynamo's ideas live on in Cassandra, Riak and Voldemort (Cassandra has its own hinted handoff, with a configurable window, usually 3 hours, after which repair must take over). Its name lives on in **DynamoDB**, Amazon's managed service, which is a different design with leader-based replication per partition.
 
-> Takeaway: hinted handoff lets Dynamo accept reads and writes when some of a key's home replicas are down: the request goes to the next healthy node on the ring with a hint naming the intended owner, which hands the data back when it recovers. With sloppy quorums, vector clocks for conflicts and Merkle-tree repair, Dynamo stays always writeable at the cost of occasional conflicting versions.
+## In an interview
+If asked about hinted handoff, state the problem first (strict quorums fail writes when home replicas are unreachable), then the mechanism (next healthy node, hint, separate store, hand back, delete), then the limits (no read-your-writes guarantee, stand-in can die, so Merkle anti-entropy backs it up). Mentioning the shopping cart's union merge shows you understand why availability was worth the conflicts.
 
-?? Hinted handoff is how Dynamo keeps a write's quorum when some of the key's home nodes are down or unreachable. Instead of failing, the coordinator sends the replica to the next healthy node on the ring with a hint naming the intended owner. That node stores it separately and, once the owner recovers, delivers it and deletes its own copy. It solves availability during temporary failures and partitions: the shopping cart stays "always writeable" and the data keeps N copies. Merkle-tree anti-entropy handles failures that outlast the stand-in node.
+> Takeaway: hinted handoff lets Dynamo accept reads and writes when some of a key's home replicas are down or unreachable: the request goes to the next healthy node on the ring with a hint naming the intended owner, which keeps it separately and hands it back when the owner recovers. Combined with sloppy quorums, vector clocks for conflicts and Merkle-tree repair, Dynamo stays always writeable at the cost of occasional conflicting versions and weaker read guarantees.
+
+?? Hinted handoff is how Dynamo keeps a write's quorum when some of the key's home nodes are down or unreachable. With a strict quorum, a W = 2 write fails if two of the three preference-list nodes cannot be reached; with a sloppy quorum the coordinator instead sends the replica to the next healthy node on the ring, tagged with a hint naming the intended owner. That stand-in stores it in a separate local store, counts towards W, and periodically checks the owner; once the owner recovers it delivers the replica and deletes its own copy. It solves availability during temporary failures, partitions and even data-centre outages, so the shopping cart stays always writeable and the data keeps N copies. It does not guarantee reads see the write, and if the stand-in dies the hint is lost, which is why Merkle-tree anti-entropy repairs longer-lasting divergence.
 
 @18.05
+## Why this incident is studied
+On 31 January 2017, GitLab.com, a service hosting the code of hundreds of thousands of developers, lost about six hours of production database data. The proximate cause was a tired engineer deleting a directory on the wrong server. That happens. What made it famous is what came next: the team went looking for a backup and found that **five separate backup and replication mechanisms** were either broken, missing or never meant for recovery. GitLab published an unusually honest public postmortem and even live-streamed the recovery, which is why the details are known.
+
+This lesson walks through the timeline, each failed safety net and why it failed, and then answers the question: which single practice would have caught all of them?
+
+## Background
+GitLab.com ran on PostgreSQL 9.6 with one primary database server (`db1`) and one secondary (`db2`) kept up to date by **streaming replication**: the primary sends its write-ahead log (WAL) to the secondary, which replays it (lessons 03.08 and 06.03). The secondary existed for failover. Backups were meant to come from a nightly `pg_dump` uploaded to Amazon S3, plus various disk snapshots.
+
+A key detail about streaming replication: the primary keeps only a limited amount of WAL on disk. If the secondary falls too far behind, the WAL it still needs is recycled, and the secondary can never catch up by streaming. It must be rebuilt from a fresh copy of the primary (`pg_basebackup`), unless WAL is also **archived** somewhere the secondary can fetch it from. GitLab was not archiving WAL.
+
 ## What happened
-GitLab's postmortem of the January 31, 2017 outage of GitLab.com is famous for its honesty. In short (times in UTC):
-- **~17:20**: an engineer took an **LVM snapshot** of the production database to refresh staging for load testing.
-- **~19:00**: database load spiked, partly spam and partly a background job deleting a wrongly flagged employee account.
-- **~23:00**: **replication to the secondary broke**: it had fallen behind and the primary had already discarded the WAL segments it needed. With no WAL archiving, the secondary had to be rebuilt by hand. Repeated `pg_basebackup` attempts hung silently; configuration changes followed.
-- **~23:30**: trying to clear the **secondary's** data directory, an engineer ran the deletion on the **primary**. It was stopped within seconds, but about **300 GB** was already gone.
+%%timeline The evening of 31 January 2017 (UTC) and the recovery that followed.
+17:20 | LVM snapshot of production taken to refresh staging
+19:00 | Load spikes: spam, plus a mass deletion job
+23:00 | Secondary falls behind; needed WAL is gone
+23:00 to 23:27 | Rebuild attempts with pg_basebackup hang
+23:27 | *Data directory deleted on the primary, not the secondary
+23:30 | Search for a usable backup begins
+1 Feb, about 18:00 | Restore from the 17:20 snapshot completes
+%%
+
+- **About 17:20.** An engineer took an **LVM snapshot** (a point-in-time copy of a logical disk volume) of the production database to refresh the staging environment for load testing. This was an ad hoc, manual action, unrelated to backups.
+- **About 19:00.** Database load spiked. Part of it was spam. Part was a background job **hard-deleting** an account that had been wrongly flagged for abuse, which turned out to be a GitLab employee with a large amount of data. The deletes generated a lot of WAL.
+- **About 23:00.** Replication to the secondary broke. It had fallen behind and the primary had already recycled the WAL segments it needed. With no WAL archive, the secondary had to be rebuilt by hand. Repeated `pg_basebackup` attempts appeared to **hang silently**; configuration changes (to `max_wal_senders` and `max_connections`) followed, and PostgreSQL needed restarting.
+- **About 23:27.** Believing the target data directory on `db2` (the secondary) was blocking `pg_basebackup`, the engineer ran a recursive delete of the PostgreSQL data directory. The terminal was connected to **`db1`, the primary**. The command was stopped within seconds, but of roughly **300 GB** of data, only about 4.5 GB remained.
 
 Then the team went looking for a backup.
 
 ## The backup failures
-%%layers Five safety nets, and why each failed.
-pg_dump to S3 | ran pg_dump 9.2 against Postgres 9.6: failed, bucket empty *
-Failure emails | cron emails rejected by DMARC: nobody knew backups failed
-Azure disk snapshots | enabled for NFS servers, not the database servers
-Replication | for failover, not backups; the secondary had just been wiped
-LVM snapshots | taken for staging, not DR; a 6-hour-old one saved them
+%%layers Five safety nets, and why each one failed.
+*pg_dump to S3 | pg_dump 9.2 against Postgres 9.6: bucket empty
+Failure emails | rejected by DMARC: nobody knew
+Azure disk snapshots | enabled for NFS servers, not the database
+Replication | for failover, not backup; secondary already wiped
+LVM snapshots | made for staging every 24 h; a 6-hour-old one saved them
 %%
 
-1. **`pg_dump` backups to S3 were empty.** The backup job ran on an application server with no database data directory, so the packaged tooling fell back to **`pg_dump` 9.2**, which can't dump a **PostgreSQL 9.6** database. It had been failing for an unknown time.
-2. **Nobody was told.** Failure notifications went by email, but **DMARC** wasn't set up for those cron emails, so the receiving server **rejected** them. The failure alerts silently disappeared.
-3. **Azure disk snapshots** were enabled for the NFS servers but **not for the database servers**. Restoring from snapshots in another storage account could have taken days anyway.
-4. **Replication** is for failover, not backup. It copies deletions, and the secondary had been wiped during the rebuild anyway.
-5. **LVM snapshots** existed only for refreshing staging, taken every 24 hours, not as disaster recovery. By luck, the **manual snapshot from 17:20**, about 6 hours old, was the best restore point.
+1. **`pg_dump` backups to S3 were empty.** The backup job ran on an application server that had no PostgreSQL data directory. The packaging tooling used the data directory to decide which PostgreSQL version's binaries to run, and without it fell back to **`pg_dump` 9.2**, which refuses to dump a **PostgreSQL 9.6** server. The job had been failing, producing only small or empty files, for an unknown length of time.
+2. **Nobody was told.** The cron job did send failure notifications by email. But **DMARC** (an email authentication standard that lets receiving servers reject mail that fails sender checks) was not configured for those cron emails, so the receiving server **rejected** them. The alerts that would have reported the broken backups silently vanished.
+3. **Azure disk snapshots** were enabled for the NFS file servers but **not for the database servers**. Even where they existed, restoring from snapshots stored in another storage account could have taken days.
+4. **Replication** is for failover, not backup. It faithfully copies deletions and corruption to the secondary within milliseconds. In any case, the secondary had just been wiped as part of the rebuild.
+5. **LVM snapshots** existed only to refresh staging, taken every 24 hours, not as disaster recovery. By luck, the **manual snapshot from 17:20**, about 6 hours old, was the most recent usable copy of production.
+
+%%matrix What each mechanism needed in order to work as a backup, and whether it had it on the day.
+Mechanism | Ran successfully | Failures reported | Covers the database | Survives a bad delete | Restore tested
+pg_dump to S3 | no, wrong version | no, emails rejected | yes | yes | no
+Azure snapshots | partial, NFS only | partial | no | yes | no
+Streaming replica | yes, until it broke | yes | yes | no, copies deletes | no
+LVM snapshots | yes, every 24 h | partial | yes | yes | partial, used for staging
+%%
 
 ## The cost
-- Data created between **17:20 and 23:30** was lost: an estimated **~5,000 projects, ~5,000 comments and ~700 user accounts**. Git repositories and wikis were stored separately and were unaffected.
-- Restoring took about **18 hours**, because the snapshot lived on staging's cheap Azure disks throttled to about **60 Mbps**, in another region. Database sequences were bumped by 100,000 to avoid reusing IDs.
+- Data created between **17:20 and 23:27** was lost: an estimated **5,000 projects, 5,000 comments and 700 new user accounts**, plus issues, merge requests and webhooks from that window. Git repositories and wikis were stored separately on file servers and were unaffected, so code was safe; only the database records about it were lost.
+- Restoring took about **18 hours**. The 17:20 snapshot lived on staging's cheap Azure disks, throttled to about **60 Mbit/s**, in another region, and copying hundreds of gigabytes at that rate takes most of a day.
+- After restoring, database sequences were bumped by 100,000 so new rows would not reuse IDs that might already exist in external systems, such as webhook payloads that had been sent during the lost window.
 
-%%flow GitLab's recovery path: the only usable copy was a staging snapshot on slow disks.
-[Loss] Primary data directory -(deleted by mistake at 23:30)-> about 300 GB gone
-[Search] pg_dump in S3 -(empty)-> Azure snapshots -(not enabled for DB)-> *LVM snapshot from 17:20
-[Restore] LVM snapshot on staging -(copy at about 60 Mbps, 18 hours)-> Production restored, 6 hours of data lost
-%%
+! Example: why the restore took 18 hours
+! The snapshot to copy was on the order of a few hundred gigabytes. At 60 Mbit/s, about 7.5 MB/s, copying 300 GB takes 300,000 / 7.5 = 40,000 seconds, about 11 hours, before any restore, verification or restart work.
+! Add the time spent first discovering that S3 was empty and that database snapshots did not exist, plus PostgreSQL recovery and checks, and 18 hours is unsurprising.
+! A restore drill would have measured this number in advance. A recovery time objective (lesson 14.08) of, say, 1 hour would have shown at once that a staging snapshot on throttled disks was not a viable recovery path.
 
 ## Root causes
-GitLab's own "five whys":
-- The wrong directory was deleted because the rebuild procedure was **manual and poorly documented**, and it wasn't obvious which host a terminal was on.
-- The rebuild was needed because replication broke under load and WAL was discarded too early.
-- The restore was slow and lossy because the real backups (`pg_dump`, Azure snapshots) **didn't work**.
+GitLab ran a "five whys" analysis (repeatedly asking why something happened until reaching causes that can be fixed). In summary:
+- The wrong directory was deleted because the rebuild procedure was **manual and poorly documented**, and it was not obvious from the terminal which host it was connected to (both prompts looked alike).
+- The rebuild was needed because replication broke under load and the needed WAL had been discarded, with **no WAL archive** to fall back on.
+- The restore was slow and lossy because the real backups (`pg_dump`, Azure snapshots) **did not work** or did not exist for the database.
 - That went unnoticed because failure alerts were **blocked**, and because the backup procedures had **never been tested** and had **no owner**.
 
+Notice that only the first point is about the human mistake. The engineer's error turned an incident into a six-hour data loss because every layer meant to catch it had already failed, silently, earlier.
+
 ## What would have caught them
-The question asks for the single practice. It is **regularly restoring from backups and checking the result** (automated restore testing), with an alert if a restore test doesn't succeed. A restore test would have revealed:
-- the empty S3 bucket on the first attempt (nothing to restore);
-- the `pg_dump` version mismatch (the dump step fails, or produces nothing);
-- that database servers had no disk snapshots (the test looks for one and doesn't find it);
-- how long a real restore takes from each source, before it mattered.
+The question asks for the single practice. It is **regularly restoring from backups and checking the result**, automatically, with an alert if a restore does **not** succeed. A restore test would have revealed:
+- the empty S3 bucket on its first attempt (nothing to restore);
+- the `pg_dump` version mismatch (the dump step fails, or produces nothing usable);
+- that the database servers had no disk snapshots (the test looks for the latest one and finds none);
+- how long a real restore takes from each source, long before the day it mattered;
+- whether the restored data is complete, by comparing row counts and recent timestamps against production.
 
-Crucially, a restore test that alerts on **missing success**, not only on reported failure, also catches the blocked emails: no "restore succeeded" signal arriving is itself the alarm. This is the Google SRE point from 14.07: "you only know that you can recover your recent state if you actually do so."
+Crucially, a restore test that alerts on **missing success**, not just on reported failure, also catches the blocked emails. When the alert is "no successful restore reported in the last 8 days", it fires whether the cause is a broken dump, a broken job, a broken mailer or a deleted cron entry. This is the general rule for monitoring anything that is supposed to happen periodically: alert on the absence of the success signal (a "dead man's switch"), because failure signals can fail too. As lesson 14.07 puts it: you only know that you can recover your recent state if you actually do so.
 
-GitLab's improvement list matches this: **automated testing of database backup restores**, backup monitoring with Prometheus metrics and a public dashboard, hourly LVM snapshots, Azure disk snapshots for database servers, **continuous WAL archiving for point-in-time recovery**, an owner for data durability, and better replication runbooks.
+%%flow A weekly restore drill that alerts on the absence of success rather than the presence of failure.
+[Restore] Scheduler -(weekly)-> Fetch latest dump + WAL -(restore)-> *Scratch database
+[Check] Scratch database -(row counts, newest row age)-> Compare with production
+[Signal] Compare with production -(pass)-> restore_success timestamp -(older than 8 days)-> Page on-call
+%%
 
 ! Example: a weekly restore drill
-! Every Sunday a job fetches the latest `pg_dump` from S3 and the latest WAL archive, restores them into a fresh database, runs `SELECT count(*)` on key tables and compares against production (within a tolerance), and records the age of the newest row. It pushes a "restore_success" timestamp metric. An alert fires if that timestamp is more than 8 days old, whatever the reason: dump missing, restore failing, job not running, emails broken. In GitLab's situation, the first Sunday after `pg_dump` 9.2 started failing would have paged someone.
+! Every Sunday a job fetches the latest `pg_dump` from S3 and the WAL archive, restores them into a fresh database server, runs `SELECT count(*)` on key tables and compares against production (within a tolerance), and checks the age of the newest row (should be under 24 hours).
+! On success it pushes a metric `restore_last_success_timestamp`. An alert fires if that timestamp is more than 8 days old, whatever the reason.
+! In GitLab's situation, the first Sunday after the job started using `pg_dump` 9.2 would have produced no success metric. Eight days later, someone would have been paged, the version mismatch found and fixed, months before 31 January.
 
-> Takeaway: GitLab had five layers of backup and none worked: pg_dump failed on a version mismatch, its failure emails were rejected by DMARC, database disk snapshots weren't enabled, replication only copied the damage, and the staging snapshot that saved them was luck. Regular automated restore tests, alerting when a successful restore isn't reported, would have exposed all of it before the day it mattered.
+## What GitLab changed
+GitLab's improvement list matches this diagnosis:
+- **Automated testing of database backup restores**, run on a schedule.
+- Backup monitoring through Prometheus metrics and a public dashboard, instead of email.
+- Hourly LVM snapshots, and Azure disk snapshots enabled for database servers.
+- **Continuous WAL archiving** for point-in-time recovery, which also lets a lagging replica catch up instead of being rebuilt.
+- A named **owner** for data durability.
+- Better replication runbooks, and making it obvious which host a terminal is connected to (distinct prompts for production).
 
-?? The failures: pg_dump backups to S3 were empty because the job used pg_dump 9.2 against PostgreSQL 9.6; the failure emails were silently rejected because DMARC wasn't configured; Azure disk snapshots weren't enabled for the database servers; replication copied the problem and the secondary had been wiped anyway; and LVM snapshots existed only for staging, so the best restore point was a 6-hour-old manual one on slow disks, which took about 18 hours to copy. Regularly testing restores, automated, verified, and alerting when no successful restore is reported, would have caught every one of these failures in advance.
+## Common mistakes this incident illustrates
+- Treating replication as a backup.
+- Monitoring backups by "no error emails arrived".
+- Backup jobs that run on a different machine from the data, with silent version fallbacks.
+- Snapshots and backups that nobody has ever restored.
+- Manual, undocumented recovery procedures run late at night under pressure.
+- No recovery time objective, so nobody knows that a restore will take 18 hours until it does.
+
+## In an interview
+When backups come up, say "a backup you have not restored is a hope, not a backup", then give the concrete practice: scheduled automated restores into a scratch environment, data checks, and alerting on the absence of a success signal. Mention that replicas copy mistakes, and that RPO and RTO (lesson 14.08) should be measured by drills, not assumed.
+
+> Takeaway: GitLab had five layers of backup and none worked: pg_dump failed on a version mismatch, its failure emails were rejected by DMARC, database disk snapshots were not enabled, replication only copied the damage, and the staging snapshot that saved them was luck. Regular automated restore tests, alerting when a successful restore is not reported, would have exposed all of it long before the day it mattered.
+
+?? The failures: pg_dump backups to S3 were empty because the job ran pg_dump 9.2 against PostgreSQL 9.6; the cron failure emails were silently rejected because DMARC was not configured, so nobody knew; Azure disk snapshots were enabled for the NFS servers but not the database servers; replication copied the problem and the secondary had been wiped during the rebuild anyway, with no WAL archive to fall back on; and LVM snapshots existed only for refreshing staging, so the best restore point was a 6-hour-old manual one on throttled disks that took about 18 hours to copy, losing about 5,000 projects, 5,000 comments and 700 accounts. The single practice that would have caught all of them is regularly restoring backups, automated and verified against production, with an alert that fires when no successful restore has been reported recently rather than only when a failure is reported.

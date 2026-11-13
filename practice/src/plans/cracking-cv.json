@@ -1,0 +1,15 @@
+{
+ "id": "cracking-cv",
+ "group": "Specializations",
+ "title": "Cracking Computer Vision",
+ "blurb": "Build the vision stack from raw pixel arrays upward: image preprocessing, convolution and pooling, the box geometry behind object detectors, segmentation and detection losses, and the reshapes that turn images into transformer tokens. Every problem fixes its coordinate and rounding conventions, since that is where vision code usually breaks.",
+ "prereq": "Fluent NumPy indexing and broadcasting, and a working idea of what convolution and attention layers compute.",
+ "next": "Move on to how image and text encoders are trained jointly in multimodal models, or practise turning these primitives into end-to-end detection and segmentation system designs.",
+ "sections": [
+  {"name": "Image basics and ops", "problems": ["rgb-to-grayscale", "image-normalize", "per-channel-mean-and-std", "zero-pad-and-center-crop", "bilinear-resize", "sobel-edge-detection", "gaussian-blur-2d"]},
+  {"name": "Convolution and pooling", "problems": ["max-pool-2d", "average-pool-2d", "adaptive-average-pool-2d", "multichannel-2d-convolution", "dilated-2d-convolution", "depthwise-separable-convolution", "2d-transposed-convolution"]},
+  {"name": "Detection primitives", "problems": ["iou-matrix", "anchor-box-generation", "box-encode-and-decode", "non-maximum-suppression", "soft-non-maximum-suppression", "fpn-top-down-fusion", "roi-align"]},
+  {"name": "Losses and augmentation", "problems": ["sigmoid-focal-loss", "dice-loss", "generalized-iou-loss", "complete-iou-loss", "mixup-augmentation", "cutmix-augmentation", "hungarian-matching"]},
+  {"name": "Vision transformers and evaluation", "problems": ["vit-patchify", "2d-sinusoidal-positional-embedding", "vit-multi-head-self-attention", "window-partition-and-reverse", "clip-cosine-retrieval", "mean-iou-for-segmentation", "top-k-classification-accuracy"]}
+ ]
+}

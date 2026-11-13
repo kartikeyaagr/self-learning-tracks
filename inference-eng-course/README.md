@@ -2,7 +2,7 @@
 
 A single-page site with no build step and no server code. The files are:
 
-- `index.html`: the whole course, including all lesson data, styles and scripts.
+- `index.html`: the whole course, including all lesson data, interactive charts, styles and scripts. Equations are pre-rendered as MathML, so the page loads no scripts from other sites.
 - `favicon.svg`: the tab icon.
 
 ## Progress storage
@@ -25,5 +25,5 @@ Routing uses the URL hash (`#m03`, `#l03-02`, `#review`), so no rewrite rules ar
 
 ## External requests
 
-- The fonts (Geist, JetBrains Mono, Instrument Serif) load from Google Fonts. Offline, the page falls back to system fonts.
+- The fonts (Geist, JetBrains Mono, Instrument Serif, Noto Sans Math) load from Google Fonts. Offline, the page falls back to system fonts, and equations still render with the browser's built-in math font.
 - Each lesson's source links point to external sites.

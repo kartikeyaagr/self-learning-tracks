@@ -17,6 +17,12 @@ for m in d:
     L.setdefault('ak','')
     if L['id'] in full:
       L['a']='\n'.join(full[L['id']]['a']).strip(); L['s']=full[L['id']]['s']
+import os
+FL=set(json.load(open('flags.json'))) if os.path.exists('flags.json') else set()
+for m in d:
+  for L in m['lessons']:
+    if L['id'] in FL: L['g']=1
+    else: L.pop('g',None)
 json.dump(d,open('data.json','w'),separators=(',',':'),ensure_ascii=False)
 t=open('app.html').read()
 open('course.html','w').write(t.replace('__DATA__',json.dumps(d,separators=(',',':'),ensure_ascii=False).replace('</','<\\/')))

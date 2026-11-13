@@ -1,30 +1,58 @@
 @05.01
-## Why cache
-A cache keeps a copy of data somewhere faster or closer than its source. Hello Interview's rough numbers: a Postgres read that goes to disk might take around 50 ms, a Redis read about 1 ms. A CDN edge near the user answers in 20 to 40 ms versus 250 to 300 ms from a distant origin. Caching also takes load off the source: at 10,000 requests per second with a 95% hit rate, the database only sees 500.
+## Why cache at all
+A **cache** keeps a copy of data somewhere faster or closer than the place the data really lives (the **source of truth**, usually a database). Reading the copy is cheaper than reading the original, so you serve most requests from the copy and only go to the source when you have to.
+
+Two things make caching worth the trouble. The first is **latency**. Rough numbers: a Postgres query that has to touch disk might take around 50 ms, while a Redis read over the local network takes about 1 ms. A CDN edge server near the user answers in 20 to 40 ms, compared with 250 to 300 ms from an origin server on another continent. An in-process cache (a hash map inside your own application) answers in well under a microsecond because there is no network at all.
+
+The second is **load**. A cache absorbs traffic that would otherwise hit the database. At 10,000 requests per second with a 95% **hit rate** (the share of reads the cache can answer), the database sees only 500 requests per second. Push the hit rate to 99% and it sees 100. That is why caching is often the cheapest way to scale reads: one Redis node handling 100,000 operations per second costs far less than the database replicas you would need to serve the same load.
+
+%%bars Typical read latency at each caching layer. Each step outward saves roughly an order of magnitude.
+In-process map | 0.0001 | ~0.1 µs
+Redis on the LAN | 1 | ~1 ms
+CDN edge | 30 | 20 to 40 ms
+*Database from disk | 50 | ~50 ms
+Distant origin | 275 | 250 to 300 ms
+%%
+
+The price you pay is **staleness**. The moment you have two copies of a piece of data, they can disagree. Every caching decision is really a decision about how much disagreement you can tolerate, for how long, and what you will do to limit it. The rest of this lesson is about that trade.
 
 ## Where caches live
-- **Client**: browser HTTP cache, app storage. Fastest, but you control staleness least.
-- **CDN**: edge servers cache static media and sometimes API responses (Module 12).
-- **In-process**: memory inside each app server. No network hop, but every server has its own copy, so invalidation is hard. Good for small, rarely changing data such as config or feature flags, and as a guard for extremely hot keys.
-- **External cache**: a shared Redis or Memcached fleet. The default answer in interviews.
-- **Database caches**: the buffer pool keeps hot pages in memory without you doing anything.
+Caches appear at every layer between the user and the data. Each layer has a different trade-off between speed and how much control you have over staleness.
+- **Client**: the browser HTTP cache, mobile app storage. Fastest of all because no request leaves the device, but you control staleness least. Once a browser has a response marked `Cache-Control: max-age=86400`, you cannot call it back.
+- **CDN**: edge servers around the world cache static media and sometimes public API responses (lesson 13.02 covers this). Great for content that is the same for everyone.
+- **In-process**: memory inside each application server, such as a Guava or Caffeine cache in Java, or a plain dictionary. No network hop. But every server holds its own copy, so with 200 servers you have 200 copies that can disagree, and invalidating them all is hard. Good for small, rarely changing data such as configuration or feature flags, and as a shield for extremely hot keys.
+- **External cache**: a shared Redis or Memcached fleet that all application servers talk to. One copy (per key) that everyone sees, so invalidation is a single delete. This is the default answer in interviews.
+- **Database caches**: the database's own **buffer pool** keeps hot pages in memory without you doing anything. A database whose working set fits in the buffer pool is already fast; caching in front of it helps mostly with expensive queries and with load.
 
 %%layers Where caches live, from closest to the user to closest to the data.
 Browser / client | HTTP cache, app memory
 CDN | edge copies of static and public content
-*Application cache | Redis / Memcached beside the services
-Database | buffer pool, query cache
+In-process | per-server memory, no network hop
+*Shared application cache | Redis / Memcached beside the services
+Database | buffer pool keeps hot pages in RAM
 %%
 
-## How the cache is kept filled
-| Pattern | How it works | Watch out for |
-| Cache-aside (lazy loading) | App reads cache; on a miss reads the DB and stores the result | First read is slow; data can be stale until expiry or invalidation |
-| Read-through | The cache itself loads from the DB on a miss | Needs a cache layer that supports it (CDNs work this way) |
-| Write-through | Writes go through the cache, which writes the DB synchronously | Slower writes; cache fills with data nobody reads |
-| Write-behind (write-back) | Writes go to the cache; it flushes to the DB later in batches | Data loss if the cache dies before flushing |
-| Refresh-ahead | The cache refreshes popular entries before they expire | Wasted work if it predicts wrong |
+You will often combine several. A product page might be cached as HTML at the CDN for 60 seconds, the product record in Redis for 10 minutes, and the currency exchange rates in-process for 5 minutes.
 
-Hello Interview recommends cache-aside as the default. The System Design Primer adds that write-through gives fresh reads of recently written data at the cost of write latency, and a new cache node starts empty until entries are updated, so it is often combined with cache-aside.
+## How the cache is kept filled: the five patterns
+The interesting question is who puts data into the cache and who keeps it up to date. There are five standard patterns.
+
+| Pattern | Reads | Writes | Watch out for |
+| Cache-aside (lazy loading) | App reads cache; on a miss reads DB and stores the result | App writes DB, then deletes the cache key | First read is slow; stale until expiry if delete fails or races |
+| Read-through | Cache itself loads from DB on a miss | Usually combined with another pattern | Needs a cache layer that knows how to load (CDNs work this way) |
+| Write-through | Served from cache | Write goes to cache, which writes DB synchronously | Slower writes; cache fills with data nobody reads |
+| Write-behind (write-back) | Served from cache | Write goes to cache; flushed to DB later in batches | Data loss if the cache dies before flushing |
+| Refresh-ahead | Served from cache | Cache refreshes popular entries before they expire | Wasted work if it predicts wrong |
+
+### Cache-aside step by step
+**Cache-aside** is the usual default because it is simple and the cache stays optional. The application owns all the logic; the cache is just a key-value store.
+1. The app asks the cache for `user:42`.
+2. On a **hit**, it returns the value. Done.
+3. On a **miss**, it queries the database.
+4. It writes the result into the cache with a TTL (time to live, an expiry time), then returns it.
+5. When the user is updated, the app writes the database first, then **deletes** `user:42` from the cache. The next read misses and reloads the fresh row.
+
+Why delete rather than update the cache on a write? Because a delete is **idempotent** (safe to repeat): sending it twice has the same effect as once. An update is not: if two writers race, their cache updates can land in the opposite order from their database writes, leaving the older value cached. Deleting also avoids computing an expensive cache value for data nobody may read again. Facebook's memcache (05.02) follows exactly this "update the database, then delete the key" rule.
 
 %%seq Cache-aside: the app checks the cache, falls back to the database on a miss, and fills the cache.
 App > Cache : GET user:42
@@ -32,297 +60,751 @@ Cache -> App : miss
 App > Database : SELECT user 42
 Database -> App : row
 App > Cache : SET user:42, TTL 300 s
+App > App : return row to caller
 %%
 
-## Staleness: where cache-aside goes wrong
-With cache-aside, the cache only changes when an entry expires or the app invalidates it. Common invalidation is "update the DB, then delete the cache key" (delete rather than update, as Facebook does in 05.02, because deletes are safe to repeat). Stale data still slips in:
-- If the delete fails or is skipped, the old value lives until its TTL.
-- A race: reader A misses and reads the old value from the DB; writer B updates the DB and deletes the key; A then writes its old value into the cache. Now the cache is stale until expiry. Facebook's leases (05.05) exist to stop exactly this.
+Cache-aside has a useful property: if the cache is unavailable, the app can still work (slowly) by going to the database. (Lesson 05.06 explains why that fallback is more dangerous than it looks.)
 
-Write-through avoids most read staleness because every write updates the cache, but it is still two writes (cache and DB) that can partially fail.
+### Write-through step by step
+With **write-through**, every write goes to the cache and the database together, and the write is acknowledged only once both have it. Usually the application writes the database and then sets the cache with the new value, or a cache layer does both. Reads of recently written data are always fresh, because the write itself put the new value into the cache.
+
+The costs: every write pays two round trips. The cache fills with everything that was written, including data that is never read (think of an audit log entry). And a brand new cache node starts empty, because write-through only fills keys when they are written. For that reason write-through is almost always combined with cache-aside: write-through keeps hot data fresh, cache-aside fills in anything missing.
+
+%%compare Cache-aside versus write-through on the same update. Cache-aside removes the old value and reloads later; write-through puts the new value in immediately.
+[*Cache-aside]
+Write DB -(then)-> Delete key -(next read)-> Miss, reload
++ Cache only holds data that was read
++ Cache outage does not block writes
+- First read after a write is slow
+- Stale if the delete fails or races
+[Write-through]
+Write DB -(then)-> Set key to new value -> Hit
++ Recently written data reads fresh
+- Every write pays two round trips
+- Cache fills with unread data
+- Two writes can still partly fail
+%%
+
+### Write-behind, read-through, refresh-ahead
+**Write-behind** acknowledges a write as soon as the cache has it, then flushes to the database later, often in batches. It gives the fastest writes and can collapse many updates to one row into a single database write (useful for counters such as view counts). But if the cache node dies before flushing, those writes are gone. Use it only for data you can afford to lose or rebuild.
+
+**Read-through** is cache-aside with the loading logic moved into the cache layer. The app only ever talks to the cache; on a miss, the cache calls a loader function or the origin. CDNs are read-through caches: the edge fetches from your origin on a miss. Libraries such as Caffeine also support it with a loader callback.
+
+**Refresh-ahead** reloads popular entries shortly before they expire, so readers never see a miss. It works well for a small set of known hot keys. If it guesses wrong, it wastes database work refreshing things nobody reads. Lesson 05.05 covers a clever probabilistic version (XFetch).
+
+## Staleness: where each pattern goes wrong
+With cache-aside the cached value only changes when it expires or the app deletes it. So stale data appears whenever the delete does not happen or happens at the wrong moment.
+
+### Failure 1: the lost delete
+The app writes the database, then the delete call to Redis times out, or the process crashes between the two steps. The old value now lives in the cache until its TTL runs out. This is why every cache entry should have a TTL even if you invalidate explicitly: the TTL is your upper bound on staleness when invalidation fails.
+
+! Example: bounding a lost delete
+! A product record is cached with a 10 minute TTL. At 14:00:00 the price changes from 20 to 25. The database write succeeds, but the delete to Redis times out because a network blip lasts 2 seconds.
+! The cached entry was written at 13:58:30, so it expires at 14:08:30. Until then every product page shows 20. That is 8.5 minutes of staleness.
+! If the TTL were 60 seconds, the worst case would be 60 seconds. If there were no TTL at all, the wrong price would stay until the next price change or a cache restart, possibly days. Shorter TTLs mean less staleness but more misses: with 50,000 reads per second spread over 100,000 products, a 60 s TTL costs roughly 100,000 / 60 ≈ 1,700 extra database reads per second for keys that are read at least once a minute.
+
+### Failure 2: the read-write race
+This one is subtle and happens even when every call succeeds.
+1. Reader A misses on `user:42` and reads version 1 from the database.
+2. Before A writes to the cache, writer B updates the row to version 2.
+3. B deletes `user:42` from the cache (nothing to delete yet).
+4. A finally writes version 1 into the cache.
+
+The cache now holds version 1, the database holds version 2, and no further delete is coming. The cache stays wrong until the TTL. This race needs A to be slow (a garbage collection pause, a slow network), so it is rare per request but certain at scale. Facebook's **leases** (05.05) exist to stop exactly this: the cache refuses A's write because the key was deleted after A's lease was issued.
 
 %%seq The classic stale-cache race: a slow reader writes an old value back after the writer invalidated it.
-Reader > Database : read v1 (miss path)
+Reader > Database : read v1 (cache miss path)
 Writer > Database : update to v2
 Writer > Cache : delete key
-Reader > Cache : SET v1 (stale, stays until TTL)
+Reader > Cache : SET v1 (stale until TTL)
 %%
 
-## AWS's warnings about caches
-The AWS Builders' Library article on caching challenges adds operational lessons:
-- **Caches create two modes.** Systems quietly come to depend on the hit rate. If it drops (cache flush, traffic shift), the source gets far more load than it was sized for. Test with the cache disabled.
-- **Local caches** have coherence problems (servers disagree), load that grows with fleet size, and cold starts after every deploy. **External caches** fix those but are another fleet to run and can fail.
-- **Soft and hard TTLs**: after the soft TTL, try to refresh; if the source is down, keep serving the old value until the hard TTL.
-- **Negative caching**: cache "not found" and errors briefly too, or a missing item hammers the database on every request.
-- **Monitor** hit rate, evictions, cache CPU and memory, and downstream request volume.
-- **Version your cached format** like stored data, so a deploy does not invalidate everything at once.
+Other mitigations: **delayed double delete** (delete, then delete again a second or so later, which catches most slow readers), or writing with a version number and having the cache reject older versions.
 
-## Interview advice
-Do not open with caching. Name a bottleneck (read volume, expensive queries, latency target), then say what you cache, the key design, the pattern (usually cache-aside), eviction (LRU plus TTL), and one or two failure modes.
+### Failure 3: write-through partial failure
+Write-through avoids most read staleness, but it is still two writes to two systems with no transaction across them. If the database write succeeds and the cache write fails, the cache holds the old value. If the cache write succeeds and the database write fails, the cache holds a value that was never committed, which is worse. Two concurrent write-through writers can also land in opposite orders in the two systems. So even write-through needs a TTL as a safety net.
 
-! Example: product page
-! Product details are read 50,000 times per second and change a few times a day. Cache-aside in Redis with key product:{id}, TTL 10 minutes. On a price update, the service writes the DB then deletes product:{id}. A delete that fails means up to 10 minutes of the old price on the page; checkout always reads the price from the DB, so customers are never charged a stale price.
+## Operational lessons from running caches at scale
+Teams that run caches across large fleets keep relearning the same lessons.
+- **Caches create two modes.** Systems quietly come to depend on the hit rate. If it drops (a cache flush, a deploy that changes key formats, a traffic shift to a new region), the source gets far more load than it was sized for. Test with the cache disabled so you know what happens. Lesson 05.06 is entirely about this.
+- **Local caches** have coherence problems (servers disagree with each other), load on the source that grows with fleet size (each of 500 servers misses separately), and cold starts after every deploy. **External caches** fix those, but are another fleet to run and can fail.
+- **Soft and hard TTLs**: after the soft TTL, try to refresh; if the source is down, keep serving the old value until the hard TTL. This turns a source outage into slightly stale data instead of errors.
+- **Negative caching**: cache "not found" and errors briefly too (say 30 seconds). Otherwise a request for a missing item hits the database every time, and an attacker can exploit this by requesting random IDs.
+- **Monitor** hit rate, evictions, cache CPU and memory, and the downstream request volume. A falling hit rate is often the first sign of trouble.
+- **Version your cached format** like stored data. If a deploy changes the serialised shape, old and new servers must both read it, or you must change the key prefix (`v2:user:42`) gradually so the whole cache is not invalidated at once.
 
-> Takeaway: cache-aside is the default: read cache, fall back to the DB, fill on miss, delete on write. It can serve stale data until expiry when invalidation fails or races; design for that explicitly.
+! Example: product page design
+! Product details are read 50,000 times per second and change a few times a day. Use cache-aside in Redis with key `product:{id}` and a 10 minute TTL with ±10% jitter so keys written together do not expire together.
+! On a price update, the service writes the database, then deletes `product:{id}`. If the delete fails, the page can show the old price for up to about 11 minutes. That is acceptable for display because checkout always reads the price from the database, so customers are never charged a stale price.
+! Sizing: 2 million products, average 2 KB each, but only the 200,000 most popular are hot. Hot set is 200,000 × 2 KB = 400 MB, which fits on one Redis node with plenty of room. With a 98% hit rate the database sees 1,000 reads per second instead of 50,000.
 
-?? Cache-aside loads data into the cache only on a read miss and relies on TTLs or deletes to remove old values, so it can serve stale data after a DB update if the delete fails or a slow reader writes an old value back. Write-through updates the cache on every write, so reads stay fresh, but writes are slower and the cache fills with data that may never be read. Both can still diverge if one of the two writes fails.
+## Common mistakes
+- **Updating the cache instead of deleting** on writes, which invites ordering races between writers.
+- **No TTL** on entries "because we invalidate explicitly". Invalidation always fails sometimes.
+- **Using write-behind for data that matters**, then losing orders when a cache node restarts.
+- **Reading critical values from the cache**: prices at checkout, account balances, permissions after a revoke.
+
+## In an interview
+Do not open with caching. Name a bottleneck first (read volume, an expensive query, a latency target). Then say what you cache, the key design, the pattern (usually cache-aside with delete on write), eviction (LRU plus TTL), and one or two failure modes with how you bound them. A good question to ask: "How stale can this data be?" The answer decides the TTL and whether caching is allowed at all.
+
+> Takeaway: cache-aside is the default: read the cache, fall back to the database on a miss, fill the cache, and delete the key on write. Both cache-aside and write-through can serve stale data when invalidation fails or races, so always set a TTL to bound how long.
+
+?? Cache-aside loads data into the cache only on a read miss and relies on TTLs or deletes to remove old values, so it can serve stale data after a database update if the delete fails or a slow reader writes an old value back after the delete (the read-write race); the staleness lasts until the TTL expires. Write-through updates the cache on every write, so reads of recent writes are fresh, but writes are slower and the cache fills with data that may never be read. It can still serve stale data if one of its two writes fails or concurrent writes land in different orders, so both patterns need a TTL as a safety net.
 
 @05.02
 ## Spreading a cache across machines
-One cache server runs out of memory and network bandwidth, so large caches are split across many nodes. Each key lives on one node (plus replicas, sometimes). The core question is routing: given a key, which node has it?
+One cache server eventually runs out of something. A large Redis or Memcached box might have 64 to 256 GB of RAM, a 10 to 25 Gbit/s network card and enough CPU for a few hundred thousand operations per second. A cache for a big product can need terabytes of memory and millions of operations per second. So large caches are **partitioned** (split) across many nodes. Each key lives on exactly one node (plus replicas, sometimes), and each node holds only its share.
 
-## Option 1: clients hash the key
-Facebook's "Scaling Memcache at Facebook" paper (NSDI 2013) describes the simplest powerful design. Memcached servers are independent, single-machine hash tables that never talk to each other. All the intelligence is in the client:
-- The client hashes the key with **consistent hashing** (04.07) to pick a server among hundreds.
-- Clients also handle serialisation, compression, batching and error handling.
-- Gets go over UDP for speed (about 20% lower latency; a dropped packet is treated as a miss). Sets and deletes go over TCP through a local proxy, **mcrouter**, which pools connections.
+That raises the core question of this lesson: **routing**. Given a key, which node has it? The answer has to be computed quickly (it happens on every request), agreed by every client (otherwise one client writes to node 3 and another reads from node 7), and stable when nodes are added or removed (otherwise every topology change empties the cache).
 
-Scale numbers from the paper: billions of requests per second, trillions of items. A popular page fetches hundreds of items (521 on average, 1,740 at p95), so clients batch requests (24 keys on average) and use a sliding window to limit outstanding requests, avoiding "incast" congestion where many replies arrive at once.
+There are three places the routing decision can live: in the client, in the cache cluster itself, or in a proxy in between.
 
-Facebook's structure:
-- **Pools** separate workloads so they do not evict each other: high-churn keys in one pool, expensive-to-miss keys in another.
-- **Replication within a pool** for small, very hot key sets: each client picks a replica, halving per-server load in their example.
-- **Clusters and regions**: several frontend clusters share one database tier. When the database commits a write, a daemon called **mcsqueal** reads the commit log and sends deletes to every cluster, so invalidations survive crashes and can be replayed.
-- **Cold cluster warmup**: a new cluster fills from a warm cluster rather than the database, cutting warmup from days to hours.
-
-%%flow Client-side sharding: each client hashes the key to pick the cache node directly.
-App -(hash(key) on ring)-> *Memcached node 2 -(hit)-> Value
+%%tree Three places the "which node has this key?" decision can live, with a real system for each.
+Who routes a key?
+  The client library
+    *Consistent hash ring | Memcached at Facebook
+  The cache cluster
+    Hash slots plus MOVED replies | Redis Cluster
+  A proxy in between
+    Proxy hashes for the client | mcrouter, Twemproxy, Envoy
 %%
 
-## Option 2: the cache cluster routes for you
-Redis Cluster (Hello Interview's Redis deep dive) splits the key space into **16,384 hash slots**. Each key maps to a slot (CRC16 of the key, mod 16,384), and each node owns some slots.
-- Clients cache the slot-to-node map and send each request straight to the right node.
-- If a slot has moved, the node replies `MOVED` with the new owner, and the client refreshes its map. Nodes do not forward requests.
-- Nodes gossip to share the full map.
-- Multi-key commands only work when all keys are in one slot. **Hash tags** force related keys together: `user:{42}:profile` and `user:{42}:settings` hash only the part in braces.
-- Adding a node migrates whole slots to it.
+## Why plain modulo hashing fails
+The naive approach is `node = hash(key) mod N`, where N is the number of nodes. It spreads keys evenly and needs no shared state. The problem appears when N changes. Going from 10 to 11 nodes changes the result of `mod N` for almost every key: only about 1 in 11 keys stays on the same node. So adding one node turns roughly 91% of your cache into misses at the same moment, and the database takes the full load.
 
-%%flow Redis Cluster: keys map to 16,384 slots; a node that doesn't own the slot answers MOVED.
-Client -(CRC16(key) mod 16384 = slot 5,000)-> Node A -(MOVED: slot on B)-> *Node B
+! Example: the cost of adding a node with modulo hashing
+! A cache tier serves 500,000 reads per second at a 95% hit rate, so the database sees 25,000 reads per second.
+! You add an eleventh node using `hash mod N`. About 10/11 of keys now map to a different node, so the effective hit rate drops to roughly 95% × 1/11 ≈ 9% until the cache refills.
+! The database suddenly sees about 455,000 reads per second, eighteen times its normal load. It will not survive. With consistent hashing, only about 1/11 of keys move, so the hit rate dips to roughly 86% and the database sees about 70,000 reads per second for a short while: painful, but survivable with headroom.
+
+## Option 1: clients hash the key (consistent hashing)
+**Consistent hashing** (lesson 04.07 covers it in full) fixes the remapping problem. Imagine the hash space as a ring from 0 to 2^32. Each node is placed at several points on the ring (often 100 to 200 **virtual nodes** per server, to even out the spread). To find a key, hash it onto the ring and walk clockwise to the first node point. Adding a node only takes over the arcs just before its points, so only about 1/N of keys move.
+
+Facebook's memcache deployment is the classic example of putting all the routing intelligence in the client. Its Memcached servers are independent, single-machine hash tables that never talk to each other. They do not know a cluster exists. The client library does everything:
+- Hashes the key with consistent hashing to pick a server among hundreds.
+- Serialises and compresses values, batches requests, and handles errors.
+- Sends gets over **UDP** for speed (about 20% lower latency than TCP; a dropped or late packet is simply treated as a cache miss). Sets and deletes go over TCP through a local proxy called **mcrouter**, which pools connections so each web server does not hold thousands of TCP connections.
+
+The scale is large: billions of requests per second over trillions of items. A popular page fetches hundreds of items (521 distinct items on average, 1,740 at the 95th percentile). Clients build a dependency graph of the keys a page needs and fetch independent keys in parallel batches (24 keys per request on average). They also use a **sliding window** to limit how many requests are outstanding, avoiding **incast congestion**: when a client asks 100 servers at once, all the replies arrive in the same instant and overflow the switch buffer, causing packet loss and retries.
+
+%%flow Client-side routing: the client library hashes the key onto the ring and talks to the owning node directly, with no extra hop.
+[Read] App -(hash key on ring)-> Client library -(UDP get)-> *Memcached node 7
+[Write] App -(TCP set or delete)-> mcrouter -(pooled TCP)-> *Memcached node 7
 %%
+
+### Facebook's other structures
+Routing is only the first layer. Facebook's design adds several more ideas that are worth knowing.
+- **Pools** separate workloads so they do not evict each other. Keys that change often and are cheap to recompute go in one pool; keys that are expensive to miss go in another. Without pools, a burst of cheap high-churn keys would push out the expensive ones.
+- **Replication within a pool** for small, very hot key sets. If one server holding 100 keys is receiving 500,000 requests per second, splitting the keys across two servers does not help, because clients batch all 100 keys into one request either way. Replicating the whole set to two servers and letting each client pick one halves the per-server load.
+- **Clusters and regions.** Several frontend clusters (each with its own web servers and memcache) share one database tier. When the database commits a write, a daemon called **mcsqueal** tails the commit log and sends deletes to every cluster. Because invalidations are driven by the log, they survive crashes and can be replayed, unlike deletes sent by web servers that might die mid-request.
+- **Cold cluster warmup.** A new cluster with an empty cache would hammer the database. Instead, its clients fetch misses from a warm cluster's cache and fill their own. This cut warmup from days to a few hours.
+
+## Option 2: the cache cluster routes for you (Redis Cluster)
+Redis Cluster takes a different approach: the nodes know about each other and the cluster owns the mapping. The key space is split into **16,384 hash slots**. Every key maps to one slot with `CRC16(key) mod 16384`, and each primary node owns a set of slots. A three-node cluster might give slots 0 to 5,460 to node A, 5,461 to 10,922 to node B and 10,923 to 16,383 to node C.
+
+How a request finds its node:
+1. On startup, the client asks any node for the slot map (`CLUSTER SHARDS` or the older `CLUSTER SLOTS`) and caches it.
+2. For each command, the client computes the slot and sends the request straight to the owning node. No extra hop.
+3. If the slot has moved permanently, the node replies `MOVED 9301 10.0.0.12:6379`. The client retries there and refreshes its map.
+4. If the slot is being migrated right now, the node may reply `ASK`, meaning "try the other node for this one request, but do not update your map yet".
+
+Nodes do **not** forward requests on the client's behalf; redirecting keeps the nodes simple and fast. Nodes share the slot map and health information with each other over a **gossip** bus (lesson 06.11), and replicas take over automatically when a primary fails.
+
+%%seq Redis Cluster redirect: a client with an outdated slot map is told where the slot now lives.
+Client > Node C : GET user:42:profile (slot 9301)
+Node C -> Client : MOVED 9301 to Node D
+Client > Client : update slot map
+Client > Node D : GET user:42:profile
+Node D -> Client : value
+%%
+
+### Hash tags and multi-key commands
+Commands that touch several keys (`MGET`, transactions, Lua scripts) only work when every key is in the same slot, because a single node must execute them atomically. **Hash tags** let you force related keys together: if a key contains `{...}`, only the part inside the braces is hashed. So `user:{42}:profile` and `user:{42}:settings` both hash `42` and land in the same slot. Be careful: a hash tag that is too coarse (say `{global}`) puts everything on one node and recreates the single-server problem.
+
+### Resharding
+Adding a node means moving whole slots to it. Redis moves a slot key by key with `MIGRATE`, answering `ASK` for keys already moved. Because the unit of movement is a slot (on average 1/16,384 of the data), resharding is gradual and the cache stays warm for everything not in flight.
 
 ## Option 3: a proxy routes
-A proxy (mcrouter, Twemproxy, Envoy) sits between clients and cache nodes and does the hashing. Clients stay simple and the topology can change in one place, at the cost of an extra hop and another component to scale.
+A **proxy** such as mcrouter, Twemproxy or Envoy sits between the applications and the cache nodes. Applications send every request to the proxy (often running on the same host as a sidecar), and the proxy does the hashing, connection pooling, retries and failover.
 
-## Replication and durability
-Redis replicates asynchronously: the primary acknowledges before replicas have the write, so a failover can lose recent writes. Persistence is optional: RDB snapshots lose everything since the last snapshot; AOF with the default once-per-second fsync can lose about a second. Hello Interview's point: Redis is not a system of record by default. For a cache that is fine, because the database has the truth.
-
-Redis runs commands on a single thread, one at a time, so individual commands are atomic without locks, and a node handles on the order of 100,000 operations per second.
-
-%%flow A proxy hides the topology: apps talk to one endpoint, the proxy routes and pools connections.
-Apps -> *Proxy (e.g. mcrouter, twemproxy) -(route by key)-> Cache nodes
+%%compare Client-side routing versus a proxy. The proxy costs a hop but puts topology changes in one place.
+[Smart client]
+App -(hash in library)-> Cache node
++ No extra hop, lowest latency
++ No extra component to run
+- Every language needs the library
+- Topology changes must reach all clients
+[*Proxy or sidecar]
+App -> Proxy -(hash, pool, retry)-> Cache node
++ Clients stay simple, any language
++ Pools connections, fewer sockets per node
+- Extra hop, about 0.1 to 0.5 ms
+- Proxy fleet must scale and stay up
 %%
 
+A proxy really earns its place when you have many services in many languages, or thousands of application processes that would otherwise each open a connection to every cache node. 5,000 processes × 100 cache nodes is 500,000 connections; with a local proxy per host (say 500 hosts), it is 50,000.
+
+## Replication and durability
+A cache node can fail. Two questions follow: is the data replicated, and is it persisted?
+
+Redis replicates **asynchronously**: the primary acknowledges a write before replicas have it. If the primary crashes, a replica is promoted, and any writes it had not received yet are lost. Persistence is optional. **RDB snapshots** write the whole dataset to disk periodically and lose everything since the last snapshot on a crash. The **AOF** (append-only file) logs every write; with the default `appendfsync everysec` it can lose about a second of writes. So Redis is not a system of record by default. For a cache that is fine, because the database has the truth and a lost key is just a miss.
+
+Redis executes commands on a **single thread**, one at a time. That makes each individual command atomic without locks (an `INCR` can never be interleaved with another `INCR` on the same key) and lets one node handle on the order of 100,000 operations per second, more with pipelining. Network I/O can use extra threads in recent versions, but command execution stays single-threaded, so one slow command (`KEYS *` on 50 million keys) blocks everyone.
+
 ## Hot keys in a distributed cache
-One key can overload its node no matter how many nodes you have. Fixes from Hello Interview: a small in-process cache with a short TTL on app servers, multiple copies of the key (`product:123:1` to `:10`) with readers picking one at random, or reading from replicas.
+Partitioning spreads keys, not load. One key can overload its node no matter how many nodes you have. A celebrity's profile or a flash-sale product might get 1 million reads per second; a node handling 100,000 cannot serve it.
 
-! Example: routing a lookup
-! The app needs user:42:profile. With Redis Cluster, the client computes CRC16("user:42:profile") mod 16384, which gives (say) slot 9,301, looks up its cached map (slots 8,192 to 12,287 belong to node C) and sends GET to node C. During a rebalance, node C answers MOVED 9301 to node D; the client refreshes its map and retries on D.
+! Example: spreading a hot key
+! A key `product:123` receives 600,000 reads per second during a sale. One Redis node manages about 100,000.
+! Option A, an in-process cache on each of 300 app servers with a 1 second TTL. Each server sends at most one read per second to Redis for that key, so Redis sees about 300 reads per second. Staleness is at most 1 second.
+! Option B, ten copies `product:123:0` to `product:123:9`, which hash to different nodes. Readers pick a copy at random, so each node sees about 60,000 reads per second. Writers must update or delete all ten copies.
+! Option C, read from replicas. With one primary and five replicas taking reads, each sees about 100,000 per second, right at the limit, so this alone is not enough here.
 
-> Takeaway: distributed caches route each key to one node by hashing, either in the client (consistent hashing, hash slots) or in a proxy. Keep cache nodes simple, invalidate from the database's commit log, and plan for hot keys.
+You also need to **detect** hot keys: Redis has `redis-cli --hotkeys` (with an LFU policy), and many teams sample client requests and count top keys over a sliding window.
 
-?? The client hashes the key and maps the hash to a node. With consistent hashing it finds the first node clockwise on the hash ring; with Redis Cluster it computes CRC16(key) mod 16,384 to get a hash slot and looks up which node owns that slot in its cached map, refreshing the map when a node replies MOVED. Alternatively a proxy such as mcrouter does this hashing on the client's behalf.
+## Common mistakes
+- **Modulo hashing** in the client, so every scaling event wipes the cache.
+- **Clients with different node lists** during a deploy, so the same key is read from one node and written to another.
+- **Multi-key operations across slots** in Redis Cluster, which fail with `CROSSSLOT` errors.
+- **Treating Redis as durable** without understanding that asynchronous replication can lose acknowledged writes.
+- **Assuming more nodes fixes a hot key.** It does not; only copying the key or caching it closer does.
+
+## In an interview
+Say how routing works in one sentence ("the client hashes the key onto a consistent hash ring" or "Redis Cluster's 16,384 slots"), then mention what happens when a node is added or fails, and how you handle hot keys. Asking "what is the read rate on the hottest key?" shows you know partitioning alone is not the whole story.
+
+! Example: routing a lookup end to end
+! The app needs `user:42:profile`. With Redis Cluster, the client computes CRC16("user:42:profile") mod 16384, which gives (say) slot 9,301. Its cached map says slots 8,192 to 12,287 belong to node C, so it sends GET to node C over an existing connection: about 0.5 ms round trip.
+! During a rebalance, node C answers MOVED 9301 to node D. The client refreshes its map, retries on D and gets the value. One request paid an extra round trip; every later request for slot 9,301 goes straight to D.
+
+> Takeaway: distributed caches route each key to one node by hashing it, either in the client (a consistent hash ring), in the cluster (Redis's 16,384 hash slots with MOVED redirects) or in a proxy. Use schemes that move only a small share of keys when nodes change, invalidate from the database's commit log, and plan separately for hot keys.
+
+?? The client hashes the key and maps the hash to a node using a scheme every client shares. With consistent hashing it places the key on a hash ring and picks the first node clockwise, so adding a node moves only about 1/N of keys. With Redis Cluster it computes CRC16(key) mod 16,384 to get a hash slot, looks up which node owns that slot in its cached slot map, sends the request there directly, and refreshes the map when a node replies MOVED. Alternatively a proxy such as mcrouter or Twemproxy does this hashing on the client's behalf, at the cost of an extra hop.
 
 @05.03
 ## When memory is full
-A cache has a fixed amount of memory. When it is full and a new item arrives, something has to go. The eviction policy decides what. A good policy keeps the items most likely to be requested again, which maximises hit rate.
+A cache has a fixed amount of memory. Once it is full and a new item arrives, something has to go. The **eviction policy** decides what. A good policy keeps the items most likely to be requested again soon, which maximises the hit rate. A bad one throws away exactly the items you are about to need, so the cache stays full but rarely helps.
 
-The theoretical best is **Bélády's algorithm**: evict the item that will be needed furthest in the future. It needs to know the future, so it is only a benchmark for comparing real policies.
+Eviction is different from expiry. **Expiry** (lesson 05.04) removes an item because its TTL ran out, regardless of memory. **Eviction** removes a perfectly valid item because there is no room. A healthy cache does some of both; a cache that evicts constantly is too small for its working set.
 
-## Common policies
-- **LRU (least recently used)**: evict the item not touched for the longest time. Works well because recently used items tend to be used again. Weakness: a one-time scan of many items pushes out everything useful.
-- **LFU (least frequently used)**: evict the item used least often. Keeps consistently popular items. Weakness: something popular last week stays forever unless counts decay.
-- **FIFO**: evict the oldest inserted item, ignoring use. Simple; usually worse.
-- **Random**: evict anything. No bookkeeping at all, and surprisingly decent when access is uniform.
-- **Scan-resistant designs**: SLRU puts new items in a probation segment until they are hit again; ARC adapts between recency and frequency; S3-FIFO (2023) uses small FIFO queues to filter out one-hit wonders quickly; CLOCK approximates LRU cheaply.
+### The benchmark nobody can implement
+The theoretical best policy is **Bélády's algorithm** (also called OPT or MIN): evict the item that will next be needed furthest in the future. It is provably optimal, but it needs to know the future, so it exists only as a benchmark. Researchers replay a recorded trace of requests, compute what OPT would have achieved, and compare real policies against it. If LRU gets 85% hits and OPT gets 90% on the same trace and size, there is at most 5 percentage points left to gain.
 
-Wikipedia's survey sums up the trade-off: tracking more about usage improves hit rate but costs memory and time on every access.
+### Why access patterns matter
+Real workloads are **skewed**. A small fraction of keys gets most of the requests, often following a power-law (Zipf) distribution: the most popular key gets twice the requests of the second, three times the third, and so on. That skew is why caching works at all. If 20% of products get 80% of views, caching that 20% captures most of the benefit. Eviction policies are different bets on how to recognise that popular minority.
 
-%%flow LRU evicts the entry unused for longest; LFU evicts the one used least often.
-[LRU] Memory full -(least recently used)-> *Evict key unused for 2 h
-[LFU] Memory full -(least frequently used)-> *Evict key read 3 times ever
+## The common policies
+### LRU (least recently used)
+Evict the item that has not been touched for the longest time. The bet is **recency**: something used a moment ago is likely to be used again soon. The classic implementation is a hash map plus a doubly linked list. The hash map finds the item in O(1); the list keeps items in order of last use. On every access, you unlink the item and move it to the head. To evict, you remove the tail. All operations are O(1).
+
+LRU's weakness is a **scan**: a one-time read of many items (a nightly report reading every product, a crawler walking old pages) pushes all of them to the head of the list and evicts everything that was genuinely popular. After the scan, the cache is full of items nobody will read again.
+
+### LFU (least frequently used)
+Evict the item used least often. The bet is **frequency**: keys that have been popular will stay popular. LFU resists scans, because a single read does not make an item look popular. Its weakness is **history**: an item that was hugely popular last week (yesterday's news story) keeps a big count and stays forever unless counts **decay** over time. LFU also needs a counter per item and a way to find the minimum quickly.
+
+### FIFO and random
+**FIFO** evicts the oldest inserted item, ignoring use. It is cheap (just a queue), but on its own it often evicts popular items simply because they were inserted early. **Random** evicts any item, with no bookkeeping at all. It is surprisingly decent when access is close to uniform, and it never suffers a pathological pattern, but it ignores skew.
+
+### Scan-resistant designs
+Several designs combine recency and frequency so that one-off reads cannot flush the cache:
+- **SLRU (segmented LRU)**: new items enter a small **probation** segment. Only a second hit promotes them into the **protected** segment. A scan only churns the probation segment.
+- **2Q** and **ARC** (adaptive replacement cache): keep separate lists for items seen once and items seen more than once, and in ARC's case adjust the size of each list automatically based on which one is producing hits.
+- **TinyLFU** (used in Java's Caffeine library): a compact frequency sketch decides whether a new item is worth admitting at all, by comparing its estimated frequency with that of the eviction victim.
+- **S3-FIFO** (2023): a small FIFO queue (about 10% of space) catches new items; items hit while there move to a main FIFO, the rest are dropped quickly. It exploits the fact that most items in real caches are **one-hit wonders**, requested once and never again.
+- **CLOCK**: approximates LRU cheaply. Items sit in a circular buffer with a "referenced" bit. A pointer sweeps round; items with the bit set get a second chance (the bit is cleared), items without it are evicted. Operating systems use CLOCK variants for page replacement.
+
+%%matrix Eviction policies compared. More bookkeeping usually buys better resistance to awkward access patterns.
+Policy | Cost per access | Scan resistant | Adapts to change | Typical use
+LRU | partial, list move | no | yes | general default
+LFU | partial, counter | yes | no, unless decayed | stable popularity
+FIFO | yes, almost free | no | partial | simple buffers
+Random | yes, free | partial | yes | uniform access
+SLRU / 2Q | partial | yes | yes | databases, CDNs
+ARC / TinyLFU | partial | yes | yes | Caffeine, ZFS
+CLOCK | yes, set one bit | no | yes | OS page cache
 %%
 
+The trade-off is always the same: tracking more about usage improves the hit rate but costs memory and CPU on every access. On a cache handling a million reads per second, an extra 100 nanoseconds per access is a tenth of a CPU core.
+
+%%widget lru A tiny cache. Request keys, switch policy, and try a one-off scan to see which policy keeps the popular keys.
+%%
+
+! Example: LRU versus a scan, traced
+! A cache holds 4 items. The workload repeatedly reads A, B, A, C, A, B (so A and B are hot). Under LRU the cache holds A, B, C plus one slot, and hits almost every time.
+! Now a batch job reads W, X, Y, Z once each. Under LRU each new item goes to the head and the tail is evicted: after the scan the cache holds W, X, Y, Z. The next reads of A and B both miss, and so do the next reads of C.
+! Under SLRU with a probation segment of 2 and protected segment of 2, A and B were hit twice, so they sit in the protected segment. The scan items only cycle through probation (W and X are pushed out by Y and Z). After the scan, A and B still hit.
+
 ## Redis's options
-Redis evicts only when memory use passes `maxmemory`. The `maxmemory-policy` choices:
+Redis evicts only when memory use passes the `maxmemory` setting. What it evicts depends on `maxmemory-policy`:
+
 | Policy | Evicts |
-| noeviction | Nothing; writes fail with an error |
+| noeviction | Nothing; writes that need memory fail with an OOM error |
 | allkeys-lru | Least recently used among all keys |
 | allkeys-lfu | Least frequently used among all keys |
 | allkeys-random | Random keys |
-| volatile-lru / -lfu / -random | Same, but only among keys with a TTL |
-| volatile-ttl | Keys closest to expiring |
-| allkeys-lrm / volatile-lrm | Least recently modified (Redis 8.6+) |
+| volatile-lru / volatile-lfu / volatile-random | Same, but only among keys that have a TTL |
+| volatile-ttl | Keys with the shortest remaining TTL |
+| allkeys-lrm / volatile-lrm | Least recently modified, counting writes only (Redis 8.6 and later) |
 
-Redis's advice: `allkeys-lru` is a good default when some keys are much more popular than others. `allkeys-random` suits uniform access. The `volatile-*` policies are for an instance that mixes cache keys with keys that must never be evicted (better: use two instances). Note that the default policy is `noeviction`, and replication and AOF buffers are not counted against `maxmemory`, so leave headroom.
+`allkeys-lru` is a good default when some keys are much more popular than others, which is nearly always. `allkeys-lfu` suits workloads with stable popularity and periodic scans. `allkeys-random` suits uniform access. The `volatile-*` policies are for an instance that mixes cache keys (with TTLs) and keys that must never be evicted (without TTLs). That works, but two separate instances are safer: one misconfigured TTL and your "permanent" data is gone.
 
-Check the hit ratio with `INFO stats`: low hits plus many evictions means the wrong keys are being evicted; low hits plus many expirations means TTLs are too short.
+Two traps. First, the default policy is **noeviction**, so a Redis used as a cache with no policy set will start rejecting writes when full. Second, replication output buffers and AOF buffers are not counted against `maxmemory`, so set it to perhaps 70 to 80% of the machine's RAM to leave headroom, or the operating system's out-of-memory killer may kill Redis instead.
 
-%%flow Redis's approximate LRU: sample a few keys and evict the oldest among them, instead of keeping a full LRU list.
-Need memory -(sample 5 keys)-> Compare idle times -> *Evict the most idle
-%%
+### Reading the signs
+`INFO stats` reports `keyspace_hits`, `keyspace_misses`, `evicted_keys` and `expired_keys`. Low hit rate plus many evictions means the cache is too small or the wrong keys are being evicted. Low hit rate plus many expirations means TTLs are too short. A high hit rate with a big eviction count can be fine: you are evicting the cold tail, as intended.
 
 ## Why Redis approximates LRU
-Exact LRU needs every key in an ordered list, updated on every access: two extra pointers per key and list manipulation on every read. With hundreds of millions of keys, that is a lot of memory and work.
+Exact LRU needs every key in one ordered list, updated on every access. In Redis that would mean two extra 8-byte pointers per key (16 bytes) plus list manipulation on every read. With 200 million keys, that is about 3.2 GB of pointers alone, and every `GET` would have to touch shared list structure, adding CPU work and cache-line misses on Redis's single command thread.
 
-Redis instead stores a small "last access" clock in each key and, when it needs to evict, **samples** a few random keys (5 by default, `maxmemory-samples`) and evicts the oldest of them. Since Redis 3.0 it also keeps a pool of good candidates across rounds. With 10 samples the result is very close to true LRU. Redis's simulations show little or no difference for real-world, power-law access patterns, where the cold keys are obvious.
+Instead, Redis stores a 24-bit **last access clock** inside each key's object header (space it already had), and approximates:
+1. When memory is needed, it picks a few random keys (`maxmemory-samples`, 5 by default).
+2. It computes each one's **idle time** (now minus last access).
+3. It adds good candidates to a small **eviction pool** of 16 entries that persists across rounds, sorted by idle time.
+4. It evicts the key in the pool with the largest idle time.
 
-LFU uses the same sampling, with a tiny probabilistic counter (a Morris counter, range 0 to 255) per key. It increments less often as it grows, so a few bits can represent millions of hits, and it **decays** over time (by default every minute) so formerly popular keys can fall out.
+The pool (added in Redis 3.0) is what makes this work well: over several rounds, the pool accumulates genuinely old keys, so each eviction picks from the best candidates seen recently rather than just the best of 5.
 
-! Example: picking a policy
-! A session store must never lose a session before it expires: use a separate Redis instance with noeviction and enough memory, and alert as memory nears the limit. A product-page cache where a few thousand products get most traffic: allkeys-lru. A cache hit by a nightly batch job that reads every product once: consider allkeys-lfu so the scan does not flush the popular items.
-
-> Takeaway: LRU is the default, LFU protects consistently popular items, and scan-resistant policies stop one-time reads flushing the cache. Redis samples keys to approximate LRU because exact LRU costs memory and CPU on every access.
-
-?? Exact LRU needs every key linked into an ordered list that is updated on each access, which costs extra memory per key and work on every read. Redis instead keeps a small access timestamp per key and, when evicting, samples a few random keys (5 by default) and evicts the oldest, keeping a pool of candidates. For real workloads this is almost as good as true LRU at a fraction of the cost.
-
-@05.04
-## TTLs
-A TTL (time to live) gives a key an expiry. In Redis, `EXPIRE key seconds` sets one; the key becomes "volatile" and is deleted once the time passes. TTLs bound how stale cached data can get, and they let temporary data (sessions, rate-limit windows, one-time codes) clean itself up.
-
-Details from the Redis docs:
-- Options: `NX` (only if no expiry yet), `XX` (only if one exists), `GT` / `LT` (only if the new expiry is later / earlier).
-- Overwriting the key with `SET` clears the TTL. Modifying it in place (`INCR`, `LPUSH`, `HSET`) keeps it. `PERSIST` removes it. `RENAME` carries the TTL to the new name.
-- A zero or negative expiry deletes the key immediately.
-- `TTL key` returns the seconds left, or −1 if there is no expiry.
-
-A classic bug: a rate limiter does `INCR` then `EXPIRE`, but a crash between them leaves a counter that never resets. Wrap both in a Lua script or use `SET key 0 EX 60 NX` first.
-
-%%flow A key's TTL: set with the value, counts down, and the key disappears after it.
-SET key EX 60 -> TTL 60 s -> TTL 1 s -> *Expired
+%%flow Redis's approximate LRU: sample a few keys, keep the best candidates in a pool, evict the most idle.
+Memory over limit -(sample 5 random keys)-> Compute idle times -(merge)-> Pool of 16 candidates -> *Evict most idle
 %%
 
+How good is it? With 10 samples the result is very close to true LRU. For the power-law access patterns of real workloads, where the cold keys are obviously cold, the difference in hit rate is little or none. The approximation only looks worse on uniform or adversarial patterns, where no LRU policy does well anyway. You can raise `maxmemory-samples` to 10 for slightly better accuracy at slightly higher CPU cost.
+
+! Example: what the sampling costs and saves
+! A Redis node holds 100 million keys and evicts 20,000 keys per second under memory pressure.
+! Exact LRU: 100 million × 16 bytes = 1.6 GB of list pointers, plus a list update on every one of perhaps 300,000 reads per second.
+! Sampling with 5 keys: zero extra memory per key (the clock fits in existing bits), and 20,000 × 5 = 100,000 random lookups per second only while evicting, with no work at all on reads beyond writing a timestamp. The hit rate difference on a skewed workload is typically under one percentage point.
+
+### LFU in Redis
+Redis's LFU uses the same sampling and pool but replaces the 24-bit clock with two fields: an 8-bit **logarithmic counter** (a Morris counter, range 0 to 255) and a 16-bit last-decrement time. The counter increments **probabilistically**: the higher it already is, the less likely an access is to bump it. With the default `lfu-log-factor` of 10, a counter of 255 represents around a million hits. So 8 bits can tell apart keys with 100, 100,000 and 1,000,000 accesses.
+
+The counter also **decays**: by default (`lfu-decay-time 1`) it drops by one for every minute the key goes untouched. That solves LFU's "popular last week" problem. New keys start at 5, not 0, so they are not evicted before they have had a chance to be read twice.
+
+%%bars Rough number of accesses needed to reach each LFU counter value with the default log factor of 10. The counter grows logarithmically, so 8 bits cover millions of hits.
+Counter 10 | 100 | ~100 hits
+Counter 18 | 1000 | ~1K hits
+Counter 142 | 100000 | ~100K hits
+*Counter 255 | 1000000 | ~1M hits
+%%
+
+## Picking a policy
+! Example: three caches, three policies
+! A session store must never lose a session before it expires. Use a separate Redis instance with `noeviction`, enough memory for peak sessions (say 5 million sessions × 1 KB = 5 GB, provisioned at 8 GB) and an alert at 70% memory.
+! A product-page cache where a few thousand products get most traffic: `allkeys-lru`, sized for the hot set plus margin.
+! A cache that a nightly batch job sweeps by reading every product once: `allkeys-lfu`, so the scan's one-off reads have low counts and are evicted first, leaving the popular products in place.
+
+## Common mistakes
+- **Leaving `noeviction`** on a cache and getting OOM errors on writes at peak.
+- **Setting `maxmemory` to all of RAM**, forgetting buffers and fragmentation.
+- **Mixing permanent and cache data** in one instance with a `volatile-*` policy.
+- **Blaming eviction for a low hit rate** that is really caused by short TTLs or poor key design.
+- **Scans through the cache.** Batch jobs should read the database directly, or the cache should use a scan-resistant policy.
+
+## In an interview
+Say "LRU plus a TTL" as the default, then show depth: mention scan resistance (LFU or a segmented policy) if there are batch reads, and explain that Redis approximates LRU by sampling because exact LRU costs memory and CPU per access. Ask how skewed the access pattern is, because skew decides how small the cache can be.
+
+> Takeaway: LRU is the default, LFU protects consistently popular items, and scan-resistant policies stop one-time reads flushing the cache. Redis approximates LRU by sampling a few keys and keeping a pool of candidates, because exact LRU would cost extra memory per key and work on every access for almost no gain in hit rate.
+
+?? Exact LRU needs every key linked into one ordered list that is updated on every access, which costs about 16 bytes of pointers per key (gigabytes across hundreds of millions of keys) and extra work on every read on Redis's single command thread. Redis instead keeps a small last-access clock in each key's existing header and, when it must evict, samples a few random keys (5 by default), keeps the most idle ones in a 16-entry candidate pool, and evicts the oldest. For real, skewed workloads this is almost as good as true LRU at a fraction of the memory and CPU cost.
+
+@05.04
+## What a TTL is for
+A **TTL** (time to live) gives a key an expiry time. After that moment the key is treated as gone. In Redis, `EXPIRE key 60` sets a 60 second TTL, `SET key value EX 60` sets the value and TTL in one atomic command, and `PEXPIRE` / `PX` do the same in milliseconds. A key with a TTL is called **volatile**; a key without one is **persistent**.
+
+TTLs do two different jobs:
+- **Bound staleness.** If invalidation fails (lesson 05.01), the TTL is the upper limit on how long a wrong value can survive. A product cached for 10 minutes is at most 10 minutes out of date, whatever else goes wrong.
+- **Clean up temporary data.** Sessions, rate-limit windows, one-time codes, idempotency keys and distributed lock leases (06.08) should all disappear on their own. A TTL means you never need a cleanup job for them.
+
+### The rules in Redis
+TTL behaviour has sharp edges that cause real bugs:
+- `EXPIRE` takes options: `NX` (only set if the key has no expiry yet), `XX` (only if it has one), `GT` and `LT` (only if the new expiry is later, or earlier, than the current one).
+- **Overwriting** a key with `SET` (without `KEEPTTL`) clears the TTL. A cache refresh that does a plain `SET` makes the key permanent by accident.
+- **Modifying in place** (`INCR`, `LPUSH`, `HSET`, `APPEND`) keeps the existing TTL.
+- `PERSIST` removes a TTL. `RENAME` carries the TTL over to the new name.
+- An expiry of zero or in the past deletes the key immediately.
+- `TTL key` returns the seconds left, -1 if the key exists with no expiry, and -2 if the key does not exist.
+- Expiry times are stored as **absolute Unix timestamps** in milliseconds, so they keep counting while Redis is stopped. A key with 1 hour left that is loaded from a snapshot 2 hours later is already expired.
+
+%%state The life of a cache key with a TTL. Expired keys are invisible at once but deleted a little later.
+[*] -> Persistent
+[*] -> Volatile : SET k v EX 60
+Persistent -> Volatile : EXPIRE k 60
+Volatile -> Persistent : PERSIST or plain SET
+Volatile -> Volatile : INCR keeps TTL
+Volatile -> *Logically expired : time passes 60 s
+Logically expired -> Deleted : read finds it or sampler hits it
+%%
+
+! Example: the rate limiter that never resets
+! A rate limiter allows 100 requests per minute per user. The code runs `INCR rl:user42` and then, if the result is 1, `EXPIRE rl:user42 60`.
+! The app server crashes (or the network drops) between the two commands. The counter now exists with no TTL. It keeps climbing and never resets, so after 100 more requests user 42 is blocked forever.
+! Fixes: run both commands in one Lua script or `MULTI/EXEC` transaction so they are atomic; or create the key first with `SET rl:user42 0 EX 60 NX` and then `INCR` it. Either way, the key can never exist without its TTL.
+
 ## Why expired keys are not deleted instantly
-Deleting each key at its exact expiry moment would need a timer per key, or a fully sorted structure of expiry times maintained on every write. With millions of keys expiring every second, that is a lot of memory and CPU, and Redis's single command thread would spend its time on timers instead of serving requests.
+Here is the obvious design: when a key's TTL reaches zero, delete it right then. Redis deliberately does not do this, and the reason is cost.
 
-Instead Redis combines two cheap mechanisms (this part is general Redis knowledge; the EXPIRE page does not cover it):
-- **Passive (lazy) expiry**: whenever a key is accessed, Redis checks its expiry. If it has passed, Redis deletes it and acts as if it never existed. So clients never see an expired key.
-- **Active expiry**: about 10 times a second, Redis samples a small batch of keys that have TTLs (around 20), deletes the expired ones, and repeats immediately if more than about 25% of the sample was expired. This keeps memory from filling with expired keys nobody reads, while bounding CPU per cycle.
+To delete every key at its exact expiry moment you would need either a **timer per key** or a **sorted index** of all expiry times that you watch continuously. Consider the numbers. A large Redis node can hold 100 million volatile keys, and under a workload of sessions and cache entries, tens of thousands might expire every second. A timer per key means 100 million timer objects in memory. A sorted structure (a heap or skip list ordered by expiry time) costs about O(log n) work on every write that sets a TTL, plus pointers per key, and still needs something to wake up at exactly the right moments.
 
-The result: expired keys are invisible right away, but their memory may be reclaimed a little later. In the worst case, a modest fraction of memory holds expired keys awaiting cleanup.
+Worse, Redis runs commands on **one thread**. Every microsecond that thread spends firing timers is a microsecond it is not serving requests. If 50,000 keys happened to share an expiry second (because they were all written together after a deploy), an exact-deletion design would have to delete all 50,000 at once, stalling every client.
 
-%%flow Redis removes expired keys two ways: lazily on access, and by an active background sampler.
-[Passive] Client reads key -(found expired)-> *Delete now, return nil
-[Active] Background cycle -(sample keys with TTL)-> *Delete expired; repeat if many found
+So Redis splits the problem in two: make expired keys **invisible** immediately (cheap and exact), and **reclaim their memory** a little later (cheap but approximate). Two mechanisms do this.
+
+### Passive (lazy) expiry
+Whenever a command accesses a key, Redis first checks its expiry timestamp. If it has passed, Redis deletes the key there and then and behaves as if it never existed. A `GET` returns nil, an `EXISTS` returns 0. The check is a single comparison of two integers, so it costs almost nothing.
+
+This guarantees **correctness**: no client ever sees an expired value. But it does nothing for keys nobody reads again. A million expired sessions from users who never come back would sit in memory forever.
+
+### Active expiry (the sampler)
+To catch the keys nobody reads, Redis runs a background **expire cycle** as part of its periodic housekeeping, which runs `hz` times a second (10 by default). Each cycle works roughly like this:
+1. Pick a small batch of keys from the set of keys that have TTLs (about 20 per database per loop).
+2. Delete every one of them that has expired.
+3. If a large share of the sample was expired (historically more than 25%; newer versions tune this with an `active-expire-effort` setting), assume there are many more and repeat immediately.
+4. Stop when the expired share drops, or when the cycle's time budget (a fraction of CPU, around 25% at most) is used up, and resume next tick.
+
+Redis also runs a short "fast" cycle (around 1 ms) before it goes back to waiting for network events, so expired keys are reclaimed promptly between bursts of requests.
+
+The sampling is a statistical argument. If 20 random volatile keys contain only 2 expired ones, then roughly 10% of all volatile keys are expired, and it is not worth spending more CPU right now. If they contain 15, then most volatile keys are probably expired and Redis should keep going.
+
+%%flow Redis removes expired keys two ways: lazily when a command touches the key, and by a background sampler that adapts to how many it finds.
+[Passive] Client reads key -(expiry passed)-> *Delete now, return nil
+[Active] Every 100 ms -(sample ~20 keys with TTL)-> Delete expired ones -(many expired?)-> *Repeat, within CPU budget
+%%
+
+### What you get
+Expired keys are invisible immediately, but their memory may be reclaimed a little later. In steady state the share of memory held by expired-but-not-yet-deleted keys stays small (roughly the threshold the sampler aims for). Under a sudden mass expiry, it can briefly be higher.
+
+! Example: watching the sampler work
+! A node has 10 million volatile keys. At 12:00:00, 4 million of them expire together (they were all written with the same TTL an hour earlier).
+! The first cycle samples 20 keys and finds about 8 expired (40%), above the threshold, so it repeats. It keeps finding around 40% and keeps looping until it hits its CPU budget for that tick.
+! Each tick can delete on the order of tens of thousands of keys without stalling clients for long. Over the next tens of seconds, the expired share falls, the samples start coming back mostly unexpired, and the cycle relaxes to its normal light load.
+! Meanwhile any client reading one of those 4 million keys gets nil immediately, thanks to passive expiry. Nobody ever sees stale data; the only cost is memory being freed over seconds rather than instantly. This is also a good argument for TTL jitter: spreading those 4 million expiries over 10 minutes avoids the burst entirely.
+
+%%timeline One volatile key from creation to reclaimed memory. Correctness is instant; cleanup is lazy.
+11:00:00 | SET session:9 EX 3600, expiry stored as absolute time
+11:59:59 | GET returns the value as normal
+12:00:00 | *Key is logically expired; any read now returns nil
+12:00:03 | Active sampler happens to pick it, deletes it, frees memory
+12:00:03 | Primary sends DEL session:9 to replicas and AOF
 %%
 
 ## Expiry and replication
-Replicas do not expire keys on their own timers. The primary generates an explicit `DEL` when it expires a key and sends that to replicas and the append-only file, so all copies agree. (Replicas still hide logically expired keys from reads.)
+Replicas do not expire keys on their own timers. When the primary expires a key (passively or actively), it generates an explicit `DEL` and sends it down the replication stream and into the append-only file. That way every copy agrees about exactly when a key disappeared, even if clocks differ slightly between machines.
 
-## "Cache reapers" in general
-The same design shows up everywhere: rather than precise timers, systems mark entries with an expiry, check on read, and run a periodic background sweeper. Memcached reclaims expired items lazily and through a background crawler; Facebook's memcache added a "transient item cache" to proactively evict short-lived keys, cutting one key family's share of memory from 6% to 0.3%. Databases do the same with TTL columns and cleanup jobs (Cassandra tombstones, DynamoDB TTL deletes within days, not instantly).
+Before that `DEL` arrives, a replica still holds the key, but it checks the expiry on reads and hides logically expired keys from clients. So reads from replicas also never return expired values (in modern versions).
+
+## Cache reapers in general
+The same design shows up everywhere: rather than precise timers, systems **mark** entries with an expiry, **check on read**, and run a periodic **background sweeper**, sometimes called a reaper.
+- **Memcached** reclaims expired items lazily when it encounters them, and runs an LRU crawler thread in the background that walks item lists and frees expired ones.
+- **Facebook's memcache** found that short-lived keys were wasting memory while waiting to be lazily reclaimed. They added a **transient item cache**: a linked list of keys indexed by expiry second, swept every second. It cut one key family's share of memory from 6% to 0.3%.
+- **Databases** do the same with TTL columns. **Cassandra** writes a tombstone when a TTL expires and removes the data during compaction, after a grace period. **DynamoDB's TTL** deletes expired items in the background, typically within a few days, not instantly, so queries must still filter on the expiry attribute.
+- **Operating systems and runtimes** use **timer wheels**: an array of buckets, one per tick, where each timer is dropped into the bucket for its expiry tick. Adding a timer is O(1), and each tick only looks at one bucket. This is how Kafka, Netty and the Linux kernel handle huge numbers of timeouts cheaply.
+
+%%compare Two ways to expire data. Exact timers are precise but costly at scale; lazy checks plus sampling are cheap and still never show expired data.
+[Exact timers]
+Write key -(insert into sorted index)-> Timer fires -> Delete at exact time
++ Memory freed immediately
+- Per-key memory and O(log n) work per write
+- Bursts of expiries stall the server
+[*Lazy plus sampling]
+Write key -(store timestamp)-> Read checks it -> Sampler sweeps the rest
++ Almost free per key
++ Work per cycle is bounded
+- Memory freed a little late
+%%
 
 ## Choosing TTLs
-- Match TTL to how stale the data can be and how often it changes. Prices: short. Country lists: long.
-- Add **jitter** to TTLs (for example 600 s ± 10%) so keys written together do not all expire together and cause a stampede (05.05).
-- Use soft and hard TTLs (05.01) when serving slightly old data beats failing.
+- **Match the TTL to how stale the data may be** and how often it changes. Prices or stock levels: seconds to a minute. A user's profile: minutes. A country list: a day.
+- **Add jitter.** Use, for example, 600 seconds plus or minus 10% so keys written together do not expire together and cause a stampede (05.05).
+- **Use soft and hard TTLs** (05.01) when serving slightly old data beats failing: refresh after the soft TTL, give up only after the hard TTL.
+- **Do not rely on exact expiry timing** for business logic. A key's memory may linger, and in databases like DynamoDB the item may be readable for days. If something must stop at an exact moment, store the deadline and check it.
 
-! Example: one-time login codes
-! SET login_code:{user} 482913 EX 300 NX stores a code for 5 minutes, and NX stops a second request from overwriting an existing code. Verification does GETDEL so a code works only once. If the user never uses it, passive expiry hides it after 5 minutes and active expiry reclaims the memory soon after.
+## Common mistakes
+- **Plain `SET` on refresh** wipes the TTL and makes the key permanent. Use `SET ... EX` or `KEEPTTL`.
+- **Separate `INCR` and `EXPIRE`** calls that can be split by a crash.
+- **Identical TTLs** for keys written in a batch, causing synchronised expiry.
+- **Expecting memory to drop the instant keys expire** and alerting on it.
 
-> Takeaway: TTLs bound staleness and clean up temporary data. Redis expires keys lazily on access plus by periodic random sampling, which is cheap; expired keys are never returned but their memory is freed a little later.
+## In an interview
+If asked about expiry, say "Redis expires lazily on access plus by random sampling, so expired keys are never returned but memory is reclaimed a little later". Then connect TTLs to staleness bounds and stampede prevention.
 
-?? Deleting each key exactly at expiry would need a timer or sorted index over millions of keys, costing memory and CPU on Redis's single command thread. Instead Redis deletes expired keys lazily when they are accessed, so clients never see them, and a background task samples volatile keys about 10 times a second to clean up the rest. Memory is reclaimed slightly late, but the work stays bounded.
+> Takeaway: TTLs bound staleness and clean up temporary data. Redis makes expired keys invisible immediately by checking on every access, and reclaims their memory with a background sampler that adapts to how many expired keys it finds, which keeps the work cheap and bounded.
+
+?? Deleting each key exactly at its expiry would need a timer per key or a continuously maintained sorted index over millions of keys, costing memory per key, work on every write and bursts of deletion work that would stall Redis's single command thread. Instead Redis deletes expired keys lazily when a command touches them, so clients never see them, and runs an active cycle about 10 times a second that samples around 20 volatile keys, deletes the expired ones and repeats while many are expired, within a CPU budget. Memory is reclaimed slightly late, but the work stays small and bounded.
 
 @05.05
 ## The stampede
-A cache stampede (thundering herd) happens when a popular key expires or is invalidated, and every request for it misses at the same moment. If the key is read 10,000 times a second and rebuilding it takes 200 ms, about 2,000 requests hit the database for the same value before the first one repopulates the cache. Each makes the database slower, which makes rebuilding slower, which lets more requests through.
+A **cache stampede** (also called a **thundering herd** or **dog-piling**) happens when a popular key expires or is invalidated, and every request for it misses at the same moment. Each of those requests then does the same expensive thing: query the database and recompute the value.
 
-Facebook's memcache paper describes this as the "thundering herd" problem, caused by keys that are both hot and frequently invalidated.
+The numbers explain why this is dangerous. Suppose a key is read 10,000 times a second and rebuilding it takes 200 ms. In the 200 ms between the first miss and the first successful refill, about 10,000 × 0.2 = **2,000 requests** miss and all go to the database for the same value. And it gets worse, because the load is self-reinforcing:
+1. 2,000 identical queries make the database slower.
+2. A slower database makes each rebuild take longer, say 2 seconds instead of 200 ms.
+3. A longer rebuild window lets more requests through: now 20,000.
+4. Those time out, clients retry, and the database falls over.
 
-%%flow The stampede: a hot key expires and thousands of requests miss at once, all hitting the database.
-Hot key expires -> 5,000 requests miss -(all recompute)-> *Database overloaded
+The problem needs keys that are both **hot** (many readers) and **expensive** to rebuild, and it is worst for keys that are **frequently invalidated**, because each invalidation opens a new window. Facebook's memcache deployment hit exactly this with keys that were both very popular and updated often.
+
+%%timeline A stampede on one hot key: in the gap between expiry and refill, thousands of identical rebuilds pile onto the database.
+0 ms | Hot key expires (read 10,000 times a second)
+1 ms | First request misses, starts a 200 ms rebuild
+50 ms | 500 more requests have missed, all querying the database
+200 ms | *2,000 identical queries in flight; database latency climbs
+600 ms | Rebuilds now take 2 s; misses keep arriving
+2 s | Requests time out and retry; database overloaded
 %%
 
-## Fix 1: leases (one rebuilder)
-Facebook's solution is the **lease**:
-- On a miss, memcache gives the client a lease token (a 64-bit number) for that key.
-- Only a client holding the lease may write the value back.
-- Memcache hands out a lease for a given key at most once every 10 seconds. Other clients that miss during that window are told to wait briefly and retry, by which time the value is usually back.
+There are two families of fixes, and you normally use one from each. **Make only one request rebuild** the value while the others wait or get a stale copy. Or **never let the key go missing** under load, by refreshing it before it expires. On top of both, avoid synchronised expiry and protect the database anyway.
 
-The result in the paper: peak database queries for one hot key dropped from 17,000 per second to 1,300.
+## Fix 1: leases (one rebuilder, enforced by the cache)
+Facebook's solution is the **lease**, built into its memcache servers:
+- On a miss, memcache gives the client a **lease token**, a 64-bit number bound to that key.
+- Only a client holding the current lease may write the value back. A `set` without a valid token is rejected.
+- Memcache hands out a lease for a given key **at most once every 10 seconds**. Other clients that miss during that window get a special reply telling them to wait briefly and retry. A few milliseconds later the value is usually back, and they get a hit.
 
-Leases also fix **stale sets**. If the key is deleted (because the database changed) while a client holds a lease, the lease is invalidated, and that client's late write of the now-outdated value is rejected. Without this, a slow reader could put stale data into the cache indefinitely (the race in 05.01).
+The effect at Facebook: peak database queries for one hot, frequently invalidated key dropped from **17,000 per second to 1,300**.
 
-Facebook also lets clients accept **slightly stale values**: a recently deleted value is kept briefly, and clients that can tolerate it get that value immediately instead of waiting.
-
-%%seq Memcache leases (Facebook): only the lease holder rebuilds; others wait briefly or take a slightly stale value.
-App A > Memcache : get k (miss)
-Memcache -> App A : miss + lease token
-App B > Memcache : get k (miss)
-Memcache -> App B : wait and retry
-App A > Database : recompute
-App A > Memcache : set k with token
-App B > Memcache : get k (hit)
+%%seq Memcache leases: only the lease holder rebuilds; other missing clients are told to wait and retry.
+App A > Memcache : get k
+Memcache -> App A : miss + lease token 7
+App B > Memcache : get k
+Memcache -> App B : miss, wait and retry
+App A > Database : recompute k
+App A > Memcache : set k with token 7
+App B > Memcache : get k
+Memcache -> App B : hit
 %%
 
-## Fix 2: request coalescing
-The same "only one rebuild" idea inside your own service: when many requests miss on the same key in one process, only one fetches from the database and the others wait for its result ("single flight"). AWS's caching article recommends it, and proxies like NGINX and Varnish support it. It does not coordinate across servers, but it cuts the herd from "every request" to "one per server".
+### Leases also fix stale sets
+Leases solve a second problem at no extra cost. Recall the race in lesson 05.01: a slow reader reads an old value from the database, a writer updates the database and deletes the key, then the slow reader writes its old value into the cache, where it stays until the TTL.
 
-A distributed lock in Redis (`SET rebuild:key token NX EX 5`) can extend this across servers: the lock winner rebuilds, others serve stale data or wait and retry.
+With leases, the writer's delete **invalidates the outstanding lease**. When the slow reader finally tries to set the old value with its token, memcache rejects it because the token is no longer valid. The stale value never enters the cache.
+
+### Accepting slightly stale values
+Facebook added one more refinement. When a key is deleted, memcache keeps the old value briefly in a separate area. A client that misses and is told to wait can instead choose to take that **slightly stale** value immediately, if its use case tolerates it (a like count, say, but not a privacy setting). This turns waiting into a fast, slightly old answer.
+
+## Fix 2: request coalescing (one rebuilder per process)
+The same "only one rebuild" idea works inside your own service without any cache support. When many requests in one process miss on the same key at the same time, only the first actually fetches from the database; the others **wait on its result** and share it. This is often called **single flight** (Go's `singleflight` package is the standard example) or **request collapsing**. Proxies such as NGINX (`proxy_cache_lock`) and Varnish do it for HTTP.
+
+```
+inflight = {}   # key -> future
+def get(key):
+    v = cache.get(key)
+    if v is not None: return v
+    if key in inflight: return inflight[key].wait()
+    f = inflight[key] = Future()
+    try:
+        v = db.load(key); cache.set(key, v, ttl=jitter(600)); f.resolve(v)
+    finally:
+        del inflight[key]
+    return v
+```
+
+Coalescing does not coordinate across servers, but it shrinks the herd from "every request" to "one per server". With 100 app servers, that is at most 100 concurrent rebuilds instead of 2,000.
+
+### Extending it across servers with a lock
+A distributed lock in Redis extends this to the whole fleet. On a miss, a server runs `SET rebuild:k <random token> NX EX 5`. The one server that succeeds rebuilds the value, writes it, then releases the lock (checking the token first, as lesson 06.08 explains). Servers that fail to get the lock either sleep 50 ms and re-read the cache, or serve a stale copy kept under a separate key. The `EX 5` matters: if the rebuilder crashes, the lock frees itself after 5 seconds.
+
+! Example: sizing the herd with and without coalescing
+! A key is read 10,000 times a second across 50 app servers (200 per server per second). Rebuild takes 200 ms.
+! No protection: about 2,000 database queries for one value, then the slowdown spiral.
+! Per-process coalescing: each of the 50 servers sends one query; 50 concurrent queries. The database barely notices.
+! Distributed lock: one query in total. The other 49 servers wait or serve stale for 200 ms. That saves 49 queries but adds a Redis round trip to every miss and a dependency on the lock, so for this load, coalescing alone is probably enough.
 
 ## Fix 3: refresh before expiry
-- **Probabilistic early expiration (XFetch)**: the paper "Optimal Probabilistic Cache Stampede Prevention" (Vattani, Chierichetti and Lowenstein, 2015) has each reader randomly decide to refresh the value a little before it expires. The chance rises as expiry nears and is higher for values that take longer to compute. The rule: refresh if `now − delta × beta × ln(rand()) ≥ expiry`, where delta is the recompute time and beta (default 1) tunes eagerness. With many readers, typically one refreshes early and the rest keep hitting the cache.
-- **Background refresh**: a job recomputes known-hot keys on a schedule, so they never expire under load.
-- **Soft TTL**: serve the existing value while one request refreshes it.
+The other family prevents the miss in the first place.
 
-%%flow XFetch: each reader may refresh early; the chance rises as expiry nears and with longer recompute times.
-Read value -(now - delta x beta x ln(rand) >= expiry?)-> *Yes: recompute early -(no)-> Serve cached
+### Probabilistic early expiration (XFetch)
+Each reader, on a cache hit, rolls a die to decide whether to refresh the value **a little early**. The chance rises as the expiry approaches, and is higher for values that are slow to compute. The rule:
+
+`refresh if now - delta × beta × ln(rand()) >= expiry`
+
+Here `delta` is how long the last recompute took, `beta` (default 1) tunes eagerness, and `rand()` is uniform in (0, 1]. Because `ln(rand())` is negative, `-delta × beta × ln(rand())` is a positive random "head start", usually small but occasionally large. Far from expiry, almost no head start is large enough. Close to expiry, a few readers' head starts push them over, and they refresh.
+
+With many readers, typically **one** refreshes a bit before expiry and everyone else keeps hitting the cache. No locks, no coordination. The algorithm needs `delta` and `expiry` stored alongside the value.
+
+%%flow XFetch: on each hit, a reader may refresh early; the chance rises as expiry nears and with longer recompute times.
+Cache hit -(now - delta x beta x ln(rand) >= expiry?)-> *Yes: recompute early and reset TTL
+Cache hit -(no)-> Serve cached value
+%%
+
+! Example: XFetch in numbers
+! A value takes delta = 0.5 s to compute and expires at t = 60 s. beta = 1. A reader at t = 59 s refreshes if -0.5 × ln(rand()) >= 1, which means ln(rand()) <= -2, so rand() <= e^-2 ≈ 0.135. So about 13.5% of readers at t = 59 s would refresh.
+! At t = 55 s the reader needs -0.5 × ln(rand()) >= 5, so rand() <= e^-10 ≈ 0.000045. With 1,000 reads a second, that is about one early refresh every 20 seconds. In practice the first reader to win the roll, somewhere around 56 to 57 s, refreshes, and the key never expires. (Add a small lock or coalescing so two simultaneous winners do not both recompute.)
+
+### Background refresh
+For a small, known set of hot keys (the homepage, top-100 lists, configuration), a scheduled job recomputes them every N seconds and writes them with a TTL longer than N. They never expire under normal operation. The job is the only rebuilder, so there is no herd.
+
+### Soft TTL (stale-while-revalidate)
+Store the value with a **soft** expiry inside it and a longer **hard** TTL on the key. A reader that finds the soft expiry passed returns the existing value immediately and triggers one asynchronous refresh (guarded by coalescing or a lock). HTTP has the same idea built in: `Cache-Control: max-age=60, stale-while-revalidate=30`.
+
+%%compare The two families of stampede fixes. In practice you combine one of each, plus jitter.
+[One rebuilder]
+Miss -(lease, lock or single flight)-> One query -> Others wait or take stale
++ Works for any key, including invalidations
++ Leases also block stale sets
+- Waiters see extra latency
+- Locks add a dependency
+[*Refresh before expiry]
+Hit -(XFetch, soft TTL, background job)-> Refresh early -> Key never missing
++ Readers never wait
++ No coordination for XFetch
+- Does not help after an explicit delete
+- Wasted work on keys that go cold
 %%
 
 ## Fix 4: avoid synchronised expiry
-Add **jitter** to TTLs so keys created together (after a deploy or cache flush) do not expire together.
+Keys created together expire together. After a deploy, a cache flush or a bulk import, millions of keys can get the same TTL, and an hour later they all miss in the same second: a stampede across many keys at once. Add **jitter**: instead of exactly 3,600 seconds, use 3,600 plus a random amount up to ±10%. Expiries spread over 12 minutes instead of one instant.
 
 ## Fix 5: protect the database anyway
-Even with the above, cap concurrent database queries per key or per service, and shed load if needed (02.13), because a cache flush or cold start can still cause a herd across many keys.
+Even with all of the above, a cold start or a full cache flush can cause a herd across thousands of different keys, and per-key fixes do not help. So cap concurrency at the database: a semaphore of, say, 50 concurrent queries per app server, or a per-key-prefix limit. Requests over the cap wait briefly, get stale data, or are shed with a fast error (load shedding is covered in 02.13). A database at 100% of its capacity is fine; a database asked for 300% falls over and serves nobody.
+
+## Common mistakes
+- **Fixing only expiry.** Refresh-before-expiry does nothing after an explicit delete, so keep a single-rebuilder fix (lease, lock or coalescing) for invalidations too.
+- **Locks without TTLs**, so a crashed rebuilder blocks the key forever.
+- **Waiters that spin** by hammering the cache in a tight loop. Sleep with a little jitter between retries.
+- **Identical TTLs** for a whole batch of keys.
+- **Negative results not cached**, so a missing key stampedes the database every time.
 
 ! Example: homepage trending list
-! The trending list is read 10,000 times a second and costs 300 ms to compute. With a plain 60 s TTL, every minute a burst of thousands of requests hits the database. Fix: a background job recomputes it every 30 s and writes it with a 120 s TTL, so it never expires under normal operation. If the job fails, readers that miss take a Redis lock; the winner rebuilds while the others serve the last value kept under a separate stale key.
+! The trending list is read 10,000 times a second and costs 300 ms to compute. With a plain 60 s TTL, every minute a burst of about 3,000 requests hits the database.
+! Fix: a background job recomputes it every 30 s and writes it with a 120 s TTL, so it never expires under normal operation. The job also writes a copy to `trending:stale` with a 1 day TTL.
+! If the job fails for more than 2 minutes, readers start missing. Each server coalesces its misses into one; that one tries `SET rebuild:trending NX EX 10`. The winner rebuilds; everyone else serves `trending:stale`. The database sees one query, users see a list that is a few minutes old.
 
-> Takeaway: stop stampedes by letting only one request rebuild a key (leases, locks, request coalescing), by refreshing before expiry (XFetch, background refresh, soft TTLs), and by jittering TTLs.
+## In an interview
+When you add a cache for hot data, mention the stampede before the interviewer does. Name one "single rebuilder" fix (lease, lock, single flight) and one "refresh early" fix (background refresh, soft TTL, XFetch), plus jitter. Ask how expensive a rebuild is and how often the key is invalidated: those decide which fix matters most.
 
-?? (1) Make only one request rebuild the value: a lease or lock per key (Facebook's leases) or request coalescing, while others wait briefly or get the stale value. (2) Refresh the key before it expires, with a background job, a soft TTL, or probabilistic early expiration, so it never goes missing under load. Adding jitter to TTLs also prevents many keys expiring at once.
+> Takeaway: stop stampedes by letting only one request rebuild a key (leases, locks, request coalescing), by refreshing before expiry (background refresh, soft TTLs, XFetch), and by jittering TTLs. Leases also stop slow readers writing stale values back, and a concurrency cap keeps the database alive when everything else fails.
+
+?? (1) Make only one request rebuild the value: a lease issued by the cache (Facebook's memcache leases, which cut one hot key's database load from 17,000 to 1,300 queries per second), a distributed lock such as SET rebuild:key token NX EX 5, or request coalescing in each process, while the other requests wait briefly and re-read or get a stale copy. (2) Refresh the key before it expires, with a background job, a soft TTL that serves the old value while one request refreshes, or probabilistic early expiration (XFetch), so the key never goes missing under load. Adding jitter to TTLs also stops many keys expiring at once, and a database concurrency cap is the last line of defence.
 
 @05.06
 ## The trap: falling back to the database
-A cache usually exists because the database cannot handle the full read load on its own. The tempting design: "if the cache is down, read from the database". It looks like resilience. In practice it is often the opposite.
+A cache usually exists because the database cannot handle the full read load on its own. So a tempting design follows: "if the cache is down, read from the database instead". It looks like resilience. The code is two lines in a `catch` block. In practice it is often the opposite of resilience, and it has caused some of the largest outages on record.
 
-AWS's Builders' Library article "Avoiding fallback in distributed systems" tells the story. Around 2001, amazon.com showed shipping speeds by querying a supply-chain database. It could not handle the load, so each web server got a local cache, with a fallback: if the cache failed, query the database directly. It worked for months. Then the caches failed at roughly the same time, every web server hit the database at once, the database locked up, web server processes blocked waiting on it, and the whole site went down. The same database ran fulfilment, so warehouses worldwide stopped too.
+The core of the problem is arithmetic. A database behind a cache is sized for the **misses**, not for the total. At a 95% hit rate, the database sees 5% of reads. Losing the cache multiplies that by 20. At 99% it multiplies by 100.
 
-The fallback turned a small problem (no shipping estimates) into a total outage. The article's sharp point: if the database could reliably serve all the traffic directly, you would not have needed the cache.
+| Hit rate | Database share of reads | Load multiplier if the cache dies |
+| 80% | 20% | 5 × |
+| 90% | 10% | 10 × |
+| 95% | 5% | 20 × |
+| 99% | 1% | 100 × |
+| 99.9% | 0.1% | 1,000 × |
 
-%%flow The fallback trap: when the cache fails, all its traffic moves onto a database sized for misses only.
-Cache cluster down -(100% of reads)-> *Database sized for 5% -> Database down too
+Notice the irony: the better your cache works, the worse its failure is for the database. A very effective cache lets you run a very small database, which is exactly the database that cannot survive without it.
+
+%%bars Database read load at 100,000 reads per second with a 95% hit rate, before and after the cache fails, against what the database can actually handle.
+Normal (5% misses) | 5000 | 5,000 reads/s
+Database capacity | 15000 | 15,000 reads/s
+*Cache down | 100000 | 100,000 reads/s
 %%
 
-## Why fallbacks fail
-- **They rarely run**, so they are untested at real load and may hide bugs written years ago.
-- **They activate under stress**, exactly when the system has the least spare capacity.
-- **They shift load to the weakest component.** At a 95% hit rate, losing the cache multiplies database reads by 20.
-- A single-node test does not reveal the problem; it needs many caches failing together.
+## A real outage, step by step
+Around 2001, amazon.com showed shipping speed estimates on product pages by querying a supply-chain database. That database could not handle the page traffic, so each web server got a local cache in front of it, with a fallback: if the cache failed, query the database directly. It worked for months.
 
-AWS's caching article calls this "modal behaviour": the service quietly becomes dependent on the cache-hit path.
+Then the caches failed at roughly the same time (they shared a cause, so their failures were correlated). What happened next is the general pattern:
+
+%%timeline How a cache fallback turned a missing shipping estimate into a site-wide outage (timings are illustrative).
+T+0 | Caches on many web servers fail together
+T+1 s | Every web server falls back to the database at once
+T+5 s | *Database saturates, query latency rises to seconds
+T+10 s | Web server threads block waiting on database calls
+T+30 s | No free threads; product pages stop rendering
+T+1 min | Site down; warehouses on the same database stop too
+%%
+
+The fallback turned a small problem (no shipping estimates on product pages) into a total outage, and because the same database also ran fulfilment, warehouses stopped processing orders as well. The sharpest lesson: **if the database could reliably serve all the traffic directly, you would not have needed the cache**. A fallback to it is a plan that relies on something you already know is false.
+
+## Why it gets worse than "just slower"
+You might expect the database to simply serve requests more slowly. In practice overload causes **collapse**, for several connected reasons:
+- **Queues grow without bound.** Once arrivals exceed capacity, every request waits behind all the earlier ones. Latency goes from 5 ms to seconds.
+- **Timeouts become wasted work.** The caller gives up after 1 second, but the database keeps executing the query. Its capacity is spent on answers nobody receives, so the useful throughput falls towards zero.
+- **Retries multiply load.** Each timed-out request is retried, perhaps 3 times, so 100,000 reads per second can become 300,000 attempts.
+- **Resources exhaust.** Connection pools fill, the database runs out of connections or memory, and lock contention rises. Some databases start thrashing their buffer pool because the working set of a cache-less workload no longer fits.
+- **The failure spreads upstream.** Application threads blocked on the database cannot serve anything else, including requests that never needed the database. That is how a shipping estimate takes down checkout.
+
+And when the cache comes back, recovery is slow: it is **cold**, so its hit rate starts near zero and the database stays overloaded while it refills.
+
+%%flow The fallback trap: when the cache fails, all its traffic lands on a database sized for misses only, and the failure spreads upward.
+Cache cluster down -(100% of reads)-> *Database sized for 5% -(timeouts, retries)-> App threads blocked -> Whole site down
+%%
+
+## Why fallbacks fail in general
+This is a specific case of a wider rule about **fallback paths**: code that runs only when something else has failed.
+- **They rarely run**, so they are untested at real load and may hide bugs written years ago by someone who has left.
+- **They activate under stress**, exactly when the system has the least spare capacity.
+- **They shift load to the weakest component.** The cache was there because the database was weak.
+- **A single-node test does not reveal the problem.** Failing one cache node in a test sends a little extra traffic to the database and looks fine. The danger is many caches failing together, which tests rarely simulate.
+
+This is sometimes called **modal behaviour** (or bimodal behaviour): the system has a normal mode and a failure mode that behaves completely differently, and the failure mode is the one you know least about. The safer goal is a system that behaves the same way whether things are going well or badly.
 
 ## Better options
-From the two AWS articles:
-- **Make the primary path more reliable** instead of adding a rarely used second path: replicate the cache, run it across availability zones, size it with headroom.
-- **Shed load or cap database calls** when the cache is down: serve errors or degraded responses for a fraction of requests rather than sending everything to the database. Limit concurrent queries so the database stays healthy enough to serve what it can.
-- **Serve stale data**: keep a local, longer-lived copy (soft and hard TTLs), or keep serving the last known value.
-- **Degrade the feature**: hide shipping estimates rather than taking down checkout.
-- **Turn fallback into failover**: if two paths are needed, exercise both all the time (for example, a share of real traffic always uses the second path), so the "backup" is always proven.
-- **Push data ahead of time** so readers do not need the source at request time (AWS pushes IAM credentials to instances that stay valid for hours).
-- **Load test with the cache off** to learn what actually happens.
+### Make the primary path more reliable
+Instead of adding a rarely used second path, make the cache itself hard to lose. Replicate each shard (Redis primary plus replicas with automatic failover), spread nodes across availability zones, and size the cluster with headroom so losing one node or one zone does not overload the rest. A cache cluster of 12 nodes across 3 zones, sized so 8 nodes can carry peak load, survives a whole zone failing.
 
-%%flow Better: on cache failure, serve stale, shed load or go to a small standby pool, but don't hand everything to the database.
-Cache node fails -> *Gutter pool takes its keys, short TTL -(misses only)-> Database
+### Cap and shed instead of passing everything through
+When the cache is unhealthy, limit how much load reaches the database. Put a **concurrency limit** or **rate limiter** in front of database reads (per instance or global) set below the database's real capacity. Requests over the limit get a degraded answer or a fast error rather than queueing. The database then stays healthy enough to serve the requests it can, at normal latency. Serving 15% of requests well beats serving 0% badly.
+
+### Serve stale data
+Keep a local, longer-lived copy: a small in-process cache with a **hard TTL** much longer than the normal TTL (soft and hard TTLs from 05.01), or the last known good value. When the shared cache is down, serve that. For most read paths (product descriptions, profiles, recommendations), minutes-old data is far better than an error.
+
+### Degrade the feature
+Decide in advance which features can disappear. Hide the shipping estimate, show "recommendations unavailable", drop the like count. The page still renders and checkout still works. This is a product decision as much as a technical one, so make it before the outage.
+
+### Turn fallback into failover
+If you truly need two paths, **exercise both all the time**. For example, send a small share of real traffic down the second path constantly, so it is proven at load every day. A path that runs every day is a failover; a path that runs once a year is a gamble.
+
+### Push data ahead of time
+Change the design so readers do not need the source at request time. AWS, for example, pushes IAM credentials to instances in advance, valid for hours, so a brief outage of the credential service does not stop instances authenticating. The same idea works for configuration, feature flags and small reference data: ship a full copy to every server.
+
+### Load test with the cache off
+Find out what really happens. Many teams run a "cache off" game day in a staging environment at production load. If the answer is "the database dies", you know your limits must be in place before the real outage.
+
+%%compare Two responses to a dead cache. Blind fallback passes the full load to a weak database; capping and degrading keeps the database alive.
+[Blind fallback]
+Cache fails -(all reads)-> Database -> Overload, total outage
+- 20 × normal database load at 95% hits
+- Timeouts and retries add more
+- Slow recovery, cache refills cold
+[*Cap, shed, serve stale]
+Cache fails -(limited reads)-> Database -> Healthy at capacity
++ Over-limit requests get stale or degraded data
++ Core features keep working
++ Fast recovery when the cache returns
 %%
 
 ## Facebook's gutter pool
-Facebook's memcache paper handles failed cache servers with a small **gutter pool**, about 1% of cache servers kept idle. When a client gets no response from a memcache server, it retries on the gutter pool instead of the database. On a gutter miss it queries the database and fills the gutter with a short TTL. This absorbs the failed server's load: client-visible failures dropped by 99%, and gutter hit rates passed 35% within 4 minutes of a failure. They chose this over rehashing the failed server's keys onto other servers, because a hot key could then overload its new owner.
+Facebook's memcache handles a failed cache **server** (rather than a whole cluster) with a small **gutter pool**: about 1% of cache servers kept idle. When a client gets no response from a memcache server, it does not go to the database. It retries the request on the gutter pool. On a gutter miss, it queries the database and fills the gutter entry with a **short TTL**, so that stale data does not linger there (the gutter does not receive invalidations the same way).
 
+This absorbs the failed server's load. Client-visible failures dropped by 99%, and gutter hit rates passed 35% within 4 minutes of a failure, and often reached 50%. Facebook chose this over **rehashing** the failed server's keys onto the remaining servers, because the failed server might hold a hot key that would then overload its new owner and cause a cascade.
+
+%%seq Gutter pool: when a cache server does not answer, the client tries a small idle pool before the database.
+Client > Cache node 7 : get k
+Cache node 7 -> Client : no response (timeout)
+Client > Gutter pool : get k
+Gutter pool -> Client : miss
+Client > Database : read k
+Client > Gutter pool : set k, short TTL
+%%
+
+## Worked examples
 ! Example: cache outage plan for a profile service
-! Normal: 200,000 reads per second, 97% hit rate, so the database serves 6,000 per second and can handle about 15,000. If one Redis node fails, its keys go to a gutter node rather than the database. If the whole cluster fails, a per-instance limiter allows at most 10,000 database reads per second in total; requests over the limit get a degraded profile (name and avatar from a small local cache) or a fast 503 with Retry-After. The database stays up, and recovery is quick when Redis returns.
+! Normal: 200,000 reads per second, 97% hit rate, so the database serves 6,000 per second. Load testing shows it handles about 15,000 per second at acceptable latency.
+! One Redis node of 20 fails: its share (10,000 reads/s) moves to a gutter node, not the database. The gutter warms within minutes.
+! The whole cluster fails: a global limiter allows at most 10,000 database reads per second (two thirds of capacity, leaving headroom). That serves 5% of requests fully. The other 95% get a degraded profile (name and avatar from a small in-process cache with a 1 hour hard TTL) or a fast 503 with `Retry-After`. The database stays up, latency stays normal for the requests it serves, and when Redis returns, the warm-up is quick because the database was never overloaded.
 
-> Takeaway: a database sized for cache-filtered traffic cannot absorb the full load when the cache dies. Do not blindly fall back; cap and shed load, serve stale or degraded data, and use small backup capacity like Facebook's gutter pool.
+! Example: how retries turn 20 × into 60 ×
+! A cache with a 95% hit rate in front of 50,000 reads per second fails. The database now receives 50,000 reads per second instead of 2,500: 20 times normal.
+! Its capacity is 8,000 per second, so latency spikes and most requests hit the client timeout of 500 ms. Each client retries twice. Now the database receives up to 150,000 attempts per second, 60 times normal, and its useful throughput drops below 8,000 because it wastes work on abandoned queries.
+! With a retry budget (retries capped at 10% of requests, lesson 02.09) and a limiter that admits 6,000 database reads per second, the database serves 6,000 useful reads per second and rejects the rest quickly.
 
-?? The database was sized for the small fraction of reads that miss the cache. With a 95% hit rate, losing the cache sends 20 times the normal read load to it at once. It slows down, queries pile up and time out, retries add more load, and it can fall over, turning a cache outage into a full outage. Cap and shed load instead, and serve stale or degraded data.
+## Common mistakes
+- **`catch: return db.get(key)`** as the whole cache error handling.
+- **Testing by failing one node** and concluding the fallback is safe.
+- **Sizing the database for the cache-filtered load** with no plan for the cache-less load.
+- **Retrying without a budget** during the outage.
+- **Forgetting the cold restart**: the outage is not over when the cache comes back.
+
+## In an interview
+When you put a cache in front of a database, say what happens when the cache fails. A strong answer: "The database is sized for the misses, so I won't fall back blindly. I'll replicate the cache across zones, cap database reads with a limiter, serve stale or degraded data for the rest, and use a small gutter pool for single-node failures." Ask what the database can handle without the cache, because that number decides the plan.
+
+> Takeaway: a database sized for cache-filtered traffic cannot absorb the full load when the cache dies, and overload makes it collapse rather than just slow down. Do not blindly fall back. Make the cache highly available, cap and shed database load, serve stale or degraded data, and use small backup capacity such as a gutter pool.
+
+?? The database was sized only for the small fraction of reads that miss the cache, so with a 95% hit rate, losing the cache sends 20 times its normal read load to it all at once. Arrivals exceed capacity, queues and latency grow, requests time out while the database keeps doing the abandoned work, retries multiply the load further, connections run out and application threads block, so the database collapses and takes the rest of the site with it, and a cold cache then slows recovery. Instead of falling back blindly, cap and shed database load, serve stale or degraded data, and keep the cache itself highly available.

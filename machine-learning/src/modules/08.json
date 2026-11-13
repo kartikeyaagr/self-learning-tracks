@@ -1,0 +1,233 @@
+{
+ "n": "08",
+ "name": "Recommender systems",
+ "lessons": [
+  {
+   "id": "08.01",
+   "t": "Recommendation problems",
+   "n": [
+    "A recommender estimates, for a user $u$ and item $i$ it has not seen, how much $u$ would value $i$, then shows the top few. The output is a **ranked list**, not a single prediction, so errors at the top cost far more than errors at position 500.",
+    "**Explicit** feedback (stars, thumbs) is sparse but signed; **implicit** feedback (clicks, plays, purchases) is plentiful but only positive, and a missing entry means *unknown*, not *disliked*.",
+    "Production systems are a **funnel**: cheap retrieval narrows millions of items to a few thousand, an expensive ranker orders a few hundred, and a re-ranker applies business rules and diversity to the final dozen.",
+    "Evaluate offline by hiding each user's latest interactions (leave-last-out or a time split) and asking whether the model ranks them highly; random splits leak the future.",
+    "A popularity baseline is embarrassingly strong. Every model in this module should be compared against it first."
+   ],
+   "a": "## What is being predicted\nA recommender works on a giant, mostly empty matrix $R$ with one row per user and one column per item. A cell $r_{ui}$ holds whatever signal you have: a 4-star rating, a play count, a purchase. A catalogue of 1 million items and 10 million users has $10^{13}$ cells; a busy service might observe $10^{9}$ of them, a density of 0.01%. The task is to fill in the blanks well enough that, for each user, the items you place at the top of a list are ones they would choose.\n\nTwo consequences follow. First, the target is a **ranking**: what matters is the order of the top 10 or 20 items, so later lessons use ranking losses and ranking metrics rather than squared error. Second, almost all the matrix is unobserved, and *why* a cell is missing carries information. Users rate what they chose to watch, and they chose it because they expected to like it, so observed ratings skew high. The data is missing not at random.\n\n## Explicit vs implicit feedback\n| Property | Explicit (ratings) | Implicit (clicks, plays, buys)\n| Volume | tiny: most users rate almost nothing | huge: every session produces events\n| Sign | positive and negative | positive only; absence is ambiguous\n| Noise | rating scales drift between users | an accidental click looks like intent\n| Natural loss | regression on observed cells | ranking or weighted classification over all cells\n\nImplicit data dominates in practice because it comes for free. Its awkward feature is that a zero means \"not seen or not chosen\", which mixes dislike with ignorance. Methods for implicit feedback therefore either treat zeros as weak negatives with low confidence (weighted matrix factorisation, lesson 08.03) or only assert that observed items should outrank unobserved ones (BPR, also 08.03). Strength of the signal is usually encoded as *confidence*: watching 90% of a film is stronger evidence than a 5-second preview.\n\n## Retrieval, ranking, re-ranking\nNo model can score 10 million items for every request inside a 100 ms budget with a rich neural network. Systems split the problem into stages that trade recall for cost.\n\n%%flow The recommendation funnel: each stage sees fewer items and can afford a more expensive model per item.\nCatalogue (10M) -(retrieval: ANN, co-visitation)-> Candidates (1-5k) -(ranker: GBDT or deep net)-> Scored (500) -(re-rank: diversity, rules)-> *Shown (20)\n%%\n\n- **Retrieval (candidate generation)** must be fast and high-recall. Typical sources: item-item co-occurrence (\"people who watched X watched Y\"), embedding nearest neighbours from a two-tower model (08.04), recent and trending items. Several sources are unioned.\n- **Ranking** scores each candidate with a model that can use rich cross features (user history crossed with item attributes, context, time of day). It predicts a calibrated probability of the action you care about, such as click, purchase or watch time.\n- **Re-ranking** applies constraints the ranker ignores: remove already-purchased items, enforce diversity (08.05), freshness boosts, policy filters.\n\nA retrieval stage that misses an item can never be rescued by a perfect ranker, so retrieval is judged by recall@k on a few thousand slots, the ranker by NDCG on the top few. System Design 101's \"A recommendation system\" lesson covers the serving architecture around this funnel; this module focuses on the models.\n\n## Offline evaluation without leaking the future\nRecommendation data is a time series of events. A random 80/20 split of interactions lets the model learn from a user's March purchase to predict their February one, which inflates every metric. Two honest protocols:\n1. **Leave-last-out**: for each user, hold out the most recent interaction (or last $n$) as the test item and train on the rest.\n2. **Global time split**: train on everything before a cutoff date, test on the week after. This mirrors deployment best, and also exposes cold-start users who appear only after the cutoff.\n\nThen ask: for each test user, where does the held-out item land in the model's ranking over all items they have not interacted with? Hit rate@10 (did it appear in the top 10?) and MRR are the simplest summaries.\n\n```python\n# Popularity baseline under leave-last-out (pandas)\ndf = df.sort_values(\"ts\")\ntest = df.groupby(\"user\").tail(1)\ntrain = df.drop(test.index)\ntop = train[\"item\"].value_counts().index[:50]\nseen = train.groupby(\"user\")[\"item\"].agg(set)\ndef recs(u):\n    return [i for i in top if i not in seen.get(u, set())][:10]\nhit10 = test.apply(lambda r: r.item in recs(r.user), axis=1).mean()\n```\n\n! Example: why the baseline matters\n! A streaming catalogue has 20k titles. The 100 most popular titles account for 30% of plays. A popularity list scores hit rate@10 of about 0.08 under leave-last-out. A new model reports 0.11. That 38% relative lift is real, but if the model had been compared against a random baseline (hit rate@10 = 10/20000 = 0.0005) it would have looked 200 times better than it is.\n\n## Things that go wrong\n- **Feedback loops**: the system recommends popular items, they get clicked because they were shown, and the next model learns they are even more popular. Logging what was *shown* (impressions) and not just what was clicked is what lets you correct for this later.\n- **Cold start**: new users and new items have no interactions. Content features (text, category, price) and popularity fallbacks cover the gap; pure collaborative methods cannot.\n- **Position bias**: items at the top get clicked more regardless of quality, so clicks are a biased label for the ranker.\n\n> Takeaway: a recommender is a ranking problem on a sparse, biased, implicit matrix, solved as a funnel of increasingly expensive stages, and it should always be evaluated on future interactions against a popularity baseline.",
+   "q": "A music service trains a next-song model on a random 80/20 split of play events and reports hit rate@10 of 0.31. After a switch to leave-last-out evaluation the number drops to 0.12. Explain the drop and say which number should drive a launch decision.",
+   "s": "The random split leaks the future. Many held-out plays are repeats or near-repeats of songs the user also played *later* in the training portion, and popular-in-a-session songs appear on both sides of the split, so the model is rewarded for memorising history it would not have at serving time. Leave-last-out asks the deployment question: given everything up to now, predict the next interaction. The 0.12 figure is the honest one and should drive decisions, ideally checked again with a global time split that also includes users who appear only after the cutoff. It should also be compared with a popularity baseline under the same protocol, because the relevant question is the lift over the cheapest alternative, not the absolute number.",
+   "r": [
+    [
+     "Google ML: Recommendation systems course",
+     "https://developers.google.com/machine-learning/recommendation",
+     "Short course: candidate generation, scoring and re-ranking stages, with exercises."
+    ],
+    [
+     "Covington et al., Deep Neural Networks for YouTube Recommendations (2016)",
+     "https://research.google/pubs/deep-neural-networks-for-youtube-recommendations/",
+     "The classic two-stage funnel paper; read the sections on candidate generation and the 'example age' feature."
+    ],
+    [
+     "Eugene Yan, System design for recommendations and search",
+     "https://eugeneyan.com/writing/system-design-for-discovery/",
+     "Practitioner overview of offline/online, retrieval/ranking splits across many companies."
+    ]
+   ],
+   "k": [
+    "implicit feedback",
+    "retrieval vs ranking"
+   ],
+   "x": [
+    "pandas"
+   ],
+   "p": [
+    "popularity-baseline-leave-last-out",
+    "hit-rate-and-mrr",
+    "precision-recall-at-k",
+    "top-n-per-group"
+   ]
+  },
+  {
+   "id": "08.02",
+   "t": "Collaborative filtering with neighbourhoods",
+   "n": [
+    "Neighbourhood methods predict from similar users (**user-kNN**) or similar items (**item-kNN**): $\\hat r_{ui} = \\bar r_u + \\frac{\\sum_{v} s_{uv}(r_{vi}-\\bar r_v)}{\\sum_v |s_{uv}|}$ over the $k$ most similar raters.",
+    "Item-item similarity is usually preferred in production: item vectors are denser and change slowly, so the item-item table can be precomputed offline and served by lookup.",
+    "Cosine, **adjusted cosine** (subtract each user's mean) and Pearson differ only in centring. Centring removes 'this user rates everything 5' effects.",
+    "Similarities computed on two or three co-raters are noise; **shrinkage** $s' = \\frac{n}{n+\\beta}\\,s$ pulls them towards zero in proportion to how little evidence they have.",
+    "kNN cannot recommend items with no interactions and scales with the number of co-occurring pairs, which is why it is often used as a retrieval source rather than the final model."
+   ],
+   "a": "## The idea\nCollaborative filtering (CF) uses only the interaction matrix: no item descriptions, no user profiles. The neighbourhood flavour is the most direct version of \"people like you liked this\". It is also the first thing to try, because it is easy to explain, has few hyperparameters and makes a strong retrieval source.\n\nThere are two mirror images:\n- **User-based**: find the $k$ users most similar to $u$ who rated item $i$, and average their ratings of $i$, weighted by similarity.\n- **Item-based**: find the $k$ items most similar to $i$ that $u$ has rated, and average $u$'s own ratings of them.\n\n%%flow Item-based CF at serving time: the expensive similarity table is built offline; a request only does lookups and a weighted sum.\nUser history -(look up each item)-> Item-item table -(top-k neighbours)-> Candidate scores -(sum, drop seen)-> *Top-N list\n%%\n\n## Similarity measures\nWrite $r_u$ for user $u$'s rating vector and $I_{uv}$ for the items both $u$ and $v$ rated. Three standard choices:\n\n| Measure | Formula (on co-rated items) | What it ignores\n| Cosine | $\\frac{r_u \\cdot r_v}{\\lVert r_u\\rVert \\lVert r_v\\rVert}$ | nothing: a harsh rater and a generous one look different\n| Pearson | cosine after subtracting each user's mean over $I_{uv}$ | each user's average level\n| Adjusted cosine (item-item) | cosine between item columns after subtracting each **user's** mean | user rating scale when comparing items\n| Jaccard (implicit) | $\\frac{\\lvert U_i \\cap U_j\\rvert}{\\lvert U_i \\cup U_j\\rvert}$ | strength of interaction; only who touched what\n\nFor implicit data, ratings are replaced by binary or count values, and cosine on binary columns becomes $\\frac{|U_i \\cap U_j|}{\\sqrt{|U_i||U_j|}}$: co-occurrence normalised by popularity. Without the normalisation every item looks most similar to the bestseller.\n\nThe prediction for user-based CF with mean-centring:\n\n$$\\hat r_{ui} = \\bar r_u + \\frac{\\sum_{v \\in N_k(u,i)} s_{uv}\\,(r_{vi} - \\bar r_v)}{\\sum_{v \\in N_k(u,i)} |s_{uv}|}$$\n\nCentring matters: if your neighbour rates everything one star lower than average, their 4 stars is enthusiasm, and the formula converts it to \"+1 above my mean\" before adding it to yours.\n\n## Shrinkage and significance\nTwo users who share exactly two rated films and agreed on both have a Pearson correlation of 1. That is coincidence, not similarity. The standard fix multiplies by an evidence factor:\n\n$$s'_{ij} = \\frac{n_{ij}}{n_{ij} + \\beta}\\, s_{ij}$$\n\nwhere $n_{ij}$ is the number of co-raters and $\\beta$ is around 10 to 100. A pair with 2 co-raters and $\\beta = 20$ keeps 9% of its similarity; a pair with 500 co-raters keeps 96%.\n\n```python\nimport numpy as np\n# R: users x items, 0 = missing; implicit -> binary\nB = (R > 0).astype(float)\nco = B.T @ B                          # co-occurrence counts n_ij\nnorms = np.sqrt(np.diag(co))\nS = co / (np.outer(norms, norms) + 1e-9)   # binary cosine\nS *= co / (co + 20.0)                 # shrinkage, beta = 20\nnp.fill_diagonal(S, 0.0)\nscores = B[u] @ S                     # sum of similarities to u's items\nscores[B[u] > 0] = -np.inf            # never recommend what u already has\n```\n\n## Why item-item wins in production\nAmazon's 2003 description of item-to-item CF set the pattern that most retailers still follow. The reasons are practical:\n- **Stability**: an item's audience changes slowly, a user's taste vector changes with every click. The item table can be rebuilt nightly and stay valid; a user-user table would be stale within hours.\n- **Density**: a popular item has thousands of raters, so item similarities are better estimated than similarities between two users who each rated 20 things.\n- **Cost at request time**: with the table precomputed and truncated to the top 50 neighbours per item, a request touches (items in history) × 50 entries.\n- **Explanations**: \"because you bought X\" falls out for free.\n\nThe offline cost is computing co-occurrence for all item pairs. It is dominated by heavy users: a user with $m$ interactions contributes $m^2$ pairs, so it is common to cap or subsample very long histories.\n\n! Example: shrinkage changes the answer\n! Item A (a niche documentary) shares 3 viewers with item B and has cosine 0.9. Item C shares 400 viewers with B and has cosine 0.35. With $\\beta = 50$: A gets $0.9 \\cdot 3/53 = 0.051$, C gets $0.35 \\cdot 400/450 = 0.311$. Without shrinkage, B's \"similar items\" rail would lead with a film three people happened to watch.\n\n## Limits\nNeighbourhood methods have no notion of latent taste dimensions, so two users who like different but related items (two sci-fi fans with no film in common) never become neighbours. They cannot score items without interactions (cold start), and they do not use content. Matrix factorisation (next lesson) addresses the first problem by learning a dense low-dimensional space; two-tower models (08.04) address the last two by putting features into the towers.\n\n> Takeaway: item-item CF with a popularity-normalised similarity and shrinkage is a cheap, explainable and surprisingly hard-to-beat retrieval source; most of its quality comes from the normalisation and shrinkage, not the choice of k.",
+   "q": "Your item-item 'similar products' rail for a phone case shows a different random accessory every night after the rebuild, and many shown items have only a handful of co-purchasers. What is causing the instability, and what two changes would you make?",
+   "s": "The similarities are being estimated from very few co-occurrences, so they are dominated by chance and change whenever a few new orders arrive. Binary cosine on small counts can be near 1 for items bought together once or twice. First, apply significance shrinkage, $s' = s \\cdot n/(n+\\beta)$, so pairs with little evidence are pulled towards zero and well-supported pairs rise to the top. Second, require a minimum co-occurrence count (for example, at least 5 co-purchasers) before a pair enters the table, and check that the similarity is normalised by item popularity so that a few universally bought accessories do not dominate. Optionally smooth across nights by computing over a longer window or blending with the previous table.",
+   "r": [
+    [
+     "Linden, Smith and York, Amazon.com Recommendations: Item-to-Item Collaborative Filtering (2003)",
+     "https://www.cs.umd.edu/~samir/498/Amazon-Recommendations.pdf",
+     "Four pages; the original argument for item-item over user-user at scale."
+    ],
+    [
+     "Google ML: Collaborative filtering basics",
+     "https://developers.google.com/machine-learning/recommendation/collaborative/basics",
+     "Worked toy example of user and item similarity and why CF needs no content features."
+    ],
+    [
+     "Dacrema, Cremonesi and Jannach, Are We Really Making Much Progress? (2019)",
+     "https://arxiv.org/abs/1907.06902",
+     "Shows tuned kNN baselines beating many published neural recommenders; read the results tables."
+    ]
+   ],
+   "k": [
+    "collaborative filtering",
+    "similarity"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "item-item-cf-scores",
+    "user-knn-rating-prediction",
+    "cosine-similarity-matrix",
+    "pearson-correlation-matrix"
+   ]
+  },
+  {
+   "id": "08.03",
+   "t": "Matrix factorisation: ALS and BPR",
+   "n": [
+    "Matrix factorisation models $\\hat r_{ui} = x_u^\\top y_i$ with $f$-dimensional user and item vectors ($f$ around 32 to 256), compressing taste into a dense latent space where users with no items in common can still be close.",
+    "**ALS** alternates closed-form ridge solves: fix items, each user's vector is $x_u = (Y_u^\\top Y_u + \\lambda I)^{-1} Y_u^\\top r_u$; then fix users and solve for items. Every solve is independent, so it parallelises trivially.",
+    "For implicit data (Hu, Koren, Volinsky), every cell is a target $p_{ui} \\in \\{0,1\\}$ with confidence $c_{ui} = 1 + \\alpha r_{ui}$; the trick $Y^\\top C^u Y = Y^\\top Y + Y^\\top (C^u - I) Y$ keeps a user solve at $O(f^2 n_u + f^3)$ instead of touching every item.",
+    "**BPR** optimises ranking directly: for sampled triples (user, observed item $i$, unobserved item $j$) it maximises $\\ln \\sigma(\\hat x_{ui} - \\hat x_{uj})$, a smooth surrogate for per-user AUC.",
+    "Regularisation $\\lambda$ and, for implicit ALS, the confidence scale $\\alpha$ matter more than $f$; tune them on a time-split ranking metric, not on training loss."
+   ],
+   "a": "## From neighbours to factors\nNeighbourhood CF (08.02) compares raw rows. Matrix factorisation (MF) instead learns a low-dimensional vector for every user and item so that their dot product reproduces the observed signal:\n\n$$\\hat r_{ui} = x_u^\\top y_i, \\qquad X \\in \\mathbb{R}^{m \\times f},\\; Y \\in \\mathbb{R}^{n \\times f}$$\n\nThis is low-rank approximation of $R$, the same idea as truncated SVD (covered in ML Maths, \"Singular value decomposition\"), with one crucial difference: SVD needs a fully observed matrix, while MF fits only the cells you trust and regularises the rest. The factors become latent taste dimensions. Two users who watched disjoint sets of sci-fi films end up close because their films sit in the same region of item space.\n\nFor explicit ratings the objective is regularised squared error over observed cells $\\Omega$, usually with biases:\n\n$$\\min_{X,Y,b} \\sum_{(u,i)\\in\\Omega} \\big(r_{ui} - \\mu - b_u - b_i - x_u^\\top y_i\\big)^2 + \\lambda\\big(\\lVert x_u\\rVert^2 + \\lVert y_i\\rVert^2 + b_u^2 + b_i^2\\big)$$\n\nThe biases soak up \"this user rates high\" and \"this film is universally loved\", leaving the factors to model interaction.\n\n## Alternating least squares\nThe objective is not jointly convex in $X$ and $Y$, but it *is* a ridge regression in $X$ once $Y$ is fixed, and vice versa. ALS exploits that:\n\n%%flow ALS alternates two embarrassingly parallel sets of ridge regressions until the ranking metric stops improving.\nInit X, Y small random -(fix Y)-> Solve every user (ridge) -(fix X)-> Solve every item (ridge) -(repeat 10-20x)-> *Factors\n%%\n\nFor user $u$ with observed items $Y_u$ (rows of $Y$) and ratings $r_u$:\n\n$$x_u = (Y_u^\\top Y_u + \\lambda I_f)^{-1} Y_u^\\top r_u$$\n\nEach solve is an $f \\times f$ system, independent of every other user, so a sweep is a map over users. Each sweep cannot increase the loss, so ALS converges monotonically, usually in 10 to 20 sweeps. SGD on the same objective is simpler per step but needs a learning rate and many epochs; ALS is preferred when data is large and distributed, which is why Spark MLlib ships it.\n\n## Implicit feedback: weighted MF\nWith clicks and plays there are no negatives, only counts. Hu, Koren and Volinsky (2008) reframed the problem:\n- **Preference** $p_{ui} = 1$ if $r_{ui} > 0$, else 0. *Every* cell, observed or not, is a target.\n- **Confidence** $c_{ui} = 1 + \\alpha r_{ui}$ (or $1 + \\alpha \\log(1 + r_{ui}/\\epsilon)$). Unobserved cells get confidence 1, a weak \"probably not\"; heavily played items get much more.\n\n$$\\min_{X,Y} \\sum_{u,i} c_{ui}\\,(p_{ui} - x_u^\\top y_i)^2 + \\lambda\\Big(\\sum_u \\lVert x_u\\rVert^2 + \\sum_i \\lVert y_i\\rVert^2\\Big)$$\n\nThe user update becomes $x_u = (Y^\\top C^u Y + \\lambda I)^{-1} Y^\\top C^u p_u$, where $C^u$ is diagonal over *all* $n$ items. Computed naively that is $O(f^2 n)$ per user, hopeless for $n = 10^6$. The trick is that $C^u - I$ is non-zero only on the $n_u$ items the user touched:\n\n$$Y^\\top C^u Y = \\underbrace{Y^\\top Y}_{\\text{once per sweep}} + Y_u^\\top (C^u_{uu} - I) Y_u$$\n\nSo each user costs $O(f^2 n_u + f^3)$. The paper used $\\alpha = 40$; in practice $\\alpha$ is tuned per dataset and interacts with $\\lambda$.\n\n```python\nimport numpy as np\ndef implicit_user(Y, YtY, items, counts, alpha=40.0, lam=0.1):\n    Yu = Y[items]                         # (n_u, f)\n    c = 1.0 + alpha * counts              # confidences of observed items\n    A = YtY + (Yu.T * (c - 1.0)) @ Yu + lam * np.eye(Y.shape[1])\n    b = (Yu.T * c).sum(axis=1)            # Y^T C^u p_u, p = 1 on observed\n    return np.linalg.solve(A, b)\n```\n\n## BPR: optimise the ranking, not the reconstruction\nWeighted MF still fits squared error. Rendle et al. (2009) argued the real goal is order: for each user, observed items should score above unobserved ones. Bayesian Personalised Ranking samples triples $(u, i, j)$ with $i$ observed and $j$ not, and maximises\n\n$$\\sum_{(u,i,j)} \\ln \\sigma\\big(\\hat x_{ui} - \\hat x_{uj}\\big) - \\lambda \\lVert\\Theta\\rVert^2$$\n\n$\\sigma(\\hat x_{ui} - \\hat x_{uj})$ is a smooth version of the indicator \"i ranks above j\", and averaging that indicator over all pairs is exactly per-user AUC. Training is SGD over sampled triples; the gradient on $x_u$ is $(1 - \\sigma(\\hat x_{uij}))(y_i - y_j)$, so confidently ordered triples contribute almost nothing. That is also BPR's weakness: once most uniform negatives are easy, learning stalls. Popularity-weighted or hard-negative sampling (scoring a few candidates and picking the highest-scored unobserved one) speeds it up considerably.\n\n| Method | Data | Loss | Optimiser | Strength\n| Biased MF | explicit ratings | squared error on observed | SGD or ALS | rating prediction\n| Implicit ALS | counts | confidence-weighted squared error on all cells | ALS | fast, stable, few knobs\n| BPR | binary implicit | pairwise logistic on sampled triples | SGD | targets ranking directly\n\n! Example: what $\\alpha$ does\n! A user played song A 30 times and song B once. With $\\alpha = 40$, confidences are 1201 and 41 against 1 for every unplayed song. The model must fit A almost exactly, B fairly well, and treats the million unplayed songs as gentle pressure towards zero. Setting $\\alpha = 1$ makes A only 31 times as important as an unplayed song, and the sea of zeros pulls all scores down, typically hurting recall@k.\n\n> Takeaway: MF learns dense taste vectors; use ALS with confidence weighting for large implicit datasets and BPR when you want a ranking loss, and in both cases tune regularisation and negative handling on a time-split ranking metric.",
+   "q": "You train implicit ALS on 50M play events over 2M songs with f = 128. Recall@100 is poor and the top recommendations for almost every user are the same 200 hits. Give two causes rooted in the objective and how you would test each.",
+   "s": "First, confidence may be too weak relative to the zeros, or regularisation too strong. With small $\\alpha$ or large $\\lambda$, factors shrink and the only signal that survives is popularity, which a few dimensions can encode for everyone. Sweep $\\alpha$ and $\\lambda$ on a time-split recall@100 and watch whether personalisation (overlap of top lists across users) changes. Second, raw play counts let a few heavy users and repeat-heavy hits dominate the weighted loss. Switch to $c = 1 + \\alpha \\log(1 + r/\\epsilon)$, cap counts, or down-weight heavy users, and check whether the hit list shrinks. A third check is evaluation itself: confirm the metric excludes already-played songs, otherwise popular repeats inflate both the score and the apparent popularity bias.",
+   "r": [
+    [
+     "Hu, Koren and Volinsky, Collaborative Filtering for Implicit Feedback Datasets (2008)",
+     "https://yifanhu.net/PUB/cf.pdf",
+     "The confidence-weighted objective and the $Y^\\top Y$ trick; sections 3 and 4."
+    ],
+    [
+     "Rendle et al., BPR: Bayesian Personalized Ranking from Implicit Feedback (2009)",
+     "https://arxiv.org/abs/1205.2618",
+     "Derivation of the pairwise criterion and its link to AUC; the LearnBPR algorithm box."
+    ],
+    [
+     "Google ML: Matrix factorization",
+     "https://developers.google.com/machine-learning/recommendation/collaborative/matrix",
+     "Weighted MF and why unobserved entries need a separate, smaller weight."
+    ],
+    [
+     "implicit (Python library) documentation",
+     "https://benfred.github.io/implicit/",
+     "Production-grade ALS and BPR implementations with CPU and GPU backends."
+    ]
+   ],
+   "k": [
+    "matrix factorisation",
+    "ALS",
+    "BPR"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "implicit-als-user-factors",
+    "als-explicit-sweep",
+    "bpr-sgd-step",
+    "uniform-negative-sampling"
+   ]
+  },
+  {
+   "id": "08.04",
+   "t": "Two-tower retrieval",
+   "n": [
+    "A two-tower model maps a user (history, context, profile) and an item (ID, text, category) through separate networks to vectors $u, v \\in \\mathbb{R}^d$ and scores $s(u,i) = \\langle u, v \\rangle / \\tau$; because the towers never interact, item vectors can be precomputed and searched with approximate nearest neighbours.",
+    "Training treats retrieval as extreme classification: a softmax over the corpus, approximated by using the **other items in the batch as negatives** (in-batch softmax).",
+    "In-batch negatives are sampled in proportion to popularity, so popular items are over-punished. The **logQ correction** subtracts $\\log q_j$, the item's sampling probability, from each logit to undo that bias.",
+    "Mixing in a few uniformly sampled negatives fixes the opposite gap: rare items never appear as negatives in-batch, so the model never learns to push them down.",
+    "Features in both towers give cold-start coverage that ID-only MF lacks, at the cost of a training pipeline and an ANN index to keep fresh."
+   ],
+   "a": "## Why two towers\nMatrix factorisation (08.03) is already a two-tower model with the simplest possible towers: an embedding lookup by ID. The two-tower architecture generalises that by letting each side be a network over features:\n- **User/query tower**: recent item IDs (pooled or passed through a small sequence model), user attributes, context such as device and time.\n- **Item tower**: item ID embedding plus content features: title text embedding, category, price bucket, age.\n\nThe score is a dot product (often of L2-normalised vectors, divided by a temperature $\\tau$ around 0.05). The defining constraint is that the two sides meet only at the end. That is what makes retrieval over millions of items feasible: every item vector is computed offline and loaded into an approximate nearest-neighbour index; at request time you compute one user vector and do a top-k search in a few milliseconds.\n\n%%flow Serving a two-tower retriever: item vectors are built in batch; only the user tower runs per request.\n[Offline] Item features -(item tower)-> Item vectors -(build)-> *ANN index\n[Online] Request context -(user tower)-> User vector -(top-k search)-> Candidates\n%%\n\nRicher models that cross user and item features early (attention between history and candidate, feature crosses) are more accurate but need a forward pass per candidate, which is why they live in the ranking stage. AI Engineering's \"Embeddings and retrieval\" module covers ANN indexes (HNSW, IVF, product quantisation) in depth; here the focus is training.\n\n## Training as sampled softmax\nIdeally retrieval is trained as a softmax over the whole corpus: given user $u$ who engaged with item $i$,\n\n$$P(i \\mid u) = \\frac{e^{s(u,i)}}{\\sum_{j \\in \\text{corpus}} e^{s(u,j)}}$$\n\nWith 10 million items the denominator is impossible per example. The standard approximation is **in-batch negatives**: in a batch of $B$ (user, positive item) pairs, each user's positive is contrasted with the $B-1$ positives of the other users. One $B \\times B$ matrix multiply gives every logit.\n\n```python\nimport numpy as np\ndef in_batch_logq_loss(U, V, logq, tau=0.05):\n    # U, V: (B, d) L2-normalised user and positive-item vectors\n    logits = U @ V.T / tau                 # (B, B), diagonal = positives\n    logits = logits - logq[None, :]        # logQ correction per column item\n    logits -= logits.max(axis=1, keepdims=True)\n    logp = logits - np.log(np.exp(logits).sum(axis=1, keepdims=True))\n    return -np.mean(np.diag(logp))\n```\n\n## Sampling bias and the logQ correction\nThe in-batch negatives are not uniform: an item appears in a batch in proportion to how often it is a positive, so a hit song that is 1% of all plays is a negative for roughly 1% of all examples, while a niche song almost never is. The gradient therefore pushes popular items down far more than a full softmax would. Without correction, the trained model under-recommends popular items for users who would genuinely like them.\n\nSampled-softmax theory gives the fix. If negatives are drawn with probability $q_j$, then using corrected logits $s(u,j) - \\log q_j$ makes the sampled loss a consistent estimate of the full softmax. Yi et al. (2019, YouTube) applied this to in-batch training and estimated $q_j$ in a streaming way: track, per hashed item ID, the average number of steps between consecutive appearances; $q_j \\approx 1/\\text{gap}$. The correction is applied only during training. At serving time you rank by the raw $\\langle u, v\\rangle$.\n\n| Negative source | Bias | Fix\n| In-batch only | popular items over-penalised, rare items never seen as negatives | logQ correction\n| Uniform random from corpus | mostly trivially easy negatives; learns slowly | mix with in-batch; hard negatives\n| Mixed (in-batch + uniform) | balances both; extra item-tower passes per batch | correct each source with its own $q$\n\n**Mixed negative sampling** (Yang et al., 2020) appends a few hundred uniformly sampled items to each batch's negatives. Uniform samples cover the long tail, so the model learns that a random obscure item is a bad match, which in-batch training alone never teaches. That matters for item freshness and cold-start items: a brand-new item has a content-feature vector, and you want its position in the space to be meaningful.\n\n## Practical knobs and failure modes\n- **Batch size** sets the number of negatives. Going from 512 to 8192 usually helps recall noticeably; distributed training gathers item vectors across devices to enlarge the effective batch.\n- **Temperature** $\\tau$ controls how sharply the softmax focuses on hard negatives. Too high and everything blurs; too low and training is unstable and over-fits false negatives (items the user would have liked but did not interact with).\n- **Accidental hits**: if two users in a batch share the same positive item, one user's positive appears as the other's negative. Mask duplicates of the positive ID.\n- **Index freshness**: item vectors depend on the item tower's weights. Retraining the tower without rebuilding the index silently mixes two embedding spaces; version them together.\n- **Popularity collapse**: check the share of recommendations coming from the top 1% of items before and after enabling logQ; it should fall towards the share you see in organic engagement.\n\n! Example: effect of the correction\n! Item A is 2% of positives, item B is 0.001%. In a batch of 4096, A appears as a negative about 82 times per batch in expectation and B about 0.04 times. Their log-probabilities are $\\ln 0.02 = -3.9$ and $\\ln 0.00001 = -11.5$, so the corrected logits are raw $+3.9$ for A and raw $+11.5$ for B.\n! When B does turn up as a negative, its inflated logit draws a large gradient; A's many appearances each draw a smaller one. Summed over training, each item is pushed down roughly as much as a full softmax would push it, instead of in proportion to its popularity.\n\n> Takeaway: two-tower retrieval is a sampled softmax over the corpus; in-batch negatives make it cheap, logQ correction makes it unbiased towards popular items, and mixed uniform negatives make it competent on the long tail.",
+   "q": "After moving from in-batch-only training to in-batch plus logQ correction, offline recall@200 rises but the share of retrieved items that are new releases (under a week old) falls sharply. Explain the mechanism and propose a fix that keeps the recall gain.",
+   "s": "New releases have very few positives, so their estimated sampling probability $q_j$ is tiny and $-\\log q_j$ is large. Under logQ correction that large term is added to their logits in training, so when a new release is the positive its corrected logit is already high and the loss has little reason to raise its raw score. At serving time, where the correction is not applied, their raw scores end up comparatively low. At the same time, in-batch training rarely shows them as negatives at all, so their region of the space is poorly shaped. Fixes: add uniformly sampled negatives (mixed negative sampling) with their own correction so that tail and new items are contrasted properly; smooth or floor the frequency estimates for young items; and make sure the item tower uses content features, so a new item's vector sits near similar established items instead of depending on a barely trained ID embedding.",
+   "r": [
+    [
+     "Yi et al., Sampling-Bias-Corrected Neural Modeling for Large Corpus Item Recommendations (2019)",
+     "https://research.google/pubs/sampling-bias-corrected-neural-modeling-for-large-corpus-item-recommendations/",
+     "The logQ-corrected in-batch softmax and the streaming frequency estimator."
+    ],
+    [
+     "Yang et al., Mixed Negative Sampling for Learning Two-tower Neural Networks in Recommendations (2020)",
+     "https://research.google/pubs/mixed-negative-sampling-for-learning-two-tower-neural-networks-in-recommendations/",
+     "Why in-batch negatives miss the tail, and the fix of adding uniform samples."
+    ],
+    [
+     "Google ML: Candidate retrieval with DNNs",
+     "https://developers.google.com/machine-learning/recommendation/dnn/retrieval",
+     "Short explanation of softmax retrieval, negative sampling and nearest-neighbour serving."
+    ]
+   ],
+   "k": [
+    "two-tower",
+    "negative sampling"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "in-batch-softmax-logq",
+    "uniform-negative-sampling",
+    "clip-cosine-retrieval",
+    "word2vec"
+   ]
+  },
+  {
+   "id": "08.05",
+   "t": "Ranking metrics and re-ranking",
+   "n": [
+    "Ranking metrics reward relevant items **near the top**: $\\text{DCG@}k = \\sum_{p=1}^{k} \\frac{2^{rel_p}-1}{\\log_2(p+1)}$, and NDCG divides by the DCG of the ideal order so that 1.0 means perfect.",
+    "**MRR** averages $1/\\text{rank}$ of the first relevant item and suits single-answer tasks; **hit rate@k** only asks whether the held-out item is in the top $k$; **recall@k** is the right lens for retrieval stages.",
+    "Accuracy metrics ignore what the list looks like as a whole. **Coverage** (share of the catalogue ever recommended) and **novelty** (mean $-\\log_2$ popularity) detect a system that only recommends hits.",
+    "**MMR** re-ranks greedily: pick $\\arg\\max_{d} \\lambda\\,\\text{rel}(d) - (1-\\lambda)\\max_{d' \\in S}\\text{sim}(d, d')$, trading a little relevance for less redundancy.",
+    "Ranking against a small sample of negatives (rank among 100 random items) can reverse model comparisons; rank against the full catalogue when you can."
+   ],
+   "a": "## What a ranking metric must capture\nA user sees a list, mostly the first few slots. A good metric for that list has three properties: it rewards relevant items, it rewards them more the higher they appear, and it is normalised so that values are comparable across users with different numbers of relevant items. System Design's \"Search evaluation metrics\" lesson introduces precision@k, MAP and NDCG for search; this lesson focuses on how they behave in recommendation and what else you need.\n\n## The core metrics\nLet $rel_p$ be the relevance of the item at position $p$ (binary, or graded such as 0 = not watched, 1 = watched, 2 = finished).\n\n$$\\text{DCG@}k = \\sum_{p=1}^{k} \\frac{2^{rel_p}-1}{\\log_2(p+1)}, \\qquad \\text{NDCG@}k = \\frac{\\text{DCG@}k}{\\text{IDCG@}k}$$\n\nIDCG@k is the DCG of the best possible ordering of that user's relevant items. The log discount means position 1 has weight 1.0, position 2 has 0.63, position 10 has 0.29. The $2^{rel}-1$ gain makes a highly relevant item much more valuable than a marginal one; with binary relevance it reduces to 1.\n\n| Metric | Question it answers | Good for | Blind spot\n| Hit rate@k | is the held-out item in the top k? | leave-one-out evaluation | position within the top k\n| Recall@k | what share of relevant items made the top k? | retrieval stages, large k | ordering\n| MRR | how high is the first relevant item? | one right answer (next song) | everything after the first hit\n| NDCG@k | how close to the ideal order is the list? | ranking stages, graded labels | absolute quality: 1.0 can still be a poor list if labels are poor\n| Coverage | what share of the catalogue is ever shown? | detecting popularity collapse | relevance\n| Novelty | how unpopular (surprising) are the shown items? | balancing discovery | relevance\n\n```python\nimport numpy as np\ndef ndcg_at_k(ranked_rels, all_rels, k=10):\n    rel = np.asarray(ranked_rels[:k], float)\n    disc = 1.0 / np.log2(np.arange(2, rel.size + 2))\n    dcg = ((2 ** rel - 1) * disc).sum()\n    ideal = np.sort(np.asarray(all_rels, float))[::-1][:k]\n    idcg = ((2 ** ideal - 1) * disc[:ideal.size]).sum()\n    return dcg / idcg if idcg > 0 else 0.0\n```\n\nUsers with no relevant items in the test window have IDCG = 0. Decide explicitly whether they are dropped or counted as 0, and report it; that choice alone can move NDCG by several points.\n\n! Example: same hits, different scores\n! A user has two relevant items. List A puts them at positions 1 and 5; list B at positions 4 and 5. Hit rate@5 = 1 for both, recall@5 = 1 for both. MRR: A = 1, B = 0.25. NDCG@5 with binary relevance: IDCG = 1 + 0.631 = 1.631; DCG(A) = 1 + 0.387 = 1.387, NDCG 0.85; DCG(B) = 0.431 + 0.387 = 0.818, NDCG 0.50. Only the position-aware metrics see that B buries the best item.\n\n## Sampled metrics can mislead\nRanking each test item against the full catalogue costs one score per item per test user, so many papers rank the held-out item among 100 random unobserved items instead. Krichene and Rendle (2020) showed that sampled hit rate and NDCG are not consistent with their full-catalogue versions: a model that is better on the full ranking can look worse on the sampled one, because beating 100 random (mostly obscure) items is easy and the metric saturates. If you must sample, apply their correction, or at least validate the ranking of models on a full-catalogue run.\n\n## Beyond accuracy: what the list looks like\nA system can score well on NDCG by recommending the same 500 popular items to everyone, because popular items are, on average, what people interact with next. Two cheap aggregate metrics catch this:\n- **Catalogue coverage**: $|\\bigcup_u \\text{top}_k(u)| / |\\text{catalogue}|$. If it falls from 30% to 4% after a model change, the new model is a popularity list with extra steps.\n- **Novelty**: average of $-\\log_2 p(i)$ over recommended items, where $p(i)$ is the item's share of interactions. Higher means less obvious recommendations.\n- **Intra-list diversity**: mean pairwise dissimilarity within one user's list, using embedding or category similarity.\n\n## Re-ranking with MMR\nThe ranker scores items independently, so near-duplicates (five episodes of the same show, six colours of the same shirt) can fill the top slots. Maximal marginal relevance, from Carbonell and Goldstein's 1998 work on search summarisation, builds the final list greedily:\n\n%%flow MMR re-ranking: each step picks the candidate with the best balance of its own relevance against similarity to what is already chosen.\nRanked candidates -(score: relevance minus similarity penalty)-> Pick best -(append to list)-> *Selected list -(update max-similarity)-> Pick best\n%%\n\n$$d^* = \\arg\\max_{d \\in C \\setminus S} \\Big[\\lambda\\,\\text{rel}(d) - (1-\\lambda)\\max_{d' \\in S}\\text{sim}(d, d')\\Big]$$\n\nWith $\\lambda = 1$ it returns the ranker's order; with $\\lambda = 0.7$ a candidate that is 0.95 similar to something already chosen needs a relevance about 0.4 higher to win the slot. Relevance and similarity must be on comparable scales (normalise ranker scores to $[0,1]$ per request). Cost is $O(k \\cdot |C|)$ similarity lookups, fine for 500 candidates and $k = 20$. Determinantal point processes are a more principled alternative used at YouTube; MMR remains the default because it is easy to tune and explain.\n\nRe-ranking always costs some offline NDCG, because offline labels reward predicting what users did under the old, less diverse system. Whether diversity helps is an online question (09.04): measure long-term engagement and return rate, not just next-click.\n\n> Takeaway: use recall@k for retrieval, NDCG or MRR for ranking, always alongside coverage and novelty, and treat diversity re-ranking as a product decision validated online rather than by offline accuracy.",
+   "q": "A new ranker improves offline NDCG@10 by 4% over production but catalogue coverage of the top-10 lists drops from 22% to 6%. Your manager asks whether to ship. What would you check, and what would you do?",
+   "s": "The coverage collapse suggests the gain comes from recommending popular items more often, which offline labels reward because they were collected under a system that already favoured them. First check whether the NDCG gain survives a full-catalogue evaluation on a time split and whether it is concentrated in heavy users or popular items, by slicing NDCG by item popularity bucket. Check novelty and per-user intra-list diversity too. Then add a re-ranking stage (MMR or a popularity-aware penalty) and tune it so coverage recovers while most of the NDCG gain remains. Finally, decide with an online A/B test whose primary metric reflects long-term value (sessions per user, retention), with coverage and creator-side exposure as guardrails, rather than shipping on offline NDCG alone.",
+   "r": [
+    [
+     "Carbonell and Goldstein, The Use of MMR, Diversity-Based Reranking (1998)",
+     "https://www.cs.cmu.edu/~jgc/publication/The_Use_MMR_Diversity_Based_LTMIR_1998.pdf",
+     "The original MMR formulation; two pages of method."
+    ],
+    [
+     "Krichene and Rendle, On Sampled Metrics for Item Recommendation (2020)",
+     "https://research.google/pubs/on-sampled-metrics-for-item-recommendation/",
+     "Why ranking against sampled negatives can flip model comparisons, and corrected estimators."
+    ],
+    [
+     "Discounted cumulative gain (Wikipedia)",
+     "https://en.wikipedia.org/wiki/Discounted_cumulative_gain",
+     "Compact definitions of DCG, IDCG and NDCG with a worked example and the two gain variants."
+    ]
+   ],
+   "k": [
+    "NDCG",
+    "diversity"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "ndcg-at-k",
+    "hit-rate-and-mrr",
+    "mmr-diversity-rerank",
+    "catalog-coverage-and-novelty",
+    "precision-recall-at-k"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,13 @@
+{"id": "diffusion", "group": "Build from Scratch", "title": "Build a Diffusion Model from Scratch",
+ "blurb": "Write every piece of a denoising diffusion model in NumPy: the noise schedule, the forward process, a small time-conditioned denoiser, the training loss, and the DDPM, DDIM and ODE samplers. The last sections connect it to score matching and flow matching and finish with a complete train-and-sample loop.",
+ "prereq": "Comfort with NumPy broadcasting and the basic properties of the normal distribution (sums, scaling, mean and variance) is enough to start.",
+ "next": "Scale the toy pieces into a real PyTorch model trained on images, then explore latent diffusion, distillation for few-step sampling, and text conditioning with cross-attention.",
+ "sections": [
+  {"name": "Gaussian Foundations", "problems": ["reparameterized-gaussian-sample", "diagonal-gaussian-kl-divergence", "gaussian-mixture-score"]},
+  {"name": "Forward Process and Noise Schedules", "problems": ["linear-beta-schedule", "cosine-noise-schedule", "forward-diffusion-sample", "rescale-to-zero-terminal-snr"]},
+  {"name": "The Denoising Network", "problems": ["sinusoidal-timestep-embedding", "time-conditioned-residual-block", "spatial-self-attention-block", "tiny-u-net-forward-pass"]},
+  {"name": "Training Objective", "problems": ["noise-prediction-loss", "posterior-mean-and-variance", "prediction-parameterization", "min-snr-loss-weighting"]},
+  {"name": "Sampling", "problems": ["ddpm-ancestral-step", "classifier-free-guidance", "ddim-step", "karras-euler-sampler"]},
+  {"name": "Score and Flow View", "problems": ["denoising-score-matching-loss", "annealed-langevin-dynamics", "conditional-flow-matching-loss"]},
+  {"name": "Evaluation, Transformers and Capstone", "problems": ["frechet-distance-between-feature-sets", "dit-patchify-and-adaln-zero-block", "toy-diffusion-training-step", "toy-ddpm-sampler"]}
+ ]}

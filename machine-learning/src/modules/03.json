@@ -1,0 +1,194 @@
+{
+ "n": "03",
+ "name": "Probabilistic and instance-based models",
+ "lessons": [
+  {
+   "id": "03.01",
+   "t": "Naive Bayes",
+   "n": [
+    "A **generative** classifier models $p(y)$ and $p(x \\mid y)$ and classifies with Bayes' rule, $p(y \\mid x) \\propto p(y)\\,p(x \\mid y)$; a discriminative one (logistic regression) models $p(y \\mid x)$ directly.",
+    "Naive Bayes assumes features are **conditionally independent given the class**, so $p(x \\mid y) = \\prod_j p(x_j \\mid y)$: $d$ simple estimates per class instead of an exponential joint table.",
+    "The assumption is usually false, so the probabilities are overconfident (correlated evidence is counted twice), but the argmax is often still right.",
+    "Pick the variant by feature type: Gaussian for continuous, multinomial for counts (text), Bernoulli for binary presence; multinomial NB is a linear classifier in the counts.",
+    "**Smoothing** (add $\\alpha$ to every count) stops one unseen feature from forcing a class probability to exactly zero."
+   ],
+   "a": "## Where this module goes\nModule 02 fitted $p(y \\mid x)$ or a decision function directly. Those are **discriminative** models. This module covers two different families. **Generative** classifiers model how each class produces its inputs, $p(x \\mid y)$, together with class frequencies $p(y)$, and turn that into a prediction with Bayes' rule: naive Bayes here, discriminant analysis in 03.03. **Instance-based** methods skip the model and compare a query to stored examples: k-nearest neighbours in 03.02. The module ends with calibration (03.04), which asks whether any classifier's probabilities mean what they say. Bayes' rule itself is covered in ML Maths (lesson 10.01).\n\n## Generative classification and the independence assumption\nBayes' rule gives\n\n$$p(y = k \\mid x) = \\frac{p(y = k)\\,p(x \\mid y = k)}{\\sum_c p(y = c)\\,p(x \\mid y = c)}.$$\n\nThe prior $p(y = k)$ is just the class frequency. The hard part is the class-conditional density $p(x \\mid y)$. With $d = 30$ binary features, a full table needs $2^{30} - 1 \\approx 10^9$ probabilities per class, far more than any dataset can estimate.\n\nNaive Bayes makes one strong assumption: given the class, features are independent,\n\n$$p(x \\mid y = k) = \\prod_{j=1}^{d} p(x_j \\mid y = k).$$\n\nNow each class needs $d$ one-dimensional estimates, which take a single pass over the data to compute: counting, no optimisation. Classify by the largest log-posterior, $\\log p(y = k) + \\sum_j \\log p(x_j \\mid y = k)$; working in logs avoids multiplying hundreds of small numbers into underflow.\n\n%%flow Naive Bayes fits by counting and predicts by adding log-probabilities, one term per feature.\nTraining data -(count per class)-> Priors and per-feature likelihoods -(new x: sum logs)-> Log-posterior per class -(argmax)-> *Prediction\n%%\n\n## Why it works anyway, and where it doesn't\nWords in an email are not independent given \"spam\": \"free\" and \"offer\" co-occur. So why does naive Bayes classify text well? Classification only needs the right class to have the highest score, not correct probabilities. Correlated features push the score in the same direction more than once, which inflates its size but often leaves its sign intact.\n\nThe cost shows up in the probabilities. If one feature is duplicated, its log-likelihood ratio is added twice, which is the same as squaring its likelihood ratio. Posteriors get pushed toward 0 and 1, so naive Bayes probabilities are typically overconfident and need calibration (03.04) before you use them as probabilities.\n\nNg and Jordan compared naive Bayes with logistic regression, its discriminative counterpart. Naive Bayes approaches its best error with far fewer examples (on the order of $\\log d$ rather than $d$), but logistic regression usually reaches a lower error once data is plentiful. That is the generative trade in general: a stronger assumption buys sample efficiency at the price of bias when the assumption is wrong. With a few hundred labelled documents, naive Bayes is a strong baseline; with a million, logistic regression on the same features usually wins.\n\n## Variants by feature type\n| Variant | Feature type | Model of p(x_j given y) | Typical use\n| Gaussian | continuous | normal with per-class mean and variance | sensor or tabular features\n| Multinomial | counts | word-frequency distribution over the vocabulary | text classification with counts or TF-IDF\n| Bernoulli | binary | presence or absence per feature | short texts, binary flags\n| Complement | counts | fitted on all other classes | imbalanced text classes\n\nTwo facts help in interviews and in debugging. **Multinomial NB is linear**: its log-posterior is $\\log\\pi_k + \\sum_j x_j\\log\\theta_{kj}$, a weight per word times its count. It is a linear classifier with weights set by counting instead of by optimisation. **Bernoulli NB also penalises absence**: a word typical of spam that is missing from a message lowers the spam score, which multinomial NB ignores. And Gaussian NB is QDA with diagonal covariance matrices, which ties it to lesson 03.03.\n\n## Smoothing\nThe maximum-likelihood estimate for multinomial NB is $\\theta_{kj} = N_{kj}/N_k$, the share of word $j$ among all words in class $k$. If a word never appeared in spam during training, $\\theta = 0$, its log is $-\\infty$, and any message containing it can never be spam, however much other evidence there is. Additive smoothing fixes this:\n\n$$\\theta_{kj} = \\frac{N_{kj} + \\alpha}{N_k + \\alpha d}.$$\n\n$\\alpha = 1$ is Laplace smoothing, $\\alpha < 1$ is Lidstone. It equals the posterior mean under a symmetric Dirichlet prior. Tune $\\alpha$ by cross-validation on a log grid; for large vocabularies, values like 0.01 to 0.1 often beat 1.\n\n```python\nimport numpy as np\ndef fit_mnb(X, y, alpha=1.0):          # X: (n, d) word counts, y: (n,) labels\n    classes = np.unique(y)\n    log_prior = np.log([np.mean(y == c) for c in classes])\n    counts = np.stack([X[y == c].sum(axis=0) for c in classes]) + alpha\n    log_theta = np.log(counts / counts.sum(axis=1, keepdims=True))\n    return classes, log_prior, log_theta\n\ndef predict_mnb(model, X):\n    classes, log_prior, log_theta = model\n    return classes[np.argmax(X @ log_theta.T + log_prior, axis=1)]   # linear in counts\n```\n\n! Example: a four-word spam filter\n! Vocabulary: free, win, meeting, report. Training word counts are spam (3, 2, 0, 1), total 6, and ham (1, 0, 4, 3), total 8. Priors: spam 0.4, ham 0.6.\n! With $\\alpha = 1$ and $d = 4$: spam $\\theta = (4, 3, 1, 2)/10 = (0.4, 0.3, 0.1, 0.2)$; ham $\\theta = (2, 1, 5, 4)/12 = (0.167, 0.083, 0.417, 0.333)$.\n! Message \"free win meeting\": spam score $0.4 \\cdot 0.4 \\cdot 0.3 \\cdot 0.1 = 0.0048$; ham score $0.6 \\cdot 0.167 \\cdot 0.083 \\cdot 0.417 = 0.0035$. Normalised, $p(\\text{spam}) = 0.58$.\n! Without smoothing, spam's count for \"meeting\" is 0, so the spam score is exactly 0 and the filter is certain the message is ham, despite \"free\" and \"win\".\n\n> Takeaway: naive Bayes is a generative classifier that trains by counting under a conditional-independence assumption. It is fast, data-efficient and a strong text baseline, but smooth the counts and don't trust its probabilities without calibration.\n",
+   "q": "Through a pipeline bug, every token in your documents is counted twice (each word's count is doubled, and a copied bigram feature duplicates most unigrams). How does this affect a multinomial naive Bayes classifier's predicted classes and probabilities, compared with an L2-regularised logistic regression trained on the same features?",
+   "s": "For naive Bayes, the log-posterior is $\\log\\pi_k + \\sum_j x_j\\log\\theta_{kj}$. Doubling every count doubles the likelihood term while the prior term stays the same, so the evidence now outweighs the prior twice as heavily. Predictions can flip toward the class the words favour, especially for rare classes whose prior was holding them back. Posteriors are pushed further toward 0 and 1, because each likelihood ratio is effectively squared. Duplicated features have the same effect, since their evidence is counted twice. Logistic regression learns its weights by maximising conditional likelihood. If the counts double, it can halve its weights; if a feature is duplicated, L2 splits the weight between the copies. In both cases its predictions and probabilities stay roughly unchanged. Discriminative training corrects for redundancy; naive Bayes, by assumption, cannot.",
+   "r": [
+    [
+     "On Discriminative vs. Generative Classifiers",
+     "https://papers.nips.cc/paper/2001/hash/7b7a53e239400a13bd6be6c91c4f6c4e-Abstract.html",
+     "Ng and Jordan (NeurIPS 2001): naive Bayes converges faster, logistic regression ends lower."
+    ],
+    [
+     "Cornell CS4780 lecture notes: Bayes Classifier and Naive Bayes",
+     "https://www.cs.cornell.edu/courses/cs4780/2018fa/lectures/lecturenote05.html",
+     "Derivation of the variants and the proof that multinomial NB is linear."
+    ],
+    [
+     "scikit-learn: Naive Bayes",
+     "https://scikit-learn.org/stable/modules/naive_bayes.html",
+     "Gaussian, multinomial, complement and Bernoulli NB, with their smoothing parameters."
+    ]
+   ],
+   "k": [
+    "generative models",
+    "smoothing"
+   ],
+   "x": [
+    "NumPy",
+    "scikit-learn"
+   ],
+   "p": [
+    "text-classification",
+    "gaussian-naive-bayes",
+    "bayes-theorem",
+    "n-gram-language-model",
+    "bag-of-words"
+   ]
+  },
+  {
+   "id": "03.02",
+   "t": "k-nearest neighbours",
+   "n": [
+    "kNN stores the training set and predicts by majority vote (or mean) of the $k$ closest points: no training cost, $O(nd)$ work per query by brute force.",
+    "The distance metric *is* the model: unscaled features let the largest-unit feature dominate, and irrelevant features add noise to every distance.",
+    "Small $k$ means low bias and high variance (1-NN has zero training error); large $k$ smooths toward the majority class. Choose $k$ by cross-validation.",
+    "In high dimensions neighbourhoods stop being local: to capture 1% of uniform data in 10 dimensions you need a cube spanning 63% of each axis, and distances concentrate.",
+    "kNN works when data lie near a low-dimensional manifold or in a learned embedding space; at scale it relies on tree indexes or approximate nearest-neighbour search."
+   ],
+   "a": "## The algorithm\nk-nearest neighbours is the purest instance-based method. \"Training\" is storing the data. To predict for a query $x$:\n1. Compute its distance to every training point.\n2. Take the $k$ closest.\n3. Classification: majority vote among their labels, optionally weighted by $1/\\text{distance}$. Regression: their mean.\n\nThere is no fitted parameter vector, so kNN can represent arbitrarily complicated boundaries given enough data. A classic result (Cover and Hart, 1967) says that as $n \\to \\infty$ the 1-NN error is at most twice the Bayes error, which is remarkable for a method with no training. The catch is in \"as $n \\to \\infty$\": the data needed grows quickly with dimension.\n\n%%flow Every prediction scans the stored data; the metric and k are the only modelling choices.\nQuery x -(distance to all n points)-> Sorted distances -(take k smallest)-> *k neighbours -(vote or average)-> Prediction\n%%\n\n## The distance metric is the model\nkNN has no weights to learn which features matter, so the metric decides.\n\n| Metric | Formula | Use when\n| Euclidean | $\\sqrt{\\sum_j (x_j - x'_j)^2}$ | continuous, standardised features\n| Manhattan | $\\sum_j |x_j - x'_j|$ | robust to a single large coordinate difference\n| Cosine distance | $1 - \\frac{x^\\top x'}{\\|x\\|\\|x'\\|}$ | direction matters, length doesn't: text, embeddings\n| Mahalanobis | $\\sqrt{(x - x')^\\top S^{-1}(x - x')}$ | correlated features with a known covariance\n| Hamming | number of differing coordinates | categorical or binary codes\n\nTwo failure modes come up constantly:\n- **Scale.** With income in dollars (spread around 30,000) and age in years (spread around 12), Euclidean distance is essentially income distance. Standardise with training statistics, and apply the same transform to queries.\n- **Irrelevant features.** Each useless feature adds random variation to every distance. With 5 useful and 50 noise features, nearest neighbours are mostly chosen by noise. Feature selection or a learned metric matters more for kNN than for any model in module 02, which can set an irrelevant weight to zero.\n\n## Choosing k\n$k$ is the complexity knob, running in the opposite direction from most knobs. With $k = 1$ every training point is its own neighbour: zero training error, a jagged boundary that wraps around every noisy label, high variance. As $k$ grows, predictions average over more points and the boundary smooths. At $k = n$ every query gets the majority class. Validation error against $k$ is U-shaped, as lesson 01.02 predicts, and a rough sense of effective complexity is $n/k$ \"parameters\".\n\nPractical rules: choose $k$ by cross-validation over values like 1, 3, 5, ..., 51; prefer odd $k$ for binary problems to avoid ties; use distance weighting when the closest neighbours are much closer than the $k$-th; and expect larger optimal $k$ with noisier labels.\n\n## The curse of dimensionality\nkNN assumes your neighbours are similar to you. In high dimensions there are no close neighbours.\n\n**Volume.** Put $n$ points uniformly in the unit cube $[0,1]^d$. A sub-cube capturing a fraction $r$ of the points needs edge length $r^{1/d}$. For $r = 0.01$: 0.1 in 2 dimensions, 0.63 in 10, 0.955 in 100. A neighbourhood holding 1% of the data spans almost the whole range of every feature, so it is not local any more.\n\n**Distance concentration.** For many independent features, the distances from a query to its nearest and farthest points become nearly equal: the ratio $(\\text{max} - \\text{min})/\\text{min}$ shrinks toward 0 as $d$ grows. When everything is about equally far away, \"nearest\" carries little information.\n\n**Sample size.** To keep the same neighbourhood size as $d$ grows, $n$ must grow exponentially in $d$.\n\nkNN still works in practice for two reasons. Real data usually lie near a low-dimensional manifold: images of digits have 784 pixels but far fewer real degrees of freedom. And you can move to a space where distance means something: PCA (module 05) or a learned embedding, where kNN becomes retrieval.\n\n## Making it fast\nBrute force is $O(nd)$ per query, which is fine for $10^5$ points and vectorises well:\n\n```python\nimport numpy as np\ndef knn_predict(Xtr, ytr, Xq, k=5):           # ytr: non-negative int labels\n    d2 = (Xq**2).sum(1)[:, None] + (Xtr**2).sum(1)[None, :] - 2 * Xq @ Xtr.T\n    idx = np.argpartition(d2, k, axis=1)[:, :k]   # k smallest, unordered: O(n) per row\n    return np.array([np.bincount(row).argmax() for row in ytr[idx]])\n```\n\nKD-trees and ball trees give exact answers faster in low dimensions (roughly $d \\lesssim 20$) but degrade to brute force beyond that, the curse again. For millions of embedding vectors, use approximate nearest-neighbour indexes such as HNSW or IVF, which trade a little recall for orders-of-magnitude speed; the AI Engineering course (lessons 02.06-02.07) covers them.\n\n! Example: k changes the answer\n! Red points at (1, 1) and (2, 1); blue points at (3, 2.2), (4, 3) and (5, 4). Query (2.5, 1.5).\n! Distances: (2, 1) 0.71 red, (3, 2.2) 0.86 blue, (1, 1) 1.58 red, (4, 3) 2.12 blue, (5, 4) 3.54 blue.\n! $k = 1$: red. $k = 3$: red 2, blue 1, so red. $k = 5$: blue 3, red 2, so blue. Multiply the second coordinate by 100 (a unit change) and the neighbour order is set almost entirely by that coordinate: the answer depends on units, not on the problem.\n\n> Takeaway: kNN is only as good as its distance. Standardise, drop irrelevant features, pick k by cross-validation, and in high dimensions move to a space (PCA or a learned embedding) where nearness means similarity.\n",
+   "q": "A kNN classifier gets 90% accuracy on a 5-feature problem. You append 50 features of pure random noise (same scale as the standardised real features). Predict what happens to kNN's accuracy and to an L1-regularised logistic regression's accuracy, and explain the difference.",
+   "s": "kNN degrades sharply, likely toward chance. Squared Euclidean distance is a sum over features, so the 50 noise features contribute about 10 times as much variation as the 5 real ones. Neighbours are then chosen mostly by noise, and the vote is close to random among nearby labels. Distances also concentrate as dimension rises, so the nearest points are barely nearer than the rest. kNN has no mechanism to discount a feature. L1-regularised logistic regression barely changes. Each noise feature has near-zero correlation with the label, so its coefficient falls below the soft-threshold and is set exactly to zero, leaving essentially the original 5-feature model. There is a small variance cost from occasional spurious selections. The lesson: models that learn per-feature weights can ignore junk, while kNN needs feature selection or a learned metric done for it.",
+   "r": [
+    [
+     "Cornell CS4780 lecture notes: k-Nearest Neighbors",
+     "https://www.cs.cornell.edu/courses/cs4780/2018fa/lectures/lecturenote02_kNN.html",
+     "The algorithm, the Cover-Hart bound and a clear treatment of the curse of dimensionality."
+    ],
+    [
+     "scikit-learn: Nearest Neighbors",
+     "https://scikit-learn.org/stable/modules/neighbors.html",
+     "Brute force vs KD-tree vs ball tree, when each wins, and the available metrics."
+    ],
+    [
+     "The Elements of Statistical Learning, ch. 2.5 and 13",
+     "https://hastie.su.domains/ElemStatLearn/",
+     "Local methods in high dimensions (the edge-length calculation) and prototype methods."
+    ]
+   ],
+   "k": [
+    "distance metrics",
+    "curse of dimensionality"
+   ],
+   "x": [
+    "NumPy",
+    "scikit-learn"
+   ],
+   "p": [
+    "knn-classifier",
+    "distance-metrics",
+    "euclidean-distance",
+    "feature-scaling",
+    "embedding-similarity"
+   ]
+  },
+  {
+   "id": "03.03",
+   "t": "Discriminant analysis",
+   "n": [
+    "Discriminant analysis is a generative classifier with Gaussian class-conditionals $p(x \\mid y = k) = \\mathcal{N}(\\mu_k, \\Sigma_k)$, fitted by class means, covariances and frequencies: no iterative optimisation.",
+    "**QDA** gives each class its own $\\Sigma_k$, so boundaries are quadratic; it needs $K\\,d(d+1)/2$ covariance parameters and breaks when a class has fewer than $d$ samples.",
+    "**LDA** shares one $\\Sigma$ across classes; the quadratic terms cancel and the boundary is linear, $w = \\Sigma^{-1}(\\mu_1 - \\mu_0)$ for two classes.",
+    "LDA and logistic regression have the same functional form but are fitted differently: LDA is more data-efficient if the Gaussian assumption holds, logistic regression more robust when it doesn't.",
+    "Shrinking covariance estimates (toward a pooled or diagonal matrix) interpolates between QDA, LDA and Gaussian naive Bayes."
+   ],
+   "a": "## Gaussian class-conditionals\nNaive Bayes (03.01) made the class-conditional density easy by assuming independent features. Discriminant analysis keeps the correlations but assumes a shape: each class is a multivariate Gaussian,\n\n$$p(x \\mid y = k) = \\mathcal{N}(x;\\, \\mu_k, \\Sigma_k).$$\n\nFitting is plug-in maximum likelihood: class frequencies $\\hat\\pi_k$, class means $\\hat\\mu_k$ and covariance estimates. Classification picks the largest **discriminant score**, the log of prior times density with shared constants dropped:\n\n$$\\delta_k(x) = -\\tfrac12\\log|\\Sigma_k| - \\tfrac12(x - \\mu_k)^\\top\\Sigma_k^{-1}(x - \\mu_k) + \\log\\pi_k.$$\n\nThe middle term is minus half the squared Mahalanobis distance from $x$ to the class mean, so the rule is \"nearest mean, measured in each class's own covariance, adjusted for prior and spread\".\n\n%%flow Discriminant analysis fits in one pass: statistics per class, then a score per class at prediction time.\n[Fit] Labelled data -(per class)-> Means and priors -(per class or pooled)-> *Covariance estimates\n[Predict] New x -(Mahalanobis distance to each mean)-> Discriminant scores -(argmax)-> Class\n%%\n\n## QDA: one covariance per class\nWith a separate $\\Sigma_k$ per class, $\\delta_k$ is quadratic in $x$ and so are the boundaries $\\delta_k = \\delta_j$: ellipses, parabolas, hyperbolas. That flexibility costs parameters, $K\\big(d + d(d+1)/2\\big)$ in all; for $d = 50$ and $K = 3$, that is 3,975. Each $\\Sigma_k$ is estimated from that class's $n_k$ points only, and if $n_k \\le d$ the estimate is singular and $\\Sigma_k^{-1}$ does not exist. Even with $n_k$ a few times $d$, the smallest eigenvalues are badly underestimated and their inverses blow up the scores.\n\n## LDA: one shared covariance\nAssume all classes share $\\Sigma$, estimated by pooling within-class scatter from every class. Then $-\\tfrac12 x^\\top\\Sigma^{-1}x$ is the same for every class and cancels, leaving a linear score:\n\n$$\\delta_k(x) = x^\\top\\Sigma^{-1}\\mu_k - \\tfrac12\\mu_k^\\top\\Sigma^{-1}\\mu_k + \\log\\pi_k.$$\n\nFor two classes the boundary is the hyperplane with normal $w = \\Sigma^{-1}(\\mu_1 - \\mu_0)$. If $\\Sigma$ were the identity, this would point straight from one mean to the other; $\\Sigma^{-1}$ tilts it away from directions where the classes are naturally spread out.\n\n**LDA versus logistic regression.** Both give $\\log\\frac{p(y=1 \\mid x)}{p(y=0 \\mid x)} = w^\\top x + b$. LDA estimates $w$ from means and a covariance, using the full joint distribution of $x$. Logistic regression maximises the conditional likelihood and ignores how $x$ is distributed. When the classes really are Gaussian with shared covariance, LDA extracts more from each example. When they aren't (heavy tails, outliers, binary or skewed features), logistic regression is more robust, because a far-away outlier moves LDA's mean and covariance but barely moves logistic regression's boundary.\n\n**Fisher's view.** Independently of any Gaussian story, LDA's directions maximise between-class variance relative to within-class variance. There are at most $K - 1$ such directions, which makes LDA a supervised dimensionality reduction: project 50 features onto 2 directions to plot a 3-class problem. In scikit-learn, `LinearDiscriminantAnalysis.transform` does exactly this.\n\n## The family, and shrinkage\n| Model | Covariance assumption | Boundary | Covariance parameters | Good when\n| Gaussian naive Bayes | diagonal, per class | quadratic, axis-aligned | K d | many features, little data\n| LDA | full, shared | linear | d(d+1)/2 | moderate data, similar class shapes\n| QDA | full, per class | quadratic | K d(d+1)/2 | plenty of data per class, different shapes\n| Logistic regression | none (discriminative) | linear | none | non-Gaussian features, enough data\n\nThese are points on a continuum. **Regularised discriminant analysis** blends $\\Sigma_k(\\alpha) = \\alpha\\hat\\Sigma_k + (1 - \\alpha)\\hat\\Sigma_{\\text{pooled}}$ to move between QDA and LDA, and shrinks further toward a scaled identity to stabilise inverses. **Ledoit-Wolf shrinkage** chooses the shrinkage amount analytically; in scikit-learn, `LinearDiscriminantAnalysis(solver=\"lsqr\", shrinkage=\"auto\")` uses it and is the right default when $d$ is not small relative to $n$.\n\n```python\nimport numpy as np\ndef lda_fit(X, y):\n    classes = np.unique(y)\n    mu = np.stack([X[y == c].mean(0) for c in classes])\n    Xc = X - mu[np.searchsorted(classes, y)]          # within-class centring\n    S = Xc.T @ Xc / (len(X) - len(classes))           # pooled covariance\n    W = np.linalg.solve(S, mu.T).T                    # rows: Sigma^-1 mu_k\n    b = -0.5 * (W * mu).sum(1) + np.log([np.mean(y == c) for c in classes])\n    return classes, W, b                              # score = X @ W.T + b\n```\n\n! Example: priors and unequal variances in one dimension\n! Class 0 is $\\mathcal{N}(0, 1)$ and class 1 is $\\mathcal{N}(2, 1)$. With equal priors the LDA boundary is the midpoint, $x = 1$.\n! With $\\pi_1 = 0.2$: the boundary moves to $x = 1 + \\sigma^2\\log(\\pi_0/\\pi_1)/(\\mu_1 - \\mu_0) = 1 + \\ln 4/2 = 1.69$, away from the rarer class.\n! Now let class 1 have variance 4 (QDA, equal priors). Setting $-\\tfrac12 x^2 = -\\tfrac12\\ln 4 - (x-2)^2/8$ gives $3x^2 + 4x - 9.55 = 0$, so $x = 1.24$ or $x = -2.57$. Class 0 wins only between them. The wider class claims both tails, a boundary no linear model can produce.\n\n> Takeaway: discriminant analysis is Gaussian generative classification. Shared covariance gives LDA's linear boundary, per-class covariance gives QDA's quadratic one, and shrinkage between them is how you make either work when features are many and samples few.\n",
+   "q": "You have 200 features, 3 classes and 150 training samples per class. QDA crashes or performs terribly, LDA does reasonably, and LDA with shrinkage does best. Explain each outcome in terms of what is being estimated.",
+   "s": "QDA estimates a separate $200 \\times 200$ covariance per class, 20,100 free parameters each, from 150 points. A sample covariance from 150 points has rank at most 149, so it is singular and cannot be inverted. Even with a pseudo-inverse or a tiny ridge, the near-zero eigenvalues make the Mahalanobis terms explode along directions the data never explored. LDA pools all 450 points into one covariance, rank up to 447, so it is invertible. But with 20,100 parameters from 450 points the small eigenvalues are still underestimated and the inverse is noisy, which costs accuracy. Shrinkage (Ledoit-Wolf, or blending toward a scaled identity or diagonal) trades a little bias for a big drop in variance: it lifts the small eigenvalues and stabilises $\\Sigma^{-1}$. That is the bias-variance trade from module 01, applied to the covariance estimate instead of the weights.",
+   "r": [
+    [
+     "scikit-learn: Linear and Quadratic Discriminant Analysis",
+     "https://scikit-learn.org/stable/modules/lda_qda.html",
+     "The maths of both, LDA as dimensionality reduction, and Ledoit-Wolf shrinkage with the lsqr solver."
+    ],
+    [
+     "The Elements of Statistical Learning, ch. 4.3",
+     "https://hastie.su.domains/ElemStatLearn/",
+     "LDA, QDA, regularised discriminant analysis and Fisher's reduced-rank view."
+    ],
+    [
+     "An Introduction to Statistical Learning",
+     "https://www.statlearning.com/",
+     "Chapter 4 compares LDA, QDA, naive Bayes and logistic regression on the same problems. Free PDF."
+    ]
+   ],
+   "k": [
+    "generative models",
+    "covariance shrinkage"
+   ],
+   "x": [
+    "NumPy",
+    "scikit-learn"
+   ],
+   "p": [
+    "linear-discriminant-analysis",
+    "gaussian-naive-bayes",
+    "mahalanobis-distance",
+    "maximum-likelihood-estimation",
+    "gradient-of-multivariate-gaussian-log-pdf"
+   ]
+  },
+  {
+   "id": "03.04",
+   "t": "Calibrated probabilities",
+   "n": [
+    "A classifier is **calibrated** if, among cases where it predicts $p$, the event happens a fraction $p$ of the time; this is separate from discrimination, which AUC measures and any monotone transform leaves unchanged.",
+    "Check it with a **reliability diagram** (mean prediction against observed frequency per bin), and summarise it with ECE alongside a proper scoring rule such as log loss or the Brier score.",
+    "**Platt scaling** fits $\\sigma(a s + b)$ to held-out scores: two parameters, little data needed, good for sigmoid-shaped distortion. Temperature scaling is its one-parameter multiclass cousin.",
+    "**Isotonic regression** fits any non-decreasing map with pool-adjacent-violators: more flexible, but it needs roughly a thousand or more calibration points and can overfit.",
+    "Always calibrate on data the model was not trained on, and recalibrate after resampling, class reweighting or a change in base rate."
+   ],
+   "a": "## What calibration means\nMany decisions use a probability as a number, not just to rank: expected cost $p \\cdot \\text{loss}$, an ad's expected value $p_{\\text{click}} \\times \\text{bid}$, a threshold chosen on last month's data, or combining several models' outputs. These need **calibration**:\n\n$$\\Pr(Y = 1 \\mid \\hat p(X) = p) = p \\quad \\text{for all } p.$$\n\nOf 1,000 emails given spam probability 0.8, about 800 should be spam. Calibration is separate from **discrimination**, how well scores rank positives above negatives. AUC measures ranking only, so any monotone transform of the scores keeps AUC and can wreck or repair calibration. A model can have excellent AUC with useless probabilities; one that predicts the base rate for everyone is perfectly calibrated and useless for ranking.\n\nModels from earlier lessons miscalibrate in characteristic ways:\n- **Naive Bayes**: pushed toward 0 and 1, because correlated evidence is double-counted (03.01).\n- **SVMs**: scores are margins, not probabilities (02.05).\n- **Boosted trees**: often pushed away from 0 and 1, a sigmoid-shaped distortion; **random forests** rarely predict near 0 or 1 because averaging trees pulls them in.\n- **Logistic regression**: usually close to calibrated when well specified and regularised lightly, since it directly optimises log loss.\n- **Modern deep networks**: often overconfident; Guo et al. found temperature scaling fixes much of it.\n\n## Measuring it\nA **reliability diagram** sorts predictions into bins (10 equal-width bins, or equal-count bins when predictions cluster), and plots each bin's mean predicted probability against the observed positive rate. Points on the diagonal mean calibrated; below it means overconfident on the high side.\n\n**Expected calibration error** summarises the gaps, weighted by bin size: $\\mathrm{ECE} = \\sum_b \\frac{n_b}{n}\\,|\\bar y_b - \\bar p_b|$. It is easy to read but depends on the binning and can be gamed (constant predictions score near zero). Report it next to a **proper scoring rule**: log loss or the Brier score $\\frac1n\\sum_i(\\hat p_i - y_i)^2$. Proper scores are minimised by the true probabilities and reward calibration and discrimination together. Module 06 covers the threshold-free ranking metrics; the ML in production module (09) covers monitoring calibration drift after launch.\n\n## Platt scaling and temperature scaling\nPlatt scaling fits a one-feature logistic regression on held-out scores $s$:\n\n$$\\hat p = \\sigma(a\\,s + b),$$\n\nwith $a, b$ chosen to minimise log loss on a calibration set. Two parameters means it needs little data (a few hundred examples) and rarely overfits. It assumes the distortion is sigmoid-shaped, which suits SVM margins and boosted trees well. Platt's paper also replaces 0/1 targets with $(N_+ + 1)/(N_+ + 2)$ and $1/(N_- + 2)$ to avoid overfitting on small sets.\n\n**Temperature scaling** is the multiclass version with one parameter: divide all logits by $T$ before the softmax and fit $T$ on validation log loss. $T > 1$ softens overconfident predictions. Because dividing by a positive constant never changes the argmax, accuracy is untouched.\n\n## Isotonic regression\nWhen the distortion is not sigmoid-shaped, fit an arbitrary non-decreasing step function from score to probability. The **pool-adjacent-violators** algorithm (PAV) does it in linear time after sorting:\n\n```python\ndef pav(y_sorted):                     # labels ordered by increasing score\n    blocks = []                        # each block: [mean, weight]\n    for v in y_sorted:\n        blocks.append([float(v), 1])\n        while len(blocks) > 1 and blocks[-2][0] > blocks[-1][0]:   # violation: merge\n            (m2, w2), (m1, w1) = blocks.pop(), blocks.pop()\n            blocks.append([(m1 * w1 + m2 * w2) / (w1 + w2), w1 + w2])\n    return [m for m, w in blocks for _ in range(w)]\n```\n\nIsotonic regression can fix any monotone distortion, but it has as many degrees of freedom as there are steps. With small calibration sets it overfits, and Niculescu-Mizil and Caruana found Platt better below roughly a thousand calibration points, isotonic better above. Its flat steps also create ties, which can lower AUC slightly.\n\n## Doing it without leakage\n%%flow Calibration is a second model fitted on data the first model never saw, then applied to its scores at serving time.\nTraining split -(fit)-> Classifier -(score)-> Calibration split -(fit Platt or isotonic)-> *Calibrator -(apply at serving)-> Probabilities\n%%\n\n- **Hold-out data.** A model's scores on its own training data are overconfident, so calibrating on them learns the wrong map. Use a separate split, or cross-validation: scikit-learn's `CalibratedClassifierCV(method=\"sigmoid\" or \"isotonic\", cv=5)` fits the calibrator on out-of-fold predictions.\n- **Resampling breaks calibration.** Undersampling negatives or using class weights shifts probabilities toward the minority class. Correct by shifting the logit by $\\log\\frac{\\pi}{1-\\pi} - \\log\\frac{\\pi_s}{1-\\pi_s}$, where $\\pi$ is the true base rate and $\\pi_s$ the training one, or recalibrate on data with the true rate.\n- **Base rates move.** If prevalence changes between training and deployment (prior shift), the same logit correction applies with the new rate. Recalibrate on recent labelled data.\n\n! Example: undoing balanced sampling, then PAV\n! A fraud model is trained on a 1:1 sample, but the true fraud rate is 1%. The logit shift is $\\ln(0.01/0.99) - \\ln(1) = -4.60$. A raw output of 0.5 (logit 0) becomes $\\sigma(-4.60) = 0.01$; a raw 0.9 (logit 2.20) becomes $\\sigma(-2.40) = 0.083$. Without the correction, the cost model would overstate fraud risk by a factor of 10 to 50.\n! PAV on labels sorted by score, $(0, 1, 0, 0, 1, 1)$: the 1 then 0 violate order and pool to 0.5; the next 0 violates again and pools to $1/3$. The result is $(0, \\tfrac13, \\tfrac13, \\tfrac13, 1, 1)$: a monotone step function.\n! ECE contribution of one bin: 200 of 1,000 predictions, mean prediction 0.80, observed rate 0.60, so $0.2 \\times 0.20 = 0.04$.\n\n> Takeaway: ranking quality and probability quality are different. Check calibration with a reliability diagram and a proper score, fix it on held-out data with Platt scaling (little data) or isotonic regression (lots), and recalibrate whenever sampling or base rates change.\n",
+   "q": "Your gradient-boosted model has validation AUC 0.91 but a reliability diagram shows it is overconfident at both ends (ECE 0.12). You have 300 labelled examples not used in training. Do you choose Platt scaling or isotonic regression, what happens to AUC and log loss after calibration, and what mistake would make the calibration itself unreliable?",
+   "s": "Choose Platt scaling. With 300 examples, isotonic regression's step function has too many degrees of freedom and will overfit the noise in each step. Platt's two parameters are well determined, and a symmetric over-confidence pattern is roughly sigmoid-shaped in logit space, which $\\sigma(a s + b)$ with $a < 1$ corrects. Platt's map is strictly increasing, so the ranking is unchanged and AUC stays 0.91. Log loss and Brier score should improve, and ECE should drop substantially. Isotonic could lower AUC slightly through ties. The mistake to avoid is fitting the calibrator on the training data or on the same split used to tune the model. Those scores are optimistically confident, so the calibrator learns too small a correction. Fit on the 300 untouched examples, or use cross-validated calibration. Then evaluate on yet another split, or with cross-validation, because 300 points give a noisy ECE.",
+   "r": [
+    [
+     "Predicting Good Probabilities With Supervised Learning",
+     "https://www.cs.cornell.edu/~alexn/papers/calibration.icml05.crc.rev3.pdf",
+     "Niculescu-Mizil and Caruana (ICML 2005): how each model family miscalibrates, and Platt vs isotonic by data size."
+    ],
+    [
+     "On Calibration of Modern Neural Networks",
+     "https://arxiv.org/abs/1706.04599",
+     "Guo et al. (2017): overconfidence in deep nets, reliability diagrams, ECE and temperature scaling."
+    ],
+    [
+     "scikit-learn: Probability calibration",
+     "https://scikit-learn.org/stable/modules/calibration.html",
+     "Calibration curves, CalibratedClassifierCV and the sigmoid vs isotonic choice."
+    ],
+    [
+     "scikit-learn: Isotonic regression",
+     "https://scikit-learn.org/stable/modules/isotonic.html",
+     "The isotonic model and the pool-adjacent-violators fit behind it."
+    ]
+   ],
+   "k": [
+    "calibration",
+    "reliability diagram"
+   ],
+   "x": [
+    "NumPy",
+    "scikit-learn"
+   ],
+   "p": [
+    "expected-calibration-error",
+    "log-loss-binary-cross-entropy",
+    "logistic-regression",
+    "auc-roc"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,349 @@
+{
+ "n": "01",
+ "name": "NumPy",
+ "lessons": [
+  {
+   "id": "01.01",
+   "t": "Arrays, dtypes and memory layout",
+   "n": [
+    "An `ndarray` is one flat block of memory plus a small header: dtype, shape, strides and an offset. Most NumPy operations that look like they move data only rewrite that header.",
+    "The dtype fixes how many bytes each element takes and what it can hold: float32 keeps about 7 significant digits, float64 about 16, and integer arrays wrap around silently when they overflow.",
+    "Strides are the byte step per axis. In C order the last axis is contiguous, so for a `(3, 4)` float64 array the strides are `(32, 8)`. A transpose just swaps them.",
+    "Vectorised code is fast because one C loop runs over a contiguous typed buffer. A Python loop pays interpreter dispatch and object boxing on every element, which costs 10 to 100 times more."
+   ],
+   "a": "## What an ndarray actually is\nA NumPy array is not a list of numbers. It is a pointer to one contiguous block of raw bytes (the **data buffer**) plus a small header that says how to read those bytes:\n- **dtype**: what each element is (`float32`, `int64`, `bool`, ...) and so how many bytes it takes (`itemsize`).\n- **shape**: the number of elements along each axis, e.g. `(1000, 784)`.\n- **strides**: how many bytes to step to move one position along each axis.\n- **offset and flags**: where in the buffer element `[0, 0]` starts, and whether the memory is C-contiguous, F-contiguous, writeable, or owned by this array.\n\nEverything else follows from this split. Slicing, transposing, adding an axis and most reshapes produce a new header over the *same* buffer. That is why they cost microseconds whatever the array size, and also why they can surprise you when you write through them (next lesson).\n\n%%layers One ndarray = a fixed header that describes a flat byte buffer.\ndtype | float32, itemsize 4 bytes\nshape | (2, 3, 4)\n*strides | (48, 16, 4) bytes per step on each axis\ndata buffer | 24 x 4 = 96 contiguous bytes\n%%\n\n## Strides: from an index to an address\nFor an element at index $(i_0, i_1, \\dots)$ the byte address is\n\n$$\\text{addr} = \\text{offset} + \\sum_k i_k \\cdot \\text{stride}_k$$\n\nIn **C order** (row-major, NumPy's default) the last axis is contiguous: for shape `(2, 3, 4)` and float32 the strides are `(3*4*4, 4*4, 4) = (48, 16, 4)`. In **Fortran order** (column-major, `order='F'`) the first axis is contiguous and the strides would be `(4, 8, 24)`.\n\n%%flow How NumPy finds element [1, 2, 3] of a (2, 3, 4) float32 array.\nIndex (1, 2, 3) -(x strides 48, 16, 4)-> 48 + 32 + 12 -(+ offset)-> *Byte 92 of buffer\n%%\n\nA transpose `a.T` reverses shape and strides and touches no data. The result is F-contiguous, not C-contiguous, and that is fine for most operations. It matters when a function needs a flat, ordered layout: `a.T.reshape(-1)` must copy, and libraries that hand the buffer to C or GPU code (a BLAS call, a PyTorch `from_numpy` followed by a kernel) may need `np.ascontiguousarray(a)` first. Check `a.flags['C_CONTIGUOUS']` when in doubt.\n\n## dtypes and precision\n| dtype | bytes | precision / range | typical use\n| float64 | 8 | about 16 digits, eps 2.2e-16 | NumPy default, statistics, linear algebra\n| float32 | 4 | about 7 digits, eps 1.2e-7, max 3.4e38 | model weights, large feature matrices\n| float16 | 2 | about 3 digits, max 65504 | storage and inference; risky to accumulate in\n| int64 | 8 | plus or minus 9.2e18 | ids, counts, default integer\n| int8 / uint8 | 1 | -128..127 / 0..255 | quantised weights, image pixels\n| bool | 1 | True / False | masks\n\nFour failure modes come up again and again:\n- **Silent integer wrap-around.** Array arithmetic does not check overflow. A `uint8` image minus 128 wraps: `np.array([100], np.uint8) - 128` gives `228`. Cast first: `img.astype(np.int16) - 128` or `img / 255.0`.\n- **Lost increments in low precision.** float32 represents integers exactly only up to $2^{24} = 16{,}777{,}216$; adding 1 to that number in float32 returns the same number. Long running sums and counters belong in float64 or int64.\n- **Unexpected promotion.** Combining arrays promotes to a type that can hold both: `int64` with `float32` gives `float64`, which doubles memory. Since NumPy 2 (NEP 50) a plain Python scalar no longer upcasts an array, so `float32_array * 2.0` stays float32, but `float32_array * np.float64(2.0)` becomes float64.\n- **Default dtypes.** `np.array([1, 2])` is int64 and `np.zeros(n)` is float64. Pass `dtype=` explicitly when memory or a downstream library cares.\n\n## Why vectorised code is fast\nA Python list of a million floats is a million pointers to separately allocated float objects (24 bytes each plus an 8-byte pointer), scattered across the heap. A loop over it does, for every element: fetch the object, check its type, look up `__add__`, allocate a new result object. That is tens of nanoseconds of interpreter work per element.\n\n`x.sum()` on a float64 array does one type dispatch, then runs a compiled loop over 8 MB of contiguous memory. The hardware prefetcher streams it in 64-byte cache lines (8 float64s each), and SIMD instructions add several elements per cycle. On a typical laptop summing $10^7$ floats takes several hundred milliseconds as a Python loop and a few milliseconds in NumPy. The same contiguity argument explains why memory layout matters: traversing along a large stride wastes most of every cache line fetched.\n\n```python\nimport numpy as np\na = np.zeros((2, 3, 4), dtype=np.float32)\na.strides, a.T.strides            # (48, 16, 4) (4, 16, 48)\na.T.flags['C_CONTIGUOUS']         # False: same buffer, new header\nnp.shares_memory(a, a.T)          # True\nx = np.float32(2**24); x + 1 == x # True: the increment is lost\n```\n\n! Example: memory budget for a feature matrix\n! 5 million rows by 300 features. In float64 this is $5 \\times 10^6 \\times 300 \\times 8$ bytes = 12 GB, too large for many machines. In float32 it is 6 GB; ~7 significant digits is plenty for features that came from noisy measurements.\n! Watch for silent upcasts: one `X - X.mean(axis=0)` where the mean was computed in float64 (the `dtype=np.float64` argument, or a float64 array of statistics loaded from disk) creates a fresh 12 GB float64 result. Keep the statistics in float32 or cast with `.astype(np.float32, copy=False)`.\n\n> Takeaway: think of every array as a dtype, a shape and strides over one buffer. The dtype decides precision and memory, the strides decide whether an operation is free or a copy, and contiguous typed memory is the whole reason NumPy beats Python loops.",
+   "q": "X is a C-ordered float32 array of shape (100000, 256). Give X.strides and X.T.strides. Why does X.T cost almost nothing, while X.T.reshape(-1) allocates about 100 MB?",
+   "s": "X.strides is (1024, 4): one row is 256 x 4 = 1024 bytes and neighbours within a row are 4 bytes apart. X.T has shape (256, 100000) and strides (4, 1024). Creating it only writes a new header with the axes and strides swapped, over the same buffer, so the cost does not depend on the array size. reshape(-1) has to return elements in C order of X.T, which means walking down the columns of X: element 0 of row 0, then element 0 of row 1, and so on. In the buffer those elements are 1024 bytes apart, then the next run starts 4 bytes after the first. A single stride cannot describe that sequence for a 1-D result, so NumPy must copy the data into a new contiguous buffer: 100000 x 256 x 4 bytes is about 102 MB.",
+   "r": [
+    [
+     "NumPy reference: The N-dimensional array",
+     "https://numpy.org/doc/stable/reference/arrays.ndarray.html",
+     "The official account of memory layout, strides and C vs Fortran order."
+    ],
+    [
+     "NumPy user guide: Data types",
+     "https://numpy.org/doc/stable/user/basics.types.html",
+     "Every dtype, its range, and the overflow behaviour of integer arrays."
+    ],
+    [
+     "NEP 50: Promotion rules for Python scalars",
+     "https://numpy.org/neps/nep-0050-scalar-promotion.html",
+     "Why NumPy 2 changed how Python scalars affect result dtypes."
+    ],
+    [
+     "van der Walt et al.: The NumPy array (2011)",
+     "https://arxiv.org/abs/1102.1523",
+     "The original paper on the buffer-plus-strides design and why vectorisation is fast."
+    ]
+   ],
+   "k": [
+    "memory layout",
+    "dtypes",
+    "strides"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "create-arrays-from-lists",
+    "int8-symmetric-quantize",
+    "arange-and-linspace",
+    "zeros-and-ones"
+   ]
+  },
+  {
+   "id": "01.02",
+   "t": "Indexing, views and copies",
+   "n": [
+    "Basic indexing (integers, slices, `...`, `None`) returns a **view** that shares memory with the original. Advanced indexing (integer arrays or boolean masks) always returns a **copy**.",
+    "Writing through a view changes the original. Writing to a copy produced by chained indexing like `a[mask][0] = 1` changes nothing, and NumPy gives no warning.",
+    "`a[idx] += 1` with repeated indices adds only once per unique index; use `np.add.at` when duplicates must accumulate.",
+    "`np.where(cond, x, y)` selects element by element but evaluates both `x` and `y` in full first, so it cannot protect you from `log(0)` or division by zero."
+   ],
+   "a": "## Three kinds of indexing\nNumPy has three indexing mechanisms, and the one you use decides whether you get a view or a copy.\n\n| index | example | result shape for a (5, 4) array | view or copy\n| basic: ints and slices | `a[1:4, ::2]` | (3, 2) | view\n| basic: new axis, ellipsis | `a[:, None, :]`, `a[..., 0]` | (5, 1, 4), (5,) | view\n| advanced: integer arrays | `a[[0, 2, 2]]` | (3, 4) | copy\n| advanced: boolean mask | `a[a > 0]` | (k,) for k True entries | copy\n\nBasic indexing can always be expressed as a new offset plus new strides on the same buffer: `a[::2]` just doubles the stride of axis 0. Advanced indexing picks arbitrary positions in arbitrary order, which no single stride can describe, so NumPy gathers the elements into a new buffer. A boolean mask with the same shape as the array flattens the result to 1-D because the number of selected elements per row varies.\n\nTwo tools tell you what you have: `np.shares_memory(a, b)` and `b.base is a` (a view keeps a reference to the array that owns the memory).\n\n## Views share memory, on purpose\nViews make slicing free, and that is usually what you want. Two consequences to keep in mind:\n- **Writes go through.** `col = X[:, 0]; col -= col.mean()` centres column 0 of `X` itself.\n- **A view keeps its whole parent alive.** `first_rows = huge[:10]` holds the entire multi-gigabyte buffer in memory for as long as `first_rows` exists. Use `huge[:10].copy()` when you keep a small piece of a big array.\n\nThe same rules apply to `reshape` and `ravel` (views when the strides allow it) versus `flatten` (always a copy), and to `x.T`.\n\n## The aliasing traps\n%%flow Chained indexing writes into a temporary copy, so the original never changes.\na[mask][0] = 9 -(a[mask] is advanced)-> temporary copy -(item 0 set)-> *copy discarded, a unchanged\n%%\n\n1. **Chained assignment.** `a[mask] = 0` works, because it is a single `__setitem__` call on `a`. `a[mask][0] = 0` first builds a copy with `a[mask]`, then writes into the copy. Combine the steps into one index instead: `a[np.flatnonzero(mask)[0]] = 0`.\n2. **Repeated indices in in-place updates.** `counts[ids] += 1` with `ids = [3, 3, 5]` behaves like `counts[ids] = counts[ids] + 1`: the right side is computed once, and position 3 is written twice with the same value, so it gains 1, not 2. This silently corrupts histograms and embedding gradients. `np.add.at(counts, ids, 1)` does an unbuffered accumulation, and `np.bincount(ids, minlength=n)` is faster for plain counts.\n3. **Functions that mutate their inputs.** A helper that does `x[x < 0] = 0` or `x /= x.sum()` changes the caller's array. Copy at the top (`x = x.copy()`) or return a new array (`np.maximum(x, 0)`).\n4. **Mixing advanced indices.** `a[[0, 1], [1, 2]]` does not give a 2x2 block; it pairs the indices and returns the 2 elements `a[0, 1]` and `a[1, 2]`. For the block use `a[np.ix_([0, 1], [1, 2])]` or `a[[0, 1]][:, [1, 2]]`.\n\n```python\nimport numpy as np\nx = np.arange(12).reshape(3, 4)\nv = x[:, 1]          # view: v[0] = 100 changes x[0, 1]\nc = x[[0, 2]]        # copy: rows 0 and 2\nx[x % 2 == 0] = -1   # one __setitem__ call: modifies x\ng = np.zeros(5)\nnp.add.at(g, [3, 3, 1], 1.0)   # g = [0, 1, 0, 2, 0]\n```\n\n## np.where and its two forms\n`np.where(cond, x, y)` builds an array that takes `x` where `cond` is True and `y` elsewhere, broadcasting all three. It is the vectorised `if`. With only one argument, `np.where(cond)` is `np.nonzero(cond)`: a tuple of index arrays, one per axis.\n\nThe trap is evaluation order. Python evaluates `np.log(x)` for **every** element before `where` chooses, so `np.where(x > 0, np.log(x), 0.0)` still triggers divide-by-zero warnings and can create `nan` or `inf` intermediates. It produces the right answer for `log`, but with gradients or `0/0` the bad values can leak into later steps. Prefer the ufunc `where=` argument, which never computes the masked entries:\n\n```python\nout = np.zeros_like(x, dtype=float)\nnp.log(x, out=out, where=x > 0)   # entries where x <= 0 stay 0\n```\n\nAlways pass `out=` together with `where=`; without it the unselected entries are uninitialised memory.\n\n! Example: embedding gradient with repeated tokens\n! A batch has token ids `[7, 2, 7, 7]` and upstream gradients `G` of shape (4, 16). The gradient for the embedding table `E` (shape (vocab, 16)) must add all three rows that came from token 7.\n! `dE[ids] += G` gives row 7 only the *last* gradient written. `np.add.at(dE, ids, G)` gives row 7 the sum of three gradients, which is the correct value. On large batches `np.add.at` is slow; sorting the ids and using `np.add.reduceat` on contiguous runs is the fast vectorised alternative.\n\nThe PyTorch indexing lesson in the AI Research course covers the same view and copy rules for tensors, where `index_add_` plays the role of `np.add.at`.\n\n> Takeaway: slices give views and index arrays or masks give copies. Before every in-place write, ask which one you are holding, and use `np.add.at` whenever indices can repeat.",
+   "q": "You run `X = data[data[:, 0] > 0]` and then `X[:, 1] = 0`. Does `data` change? What changes if you instead write `X = data[5:100]`? And why does `data[data[:, 0] > 0, 1] = 0` behave differently from both?",
+   "s": "With the boolean mask, `X` is a copy because the mask is an advanced index. Setting `X[:, 1] = 0` writes into that new buffer and `data` is unchanged. With `X = data[5:100]`, `X` is a basic slice: a view with a new offset over the same buffer, so `X[:, 1] = 0` zeroes column 1 of rows 5 to 99 of `data`. The single expression `data[data[:, 0] > 0, 1] = 0` is one `__setitem__` call on `data` itself, with the mask selecting rows and `1` selecting the column, so it modifies exactly the masked rows of `data`. No intermediate copy is created. The rule is that indexing a view or copy and then assigning is two operations, while assigning through one combined index is one.",
+   "r": [
+    [
+     "NumPy user guide: Indexing on ndarrays",
+     "https://numpy.org/doc/stable/user/basics.indexing.html",
+     "Basic vs advanced indexing, how index arrays combine, and the result shapes."
+    ],
+    [
+     "NumPy user guide: Copies and views",
+     "https://numpy.org/doc/stable/user/basics.copies.html",
+     "Which operations return views, and how to check with .base."
+    ],
+    [
+     "numpy.ufunc.at",
+     "https://numpy.org/doc/stable/reference/generated/numpy.ufunc.at.html",
+     "Unbuffered in-place updates for repeated indices."
+    ],
+    [
+     "Python Data Science Handbook: Fancy indexing",
+     "https://jakevdp.github.io/PythonDataScienceHandbook/02.07-fancy-indexing.html",
+     "Worked examples, including the repeated-index gotcha."
+    ]
+   ],
+   "k": [
+    "views",
+    "fancy indexing",
+    "aliasing"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "mutation-trap",
+    "fancy-indexing",
+    "boolean-masking",
+    "basic-indexing",
+    "filter-and-extract"
+   ]
+  },
+  {
+   "id": "01.03",
+   "t": "Broadcasting",
+   "n": [
+    "Align shapes from the **right**. Two dimensions are compatible when they are equal or one of them is 1; a missing leading dimension counts as 1. The result takes the larger size on each axis.",
+    "Broadcasting never copies data: a stretched axis gets stride 0, so `(N, 1) - (1, M)` reads N + M numbers to build an N x M result.",
+    "Use `None` (`np.newaxis`), `keepdims=True` or `reshape(-1, 1)` to put an axis where the rule needs it.",
+    "The worst bugs are the silent ones: `(n, 1) - (n,)` gives an `(n, n)` matrix instead of an error, and on square data `X / X.sum(axis=1)` divides by the wrong axis."
+   ],
+   "a": "## The rule\nWhen two arrays meet in an elementwise operation, NumPy compares their shapes starting from the **last** axis and moving left. For each pair of dimensions:\n- equal sizes are fine;\n- if one size is 1, that axis is stretched to match the other;\n- if one array has fewer dimensions, it is padded with 1s on the left;\n- anything else raises `ValueError: operands could not be broadcast together`.\n\n%%flow Shapes are compared right-aligned; each size-1 or missing axis stretches to fit.\n(8, 1, 6, 1) and (7, 1, 5) -(pad left)-> (8,1,6,1) and (1,7,1,5) -(max per axis)-> *(8, 7, 6, 5)\n%%\n\n| A | B | result\n| (5, 3) | (3,) | (5, 3): B is added to every row\n| (5, 3) | (5,) | error: 3 vs 5 on the last axis\n| (5, 3) | (5, 1) | (5, 3): B is added to every column\n| (5, 1) | (1, 4) | (5, 4): an outer operation\n| (2, 3) | (3, 2) | error\n\nThe stretched axis is not materialised. NumPy gives it a stride of 0, so every step along that axis reads the same memory. `np.broadcast_to(v, (1000, 3))` returns a read-only view of 3 numbers that looks like 3000. The memory cost of a broadcast operation is the size of its **output**, not of a stretched input.\n\n## Putting axes where you need them\nBroadcasting only stretches size-1 axes, so most of the work is inserting them in the right place:\n- `x[:, None]` turns shape `(n,)` into `(n, 1)` (a column); `x[None, :]` gives `(1, n)` (a row).\n- `X.mean(axis=1, keepdims=True)` returns `(n, 1)` instead of `(n,)`, ready to broadcast back against `X`.\n- `w.reshape(1, -1, 1, 1)` lines a per-channel vector up with an `(N, C, H, W)` image batch.\n\nA good habit is to write the intended shapes next to the line: `# (B, T, 1) * (1, 1, D) -> (B, T, D)`. If the comment and the code disagree, the code is wrong.\n\n## Outer operations and their memory cost\nAdding a new axis to each operand gives every pairwise combination. Pairwise differences of `x` (N, D) and `y` (M, D) are `x[:, None, :] - y[None, :, :]`, of shape (N, M, D). This is concise but easy to make too large. With N = M = 10,000 and D = 128 in float32, the difference tensor is $10^8 \\times 128 \\times 4$ bytes, about 51 GB.\n\nThe squared Euclidean distance can be expanded instead:\n\n$$\\lVert x_i - y_j \\rVert^2 = \\lVert x_i \\rVert^2 + \\lVert y_j \\rVert^2 - 2\\, x_i \\cdot y_j$$\n\n```python\nsq = (x**2).sum(1)[:, None] + (y**2).sum(1)[None, :] - 2 * x @ y.T   # (N, M)\nd2 = np.maximum(sq, 0)    # cancellation can make tiny values negative\n```\n\nThe largest intermediate is now the (N, M) matrix, 400 MB, and the matrix product runs in optimised BLAS. The price is precision: when two points are almost equal the subtraction cancels and can go slightly negative, hence the clamp. For very small distances in float32, compute the exact difference for the few pairs that matter.\n\n## The silent shape bugs\nBroadcasting errors are helpful. The dangerous cases are the shapes that broadcast when you did not mean them to:\n1. **Column vs flat vector.** A model returns predictions of shape (n, 1) and labels are (n,). `pred - y` broadcasts to (n, n), and `np.square(pred - y).mean()` returns a plausible-looking but meaningless loss. Flatten one side, or assert `pred.shape == y.shape`.\n2. **Wrong axis on square data.** To make each row sum to 1 you need `X / X.sum(axis=1, keepdims=True)`. Writing `X / X.sum(axis=1)` divides column $j$ by the sum of row $j$. On a non-square array this raises an error; on a square one (a 512 x 512 attention matrix, a confusion matrix) it runs and gives wrong numbers.\n3. **Accidental huge outputs.** `a[:, None] == b` for two id arrays of a million elements tries to allocate a $10^{12}$-element boolean matrix. Use `np.isin` or a sort-based approach.\n\nThe AI Research course's tensor broadcasting lesson shows the same rules in PyTorch, which follows NumPy exactly.\n\n! Example: standardise features with training statistics\n! `X_train` is (50000, 20), `X_test` is (10000, 20). `mu = X_train.mean(axis=0)` and `sd = X_train.std(axis=0)` both have shape (20,).\n! `(X_test - mu) / sd` aligns (10000, 20) with (20,) on the right, so every row is shifted and scaled per column. No loop and no copies of `mu`.\n! Guard constant columns where `sd == 0`: `sd = np.where(sd == 0, 1.0, sd)`. Otherwise those columns become `nan` (0/0) or `inf`.\n\n> Takeaway: right-align the shapes, stretch only the 1s, and write the expected shape of every broadcast in a comment. The bugs that hurt are the ones that broadcast without an error.",
+   "q": "A softmax over each row of `S` (shape (B, T)) is written as `np.exp(S) / np.exp(S).sum(axis=1)`. When does this raise, when does it silently give the wrong answer, and what is the fix?",
+   "s": "`np.exp(S).sum(axis=1)` has shape (B,). Broadcasting aligns it with the last axis of (B, T), so it lines up with the T columns, not the B rows. If B != T the shapes (B, T) and (B,) are incompatible on the last axis and NumPy raises an error. If B == T (for example a square attention matrix) the shapes match, and element (i, j) is divided by the sum of row j instead of row i. No error is raised, and the rows no longer sum to 1. The fix is `keepdims=True`, giving shape (B, 1), which broadcasts across each row: `e = np.exp(S - S.max(axis=1, keepdims=True)); e / e.sum(axis=1, keepdims=True)`. The max shift also prevents overflow.",
+   "r": [
+    [
+     "NumPy user guide: Broadcasting",
+     "https://numpy.org/doc/stable/user/basics.broadcasting.html",
+     "The official rules with diagrams and a worked distance example."
+    ],
+    [
+     "Python Data Science Handbook: Computation on arrays, broadcasting",
+     "https://jakevdp.github.io/PythonDataScienceHandbook/02.05-computation-on-arrays-broadcasting.html",
+     "Visual walk-through of the three rules and centring and plotting examples."
+    ],
+    [
+     "Rougier: From Python to NumPy",
+     "https://www.labri.fr/perso/nrougier/from-python-to-numpy/",
+     "Free book; the vectorisation chapters show broadcasting replacing nested loops."
+    ]
+   ],
+   "k": [
+    "broadcasting",
+    "shapes"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "pairwise-differences",
+    "outer-sum",
+    "row-scaling",
+    "column-scaling",
+    "normalize-columns"
+   ]
+  },
+  {
+   "id": "01.04",
+   "t": "Vectorisation and ufuncs",
+   "n": [
+    "A ufunc is a compiled elementwise function (`np.add`, `np.exp`, `np.maximum`, ...) that broadcasts its inputs and also has `reduce`, `accumulate`, `outer` and `at` methods.",
+    "Most loops vectorise into a few patterns: masks and `np.where` for branches, `cumsum` or `accumulate` for running state, `bincount` or `add.at` for group-by, `searchsorted` for lookups.",
+    "Each expression like `a*b + c` allocates temporaries. `out=` and in-place operators reuse buffers, which matters once arrays reach hundreds of megabytes.",
+    "Floating point overflows long before maths does: `exp(89)` is already `inf` in float32. Shift by the maximum ($\\log\\sum e^{x_i} = m + \\log\\sum e^{x_i - m}$) and use `log1p`, `expm1` and `logaddexp`."
+   ],
+   "a": "## What a ufunc is\nA **universal function** applies a scalar operation to every element of its broadcast inputs, using a compiled inner loop chosen for the input dtypes. `np.add`, `np.multiply`, `np.exp`, `np.maximum`, `np.isnan` and the comparison operators are all ufuncs; `a + b` is literally `np.add(a, b)`.\n\nBinary ufuncs also come with methods that turn the same inner loop into other patterns:\n\n| method | example | meaning\n| reduce | `np.add.reduce(x, axis=0)` | fold along an axis (this is `np.sum`)\n| accumulate | `np.maximum.accumulate(x)` | running result (running max)\n| outer | `np.subtract.outer(a, b)` | all pairs, shape `a.shape + b.shape`\n| at | `np.add.at(g, idx, v)` | unbuffered in-place update, duplicates accumulate\n| reduceat | `np.add.reduceat(x, starts)` | reduce contiguous segments\n\nFunctions such as `np.sort`, `np.linalg.solve` or `np.median` are not ufuncs, but they are vectorised in the same sense: one Python call, one compiled loop.\n\n## Replacing loops\nVectorising is mostly pattern matching. The common translations:\n- **Branch per element** (`if x > 0: ... else: ...`) becomes a boolean mask and `np.where`, or `np.clip`, `np.maximum`.\n- **Running state** (`total += x[i]`) becomes `np.cumsum`, `np.cumprod` or `ufunc.accumulate`.\n- **Group by key** (`sums[key[i]] += v[i]`) becomes `np.bincount(key, weights=v)` or `np.add.at`.\n- **Lookup in a sorted table** (find the bin for each value) becomes `np.searchsorted`.\n- **Pairwise loops** become broadcasting or a matrix product (previous lesson).\n\n%%flow A nested Python loop turns into one broadcast expression plus one reduction.\nfor i, for j loop -(add axes)-> x[:, None] op y[None, :] -(reduce axis)-> *one C call\n%%\n\nSome loops do not vectorise. A recurrence where step $t$ depends nonlinearly on step $t-1$ (an RNN, a simulation with branching state) has to run sequentially. Linear recurrences can sometimes be rewritten in closed form: an exponential moving average is a weighted cumulative sum. For the truly sequential ones, compile the loop (Numba, `jax.lax.scan`) rather than fighting NumPy.\n\n## Temporaries, out= and in-place operations\n`y = a * b + c` on arrays of $10^8$ float64 values allocates `a * b` (800 MB), then the sum (another 800 MB), then frees the first. Memory bandwidth, not arithmetic, dominates this kind of code, so every temporary costs time as well as memory.\n\n```python\ny = np.empty_like(a)\nnp.multiply(a, b, out=y)   # one output buffer\ny += c                     # in place, no new allocation\nnp.exp(y, out=y)\n```\n\nTwo caveats. In-place operations obey casting rules: `ints += 0.5` raises `UFuncTypeError` because a float result cannot be stored in an int array under the default `same_kind` casting. And `where=` without `out=` leaves the unselected entries uninitialised. Do this only on hot paths with large arrays; for small arrays readability wins.\n\n## Numerical stability tricks\nFloating point has a finite range: float64 overflows above about $1.8 \\times 10^{308}$, so `np.exp(710.0)` is `inf`; float32 overflows at about $3.4 \\times 10^{38}$, so `np.exp(np.float32(89))` is `inf`. Logits from a model easily reach these values. The fix for sums of exponentials is to factor out the maximum $m = \\max_i x_i$:\n\n$$\\log \\sum_i e^{x_i} = m + \\log \\sum_i e^{x_i - m}$$\n\nEvery shifted exponent is at most $e^0 = 1$, so nothing overflows, and at least one term equals 1, so the sum cannot underflow to 0 and produce `log(0)`. Softmax uses the same shift.\n\n```python\ndef logsumexp(x, axis=-1):\n    m = np.max(x, axis=axis, keepdims=True)\n    m = np.where(np.isfinite(m), m, 0.0)        # rows that are all -inf\n    return (m + np.log(np.sum(np.exp(x - m), axis=axis, keepdims=True))).squeeze(axis)\n```\n\nOther tools worth knowing:\n- `np.log1p(x)` and `np.expm1(x)` stay accurate for tiny `x`, where `1 + x` rounds to 1: in float64, `np.log(1 + 1e-17)` is 0 while `np.log1p(1e-17)` is `1e-17`.\n- `np.logaddexp(a, b)` computes $\\log(e^a + e^b)$ stably, useful for combining log-probabilities.\n- A stable sigmoid computes `exp(-x)` only for $x \\ge 0$ and `exp(x) / (1 + exp(x))` for $x < 0$, so no exponent is ever large and positive.\n- Variance as $E[x^2] - E[x]^2$ cancels catastrophically when the mean is large relative to the spread; `np.var` subtracts the mean first.\n\n! Example: logsumexp of [1000, 1001, 1002]\n! Naively, `np.exp(1000.0)` is `inf` in float64, so the result is `inf`.\n! Shifted, $m = 1002$ and the terms are $e^{-2} + e^{-1} + e^{0} = 0.1353 + 0.3679 + 1 = 1.5032$.\n! The answer is $1002 + \\ln 1.5032 = 1002.4076$, computed with no overflow. The softmax probabilities are the same three terms divided by 1.5032: 0.090, 0.245, 0.665.\n\n> Takeaway: write the loop body as whole-array ufunc calls, reuse buffers with `out=` only where size demands it, and never exponentiate a raw logit: subtract the maximum first.",
+   "q": "A colleague computes binary cross-entropy as `-(y*np.log(sigmoid(z)) + (1-y)*np.log(1-sigmoid(z))).mean()` on float32 logits. For which values of z does this break, how, and how would you rewrite it stably?",
+   "s": "For large positive z (above about 17 in float32) sigmoid(z) rounds to exactly 1.0, so `np.log(1 - sigmoid(z))` is `log(0) = -inf`. If the label is 0, the loss is infinite, and its gradient is `nan`. For large negative z, sigmoid(z) underflows towards 0 (the naive `1/(1+np.exp(-z))` returns exactly 0 below about -89 in float32, when the exponential overflows), giving the same problem on the other term when y = 1. The stable form works in logit space: $\\log\\sigma(z) = -\\log(1+e^{-z})$ and $\\log(1-\\sigma(z)) = -\\log(1+e^{z})$, so the loss is `np.logaddexp(0, z) - y*z`, equivalently `np.maximum(z, 0) - y*z + np.log1p(np.exp(-np.abs(z)))`. No exponent is ever large and positive, nothing rounds to 0 inside a log, and the result is accurate for any z.",
+   "r": [
+    [
+     "NumPy user guide: Universal functions basics",
+     "https://numpy.org/doc/stable/user/basics.ufuncs.html",
+     "Ufunc methods, out= and where=, casting rules for in-place operations."
+    ],
+    [
+     "Higham: What is the log-sum-exp function?",
+     "https://nhigham.com/2021/01/05/what-is-the-log-sum-exp-function/",
+     "A numerical analyst's short derivation of the shift trick and its error bounds."
+    ],
+    [
+     "scipy.special.logsumexp",
+     "https://docs.scipy.org/doc/scipy/reference/generated/scipy.special.logsumexp.html",
+     "A reference implementation with weights, signs and axis handling."
+    ],
+    [
+     "Python Data Science Handbook: Computation on arrays, ufuncs",
+     "https://jakevdp.github.io/PythonDataScienceHandbook/02.03-computation-on-arrays-ufuncs.html",
+     "Timing of loops vs ufuncs and the ufunc method zoo."
+    ]
+   ],
+   "k": [
+    "ufuncs",
+    "vectorisation",
+    "numerical stability"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "softmax-numerical-stability-and-log-sum-exp",
+    "softmax-rows",
+    "normalized-difference",
+    "angle-features",
+    "vector-norms"
+   ]
+  },
+  {
+   "id": "01.05",
+   "t": "Reductions and the axis argument",
+   "n": [
+    "`axis=k` names the axis that **disappears**: for `X` of shape `(N, D)`, `X.sum(axis=0)` has shape `(D,)` (one value per column) and `X.sum(axis=1)` has shape `(N,)` (one per row).",
+    "`keepdims=True` keeps the reduced axis as size 1 so the result broadcasts straight back against the input, as in `X - X.mean(axis=1, keepdims=True)`.",
+    "`argmax` returns positions, not values, and breaks ties by taking the first occurrence; `np.take_along_axis` turns per-row positions back into values.",
+    "NaN propagates through `sum` and `mean`. The `nan*` variants skip it, but an all-NaN row gives `nan` with a warning from `nanmean`, and `0` from `nansum`."
+   ],
+   "a": "## The axis is the one that goes away\nA reduction combines many numbers into one: `sum`, `mean`, `std`, `min`, `max`, `argmax`, `any`, `all`, `prod`, `median`, `percentile`. Without an `axis` it reduces the whole array to a scalar. With `axis=k` it reduces along axis `k` only, and **that axis vanishes from the result**.\n\nFor a batch of images `X` of shape `(N, H, W, C)`:\n\n| call | result shape | meaning\n| `X.mean()` | () | one global mean\n| `X.mean(axis=0)` | (H, W, C) | the average image\n| `X.mean(axis=(0, 1, 2))` | (C,) | per-channel mean, used for normalisation\n| `X.mean(axis=(1, 2, 3))` | (N,) | mean brightness of each image\n| `X.max(axis=-1)` | (N, H, W) | brightest channel at each pixel\n\nThe phrase \"sum over rows\" is ambiguous in English and causes most axis bugs. Translate it into shapes: if you want one number per column of an `(N, D)` table you are collapsing the N axis, so `axis=0`.\n\n%%flow axis names the dimension that is collapsed, not the one that is kept.\nX (N, D) -(sum axis=0)-> *(D,) per column\nX (N, D) -(sum axis=1)-> *(N,) per row\nX (N, D) -(sum axis=1, keepdims)-> *(N, 1) broadcastable\n%%\n\n## keepdims and broadcasting back\nMany computations reduce and then combine the result with the original array: centring, normalising, softmax. `keepdims=True` leaves the reduced axis in place with size 1, which is exactly the shape broadcasting needs:\n\n```python\nmu = X.mean(axis=1, keepdims=True)              # (N, 1)\nZ = (X - mu) / X.std(axis=1, keepdims=True)     # (N, D)\nP = E / E.sum(axis=-1, keepdims=True)           # rows sum to 1\n```\n\nWithout it, an `(N,)` result aligns with the last axis of `(N, D)`, which either errors or (when N equals D) silently uses the wrong statistics, as in the broadcasting lesson.\n\n## argmax, top-k and getting values back\n`X.argmax(axis=1)` gives, for each row, the column index of the maximum. Ties go to the **first** occurrence, which can bias metrics when a model outputs many identical scores (for example all zeros at initialisation, where every prediction becomes class 0).\n\nTo fetch values at per-row positions, use `np.take_along_axis(X, idx[:, None], axis=1)`, or the explicit form `X[np.arange(N), idx]`. For top-k, sorting the whole row is $O(D \\log D)$; `np.argpartition(-X, k, axis=1)[:, :k]` finds the k largest in $O(D)$ but in arbitrary order, so sort just those k afterwards if order matters.\n\n## Cumulative operations\n`np.cumsum`, `np.cumprod` and `np.maximum.accumulate` keep the axis and return the running result along it. Useful patterns:\n- **Range sums in O(1)**: with `S = np.concatenate([[0], np.cumsum(x)])`, the sum of `x[i:j]` is `S[j] - S[i]`.\n- **Running maximum and drawdown**: `x / np.maximum.accumulate(x) - 1`.\n- **Inverse pair**: `np.diff` undoes `np.cumsum` (up to the first element).\n\nLong cumulative sums in float32 drift: after millions of additions each new term is small relative to the total and loses digits. Pass `dtype=np.float64` to accumulate in higher precision. Plain `np.sum` is more forgiving because it uses pairwise summation internally, but `cumsum` cannot.\n\n## Missing values: NaN-aware reductions\nA single `nan` turns `sum`, `mean`, `max` and `std` of its slice into `nan`. The `nan*` family (`np.nanmean`, `np.nanmax`, `np.nanstd`, `np.nanpercentile`, `np.nanargmax`) ignores NaNs instead. Their edge cases differ, and they do matter:\n- `np.nanmean` of an all-NaN slice returns `nan` and emits a `RuntimeWarning`.\n- `np.nansum` of an all-NaN slice returns `0.0`, which can look like a genuine zero.\n- `np.nanargmax` of an all-NaN slice raises `ValueError`.\n\nWhen missingness is a separate mask (or you work in JAX, where boolean indexing is not allowed under `jit`), compute masked statistics explicitly: `(x * m).sum(1) / np.maximum(m.sum(1), 1)`, with the guard deciding what an empty row means.\n\nAlso note the variance convention: `np.std` and `np.var` default to `ddof=0`, the population formula dividing by $n$. pandas defaults to `ddof=1`, dividing by $n - 1$. The same data gives slightly different numbers in the two libraries unless you set `ddof` explicitly.\n\n! Example: per-class accuracy from predictions\n! `logits` has shape (N, K) and `y` has shape (N,). `pred = logits.argmax(axis=1)` collapses K, giving (N,).\n! `correct = (pred == y)` is a boolean (N,). Per-class accuracy is `np.bincount(y, weights=correct, minlength=K) / np.maximum(np.bincount(y, minlength=K), 1)`, a grouped mean without a loop.\n! Overall accuracy is `correct.mean()`. It equals the unweighted mean of the per-class accuracies only when every class has the same number of examples.\n\n> Takeaway: name the axis you want to collapse, keep it with `keepdims=True` when you will broadcast back, and decide explicitly what NaNs and empty groups should produce.",
+   "q": "Sensor data `X` has shape (days, sensors, 24) with hourly readings and some NaNs. Write the calls for (a) each sensor's mean over all days and hours, and (b) for each day, the hour at which the average over sensors peaked. What happens in (b) if one day is entirely NaN, and how would you handle it?",
+   "s": "(a) Collapse days and hours, keep sensors: `np.nanmean(X, axis=(0, 2))`, shape (sensors,). (b) First average over sensors for each day and hour: `H = np.nanmean(X, axis=1)`, shape (days, 24). Then collapse the hour axis to a position: `np.nanargmax(H, axis=1)`, shape (days,). If one day is entirely NaN, `nanmean` gives a NaN row with a RuntimeWarning, and `nanargmax` raises ValueError because that row has no valid entry. Handle it explicitly: compute `ok = ~np.isnan(H).all(axis=1)`, fill the bad rows with `-np.inf` (`np.where(np.isnan(H), -np.inf, H)`), take `argmax`, and then set the result for days where `ok` is False to a sentinel such as -1. That way the missing day is visible and is never confused with a real peak at hour 0.",
+   "r": [
+    [
+     "numpy.sum",
+     "https://numpy.org/doc/stable/reference/generated/numpy.sum.html",
+     "The axis, keepdims, dtype and where parameters, plus the pairwise summation note."
+    ],
+    [
+     "NumPy reference: Statistics",
+     "https://numpy.org/doc/stable/reference/routines.statistics.html",
+     "All reductions, including the nan-aware versions and ddof."
+    ],
+    [
+     "numpy.take_along_axis",
+     "https://numpy.org/doc/stable/reference/generated/numpy.take_along_axis.html",
+     "Pairing argmax or argsort results with values along an axis."
+    ],
+    [
+     "Python Data Science Handbook: Aggregations",
+     "https://jakevdp.github.io/PythonDataScienceHandbook/02.04-computation-on-arrays-aggregates.html",
+     "Short tour of reductions with the axis convention explained."
+    ]
+   ],
+   "k": [
+    "reductions",
+    "axis",
+    "missing values"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "row-extremes",
+    "aggregation-functions",
+    "sample-variance-and-standard-deviation",
+    "missing-value-imputation"
+   ]
+  },
+  {
+   "id": "01.06",
+   "t": "Shape manipulation and einsum",
+   "n": [
+    "`reshape` keeps the elements in C order and only regroups them; it is a view when the strides allow and a copy otherwise. It never moves an element to a different logical position.",
+    "`transpose`, `swapaxes` and `moveaxis` reorder axes by permuting strides. Reshape-then-transpose-then-reshape is how you cut images into patches or windows.",
+    "`concatenate` joins along an existing axis; `stack` creates a new one. Appending to an array inside a loop is quadratic, so collect pieces in a list and concatenate once.",
+    "`einsum` names every axis with a letter: letters missing from the output are summed. `'bhqd,bhkd->bhqk'` is attention scores in one line."
+   ],
+   "a": "## reshape regroups, it does not reorder\n`reshape` reads the elements in C order (last axis fastest) and writes them into the new shape in the same order. `np.arange(6).reshape(2, 3)` is `[[0, 1, 2], [3, 4, 5]]`. One dimension may be `-1` and is inferred. The result is a view when a single set of strides can describe the new shape over the existing buffer, which is always true for a contiguous array. Otherwise NumPy copies, which happens, for instance, when you reshape a transposed array.\n\nThe classic bug is using reshape when you meant transpose. An `(N, C, H, W)` batch converted to channels-last with `x.reshape(N, H, W, C)` has the right shape and scrambled pixels: the numbers were regrouped, not moved. The correct call is `x.transpose(0, 2, 3, 1)`. Shapes cannot catch this bug; only looking at values can.\n\n## transpose and moveaxis\n`x.transpose(p)` returns a view whose axis `i` is the input's axis `p[i]`, by permuting shape and strides. `np.swapaxes(x, a, b)` swaps two axes, and `np.moveaxis(x, src, dst)` moves one axis and keeps the others in order, which is easier to read for long shapes. All three are free; the cost comes later, when a function needs contiguous memory and copies.\n\nCombining reshape and transpose cuts a grid into blocks. For an image of shape `(H, W)` and patch size `p`:\n\n%%flow Patchify: split each spatial axis in two, bring the block indices together, flatten each patch.\n(H, W) -(reshape)-> (H/p, p, W/p, p) -(transpose 0,2,1,3)-> (H/p, W/p, p, p) -(reshape)-> *(H/p * W/p, p*p)\n%%\n\n```python\ndef patchify(img, p):\n    H, W = img.shape\n    return (img.reshape(H // p, p, W // p, p)\n               .transpose(0, 2, 1, 3)\n               .reshape(-1, p * p))\n```\n\nThe first reshape is a view; the final reshape copies, because after the transpose the patch pixels are not adjacent in memory. Vision transformers and Swin's window attention use exactly this pattern.\n\n## Joining and splitting\n- `np.concatenate([a, b], axis=k)`: shapes must match on every axis except `k`, and the result is as long as both together on `k`.\n- `np.stack([a, b], axis=k)`: shapes must be identical, and a new axis of length 2 is inserted at position `k`. Stacking 32 images of shape (H, W, 3) gives (32, H, W, 3).\n- `np.vstack` and `np.hstack` are shortcuts with one surprise: `vstack` treats 1-D inputs as rows, so two `(3,)` vectors become a `(2, 3)` array, while `hstack` joins them into one `(6,)` vector.\n- `np.split(x, 4)` needs equal parts; `np.array_split(x, 4)` allows uneven ones; `np.split(x, [10, 20])` cuts at the given indices.\n\nEvery `np.concatenate` allocates a new buffer and copies both inputs. Calling it in a loop to grow an array copies everything accumulated so far each time, $O(n^2)$ in total. Append the pieces to a Python list and concatenate once at the end, or preallocate with `np.empty` and fill slices.\n\n## tile, repeat and windows\n`np.tile([1, 2], 3)` gives `[1, 2, 1, 2, 1, 2]` (repeat the whole block); `np.repeat([1, 2], 3)` gives `[1, 1, 1, 2, 2, 2]` (repeat each element). Both allocate. If you only need the repeated array as an operand, broadcasting or `np.broadcast_to` gives the same values at no memory cost.\n\nFor overlapping windows, `np.lib.stride_tricks.sliding_window_view(x, w)` returns an `(n - w + 1, w)` view of a length-`n` signal. It costs no memory because consecutive windows share elements through the strides. It is read-only, and any operation that writes the windows out (an arithmetic result, a copy) materialises all `(n - w + 1) * w` values.\n\n## einsum: name the axes\n`np.einsum` takes a subscript string with one letter per axis of each operand. Letters that appear in the output are kept; letters that appear only in the inputs are multiplied and summed.\n\n| subscripts | operation\n| `'ij,jk->ik'` | matrix product\n| `'bij,bjk->bik'` | batched matrix product\n| `'bi,bi->b'` | row-wise dot products\n| `'i,j->ij'` | outer product\n| `'ii->'` | trace\n| `'bhqd,bhkd->bhqk'` | attention scores per batch and head\n\n`einsum` makes the shape contract explicit, which is its main value. For performance, `np.einsum(..., optimize=True)` chooses a good contraction order for three or more operands and can dispatch to BLAS. For simple products, `@` (`np.matmul`) is just as fast and more familiar.\n\n! Example: patchify a 4 x 4 image with p = 2\n! `img = np.arange(16).reshape(4, 4)`. The top-left patch should be pixels 0, 1, 4, 5.\n! The reshape to (2, 2, 2, 2) gives index `[block_row, row_in_block, block_col, col_in_block]`; transposing to `(0, 2, 1, 3)` puts both block indices first. The final reshape yields 4 rows: `[0, 1, 4, 5]`, `[2, 3, 6, 7]`, `[8, 9, 12, 13]`, `[10, 11, 14, 15]`.\n! Skipping the transpose and reshaping (4, 4) straight to (4, 4) returns the rows of the image, `[0, 1, 2, 3]` first, which is the wrong answer with the right shape.\n\n> Takeaway: reshape only regroups C-ordered elements, transpose moves axes, and einsum documents the whole shape contract in one string. When a shape looks right, still check one value.",
+   "q": "You have token embeddings `X` of shape (B, T, D) and want multi-head form (B, H, T, D/H). Explain why `X.reshape(B, H, T, D // H)` is wrong, give the correct sequence of calls, and say which step copies memory.",
+   "s": "`reshape` regroups elements in C order. For each batch item, the T x D block is read row by row and cut into H consecutive chunks of T x D/H values. That mixes tokens: the first `head` ends up holding the first T/H tokens' full embeddings rather than the first D/H features of every token. The heads must split the feature axis D, so: `X.reshape(B, T, H, D // H)`, which is a view because it only splits the last axis of a contiguous array, then `.transpose(0, 2, 1, 3)` to get (B, H, T, D/H), also a view since it only permutes strides. Nothing has copied yet. A copy happens only when a later operation needs contiguous memory, for example `np.ascontiguousarray`, a reshape that merges the transposed axes, or handing the array to code that requires C order.",
+   "r": [
+    [
+     "numpy.reshape",
+     "https://numpy.org/doc/stable/reference/generated/numpy.reshape.html",
+     "Element order, the -1 dimension, and when a copy is made."
+    ],
+    [
+     "NumPy reference: Array manipulation routines",
+     "https://numpy.org/doc/stable/reference/routines.array-manipulation.html",
+     "One page listing transpose, stack, split, tile, repeat and friends."
+    ],
+    [
+     "numpy.einsum",
+     "https://numpy.org/doc/stable/reference/generated/numpy.einsum.html",
+     "Subscript rules, implicit vs explicit mode, and the optimize argument."
+    ],
+    [
+     "sliding_window_view",
+     "https://numpy.org/doc/stable/reference/generated/numpy.lib.stride_tricks.sliding_window_view.html",
+     "Zero-copy windows and the warnings about writing to them."
+    ]
+   ],
+   "k": [
+    "reshape",
+    "einsum"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "reshaping-arrays",
+    "window-partition-and-reverse",
+    "tile-and-diff",
+    "concat-and-correlate",
+    "outer-product"
+   ]
+  },
+  {
+   "id": "01.07",
+   "t": "Linear algebra and random numbers in NumPy",
+   "n": [
+    "`@` (`np.matmul`) broadcasts over leading batch axes and calls BLAS; `*` is elementwise. Prefer `@` to `np.dot`, whose behaviour on 3-D and higher inputs is different and rarely what you want.",
+    "To compute $A^{-1}b$, call `np.linalg.solve(A, b)`: one LU factorisation, about a third of the work of `inv`, and more accurate. Expect to lose roughly $\\log_{10}\\kappa(A)$ digits either way.",
+    "`lstsq` solves least squares through the SVD and copes with rank deficiency. Forming the normal equations $X^\\top X$ squares the condition number.",
+    "Use `eigh` for symmetric matrices (real eigenvalues, ascending, orthonormal vectors) and `svd(full_matrices=False)` for data matrices. Eigenvectors are only defined up to sign.",
+    "Create one `rng = np.random.default_rng(seed)` and pass it around; derive independent streams with `rng.spawn` or `SeedSequence`, never by reusing the global `np.random.seed` state."
+   ],
+   "a": "## matmul and the @ operator\n`A @ B` multiplies matrices: `(n, k) @ (k, m)` gives `(n, m)`. With more than two dimensions, the last two axes are the matrices and the leading axes broadcast like any elementwise operation, so `(32, 8, 64, 16) @ (16, 64)` gives `(32, 8, 64, 64)`. A 1-D operand is treated as a row or column vector and that axis is dropped from the result.\n\nTwo practical points. First, `np.dot` predates `@` and uses a different rule for 3-D inputs (it contracts the last axis of the first array with the second-to-last of the second, producing a 4-D outer structure), so stick to `@` or `einsum`. Second, the work goes to an optimised BLAS library; float32 runs roughly twice as fast as float64 there and uses half the memory bandwidth.\n\n## solve, not inv\nThe maths says $x = A^{-1}b$. The code should not. `np.linalg.solve(A, b)` computes an LU factorisation with partial pivoting (about $\\tfrac{2}{3}n^3$ flops) and then two cheap triangular solves. `np.linalg.inv(A) @ b` costs about $2n^3$ for the inverse, about three times as much, and is less accurate because the rounding errors of the explicit inverse are multiplied into the result. If you need to solve against many right-hand sides, pass them as columns of one `B`, or factorise once with SciPy (`lu_factor`, `cho_factor`) and reuse it.\n\nAccuracy is governed by the **condition number** $\\kappa(A) = \\sigma_{\\max} / \\sigma_{\\min}$. As a rule of thumb, the relative error in $x$ is about $\\kappa(A)$ times machine epsilon: with $\\kappa = 10^{10}$ in float64 ($\\varepsilon \\approx 10^{-16}$) you can trust about 6 digits, and in float32 none. `np.linalg.solve` raises `LinAlgError` only for an *exactly* singular matrix; a nearly singular one quietly returns large, noisy numbers. Check `np.linalg.cond(A)` when results look suspicious. The ML Maths course's linear systems module covers the theory behind invertibility and row reduction.\n\n%%flow Pick the routine from the structure of the problem.\nSquare A, solve Ax = b -(general)-> np.linalg.solve (LU)\nSymmetric positive definite A -(faster, stabler)-> *Cholesky (scipy cho_solve)\nTall X, min of the residual norm -(rank-safe)-> np.linalg.lstsq (SVD)\n%%\n\n## Least squares with lstsq\nFor an overdetermined system $Xw \\approx y$ with $X$ of shape $(n, d)$, $n > d$, `np.linalg.lstsq(X, y, rcond=None)` returns the minimiser of $\\lVert Xw - y \\rVert_2$, plus the residuals, the numerical rank and the singular values. It works through the SVD, so collinear features do not crash it: singular values below `rcond` times the largest are treated as zero, and you get the minimum-norm solution.\n\nThe tempting shortcut `np.linalg.solve(X.T @ X, X.T @ y)` (the normal equations) is faster but squares the condition number: $\\kappa(X^\\top X) = \\kappa(X)^2$. A feature matrix with $\\kappa = 10^5$, common with unscaled features, becomes $10^{10}$, and in float32 the answer is noise. Normal equations are acceptable when $X$ is well conditioned, or with a ridge term, $(X^\\top X + \\lambda I)w = X^\\top y$, which caps the condition number.\n\n## eigh and svd\n- `np.linalg.eigh(S)` for symmetric (or Hermitian) matrices such as covariance matrices returns real eigenvalues in **ascending** order and orthonormal eigenvectors as **columns**. For PCA you usually want the last columns.\n- `np.linalg.eig` handles general matrices but may return complex values in no particular order. Do not use it on a covariance matrix: rounding can introduce tiny imaginary parts.\n- `np.linalg.svd(X, full_matrices=False)` returns `U` (n, r), `s` (r,) in **descending** order, and `Vt` (r, d), with $X = U\\,\\mathrm{diag}(s)\\,V^\\top$. For PCA, centre `X` and take the first rows of `Vt`; explained variance is `np.square(s) / (n - 1)`. The full form allocates an n x n `U`, which is easy to blow up memory with.\n- Eigenvectors and singular vectors are defined only up to sign (and up to rotation within repeated eigenvalues). Tests and comparisons must allow for this, for example by fixing the sign so the largest-magnitude entry of each vector is positive.\n\n## Random numbers you can reproduce\nThe legacy API (`np.random.seed`, `np.random.rand`) uses one hidden global state. Any library call that draws from it changes your sequence, and processes forked from the same parent (for example data-loader workers) inherit identical state and produce identical \"random\" augmentations. The modern API makes the state explicit:\n\n```python\nrng = np.random.default_rng(42)        # PCG64 generator\nx = rng.normal(size=(1000, 3))\nidx = rng.permutation(len(x))\nworkers = rng.spawn(8)                 # 8 independent child generators\n```\n\nPass `rng` into functions instead of seeding inside them. Child streams from `spawn` (or `np.random.SeedSequence(42).spawn(8)`) are statistically independent; `default_rng(seed + i)` usually works but carries no such guarantee. One more caveat from NumPy's policy (NEP 19): the `Generator` stream for a given seed may change between NumPy versions when algorithms improve, whereas the legacy `RandomState` is frozen. Exact bit-for-bit reproducibility therefore also requires pinning the NumPy version.\n\n! Example: how many digits the normal equations cost\n! Fit $y = w_0 + w_1 t$ where `t` holds 1,000 Unix timestamps spread over one year, around $1.7 \\times 10^9$ seconds. The ones column and the `t` column are nearly parallel: measured $\\kappa(X) \\approx 3 \\times 10^{11}$.\n! The normal equations work with $\\kappa(X^\\top X) \\approx 10^{23}$, beyond what float64 can resolve. In one run, `lstsq` matched the reference solution to a relative error of $10^{-14}$, while `solve(X.T @ X, X.T @ y)` was off by $2 \\times 10^{-9}$: five digits gone. In float32 neither result is usable.\n! The best fix is upstream: centre and scale `t` first, after which $\\kappa$ is close to 1 and every method agrees.\n\n> Takeaway: use `@`, `solve`, `lstsq`, `eigh` and `svd(full_matrices=False)` instead of their tempting alternatives, check the condition number when answers look odd, and thread one explicit `Generator` through your code.",
+   "q": "A ridge regression implementation computes `w = np.linalg.inv(X.T @ X + lam * np.eye(d)) @ X.T @ y` with X of shape (1,000,000, 50). Comment on its cost and accuracy, and propose a better version. When would you prefer lstsq instead?",
+   "s": "The expensive part is `X.T @ X`, about $n d^2 = 2.5 \\times 10^9$ multiply-adds, which is fine. The inverse is only 50 x 50, so its cost is negligible, but it is still the wrong tool: `np.linalg.solve(X.T @ X + lam * np.eye(d), X.T @ y)` is cheaper and more accurate, and because the matrix is symmetric positive definite, a Cholesky solve (`scipy.linalg.cho_factor` and `cho_solve`) is better still. Also note the evaluation order: `inv(...) @ X.T @ y` multiplies a 50 x 50 matrix by the 50 x 1,000,000 `X.T` first; computing `X.T @ y` first avoids that large intermediate. Accuracy depends on $\\kappa(X)^2$ shrunk by the ridge term. When lam is tiny or zero and features are badly scaled or collinear, use `lstsq` on the augmented system `[X; sqrt(lam) I] w = [y; 0]`, which works with $\\kappa(X)$ rather than its square.",
+   "r": [
+    [
+     "NumPy reference: Linear algebra (numpy.linalg)",
+     "https://numpy.org/doc/stable/reference/routines.linalg.html",
+     "matmul broadcasting rules and the full list of factorisations and solvers."
+    ],
+    [
+     "numpy.linalg.lstsq",
+     "https://numpy.org/doc/stable/reference/generated/numpy.linalg.lstsq.html",
+     "Return values, rcond, and the minimum-norm solution for rank-deficient X."
+    ],
+    [
+     "NumPy reference: Random Generator",
+     "https://numpy.org/doc/stable/reference/random/generator.html",
+     "default_rng, the Generator methods, and spawn."
+    ],
+    [
+     "NEP 19: Random number generator policy",
+     "https://numpy.org/neps/nep-0019-rng-policy.html",
+     "Why the global state was deprecated and what stream compatibility NumPy promises."
+    ]
+   ],
+   "k": [
+    "linear algebra",
+    "conditioning",
+    "reproducibility"
+   ],
+   "x": [
+    "NumPy",
+    "SciPy"
+   ],
+   "p": [
+    "solve-linear-system",
+    "least-squares-solution",
+    "eigendecomposition",
+    "svd-components",
+    "random-array-generation"
+   ]
+  }
+ ]
+}

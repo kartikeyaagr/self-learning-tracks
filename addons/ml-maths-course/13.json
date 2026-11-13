@@ -1,0 +1,293 @@
+{
+ "n": "13",
+ "name": "Statistics and experiments",
+ "lessons": [
+  {
+   "id": "13.01",
+   "t": "Describing data: location, spread and shape",
+   "n": [
+    "Location answers \"where is the typical value\": the **mean** uses every value, the **median** only the order, so one bad value can move the mean anywhere but cannot move the median past the middle.",
+    "Spread comes in a fragile form (variance and standard deviation, with the $n-1$ divisor for samples) and robust forms (IQR, and MAD scaled by 1.4826 to match $\\sigma$ for normal data).",
+    "Quantiles need an interpolation rule; NumPy's default `linear` is Hyndman-Fan type 7. Small samples give visibly different answers under different rules.",
+    "Skewness and excess kurtosis summarise shape; latency, revenue and counts are usually right-skewed and heavy-tailed, which is exactly when means and 3-sigma rules mislead.",
+    "A z-score outlier rule can hide the outlier it is looking for (masking), because the outlier inflates the standard deviation. Use median and IQR or MAD fences instead."
+   ],
+   "a": "## Why start with description\nThis module picks up where the Inference module left off. Modules 10 to 12 treated random variables and estimators in theory; here the subject is the numbers you actually hold: a column of latencies, a list of per-user revenues, a vector of model errors. Every later lesson (standard errors, tests, A/B experiments) is built on a few summary statistics, so it is worth knowing exactly how each one reacts to bad data.\n\nThe three questions to ask of any sample are: where is it (location), how wide is it (spread) and what shape is it (skew, tails, outliers). Each has a fragile answer that uses every value with equal weight and a robust answer that only uses order.\n\n## Location\n- **Mean** $\\bar x = \\frac1n\\sum_i x_i$. Optimal for symmetric light-tailed data and the only location statistic that adds up: total revenue equals mean revenue times users. One value of $10^9$ drags it anywhere.\n- **Median**: the middle order statistic (average of the two middle ones when $n$ is even). It minimises $\\sum_i |x_i - m|$, where the mean minimises squared error.\n- **Trimmed mean**: drop the top and bottom $k\\%$ and average the rest. A 10% trimmed mean is a compromise that keeps most of the mean's efficiency.\n- **Mode**: the most frequent value; useful for categorical or heavily discretised data, close to useless for continuous measurements.\n\nThe **breakdown point** measures robustness: the fraction of values you can replace with garbage before the statistic can be made arbitrarily large. The mean's is $0$ (one value is enough), a 10% trimmed mean's is 10%, the median's is 50%.\n\n## Spread\nThe sample variance is $s^2 = \\frac{1}{n-1}\\sum_i (x_i - \\bar x)^2$. The $n-1$ (Bessel's correction) makes $s^2$ unbiased for $\\sigma^2$, because deviations are measured from $\\bar x$, which is itself fitted to the data and sits closer to the points than the true mean does. In NumPy this is `ddof=1`; the default `ddof=0` divides by $n$, a classic silent discrepancy with pandas, whose default is `ddof=1`.\n\nRobust alternatives:\n- **IQR** $= Q_3 - Q_1$, the width of the middle half.\n- **MAD** $= \\mathrm{median}_i\\,|x_i - \\mathrm{median}(x)|$. For normal data $\\sigma \\approx 1.4826\\cdot\\mathrm{MAD}$ and $\\sigma \\approx \\mathrm{IQR}/1.349$, so both can stand in for a standard deviation.\n\n| Statistic | Measures | Breakdown point | Use when\n| Mean | location | 0% | data are clean and roughly symmetric, or totals matter\n| Median | location | 50% | skewed data, outliers, latency\n| Std deviation | spread | 0% | feeding normal-theory formulas\n| IQR | spread | 25% | box plots, outlier fences\n| MAD | spread | 50% | robust z-scores\n\n## Quantiles are a choice, not a fact\nThe $p$-quantile is a value with a fraction $p$ of the data below it, but with $n$ points most $p$ fall between two order statistics. NumPy's `np.quantile(x, p)` defaults to `method=\"linear\"`: sort, compute position $h = (n-1)p$, and interpolate between the values at $\\lfloor h\\rfloor$ and $\\lceil h\\rceil$. This is type 7 of the nine rules catalogued by Hyndman and Fan; R uses the same default. With 10 values the 90th percentile under different rules can differ by a whole order-statistic gap, which matters when you report p99 latency from a few hundred requests. State the rule, and prefer more data over a cleverer rule.\n\n## Shape: skewness and kurtosis\nWith central moments $m_k = \\frac1n\\sum_i (x_i-\\bar x)^k$:\n\n$$g_1 = \\frac{m_3}{m_2^{3/2}}, \\qquad g_2 = \\frac{m_4}{m_2^{2}} - 3$$\n\n$g_1 > 0$ means a long right tail (mean above median), and $g_2$ is excess kurtosis, $0$ for a normal. Both are themselves very sensitive to outliers because they raise deviations to the third and fourth power; treat them as flags, not precise measurements. In SciPy, `stats.skew` and `stats.kurtosis` default to these biased, Fisher (excess) forms.\n\n## Outliers and the masking trap\nTwo common outlier rules:\n1. **z-score**: flag $|x_i - \\bar x|/s > 3$.\n2. **Tukey fences**: flag values below $Q_1 - 1.5\\,\\mathrm{IQR}$ or above $Q_3 + 1.5\\,\\mathrm{IQR}$. A **robust z-score** $(x_i - \\mathrm{median})/(1.4826\\cdot\\mathrm{MAD})$ with a cutoff near 3.5 is the same idea on a different scale.\n\nThe z-score rule fails exactly when you need it: a large outlier inflates both $\\bar x$ and $s$, so its own z-score shrinks. With several outliers they can hide each other completely.\n\n%%flow Robust outlier screening: every step uses order statistics, so the outlier cannot distort its own yardstick.\nRaw sample -(sort)-> Q1, median, Q3 -(IQR or MAD)-> Robust scale -(fences)-> *Flag outliers -(inspect)-> Fix, keep or model\n%%\n\n! Example: ten request latencies in ms: 12, 13, 13, 14, 15, 15, 16, 18, 22, 480\n! Location: mean $= 61.8$, median $= 15$. The single 480 ms request quadruples the mean.\n! Spread: $s = 147.0$, while MAD $= 2$ (robust scale $\\approx 2.97$) and IQR $= 17.5 - 13.25 = 4.25$ with NumPy's default quantiles.\n! z-score of 480: $(480 - 61.8)/147.0 = 2.85$, below 3, so the 3-sigma rule does not flag it.\n! Robust z-score of 480: $(480 - 15)/2.97 \\approx 157$. Tukey's upper fence is $17.5 + 1.5\\cdot 4.25 = 23.9$, which flags 480 and keeps 22.\n\n```\nimport numpy as np\nx = np.array([12, 13, 13, 14, 15, 15, 16, 18, 22, 480.0])\nq1, med, q3 = np.quantile(x, [0.25, 0.5, 0.75])\niqr = q3 - q1\nmad = np.median(np.abs(x - med))\nrobust_z = (x - med) / (1.4826 * mad)\nflag = (x < q1 - 1.5 * iqr) | (x > q3 + 1.5 * iqr)\n```\n\nFlagging is not deleting. An outlier may be a logging bug (drop it), a real but rare event (keep it, and maybe report a tail percentile separately), or the signal itself (fraud, a timeout path). Robust summaries let you see the bulk clearly; the decision about the tail is a domain question.\n\n> Takeaway: report the median and IQR or MAD alongside the mean and standard deviation for any skewed metric, and screen outliers with order-statistic fences, never with z-scores computed from the same contaminated data.",
+   "q": "A teammate flags outliers in a column of per-user purchase amounts by removing rows with |z| > 3, recomputes the mean and standard deviation, and repeats until nothing is removed. What can go wrong, and what would you do instead?",
+   "s": "Purchase amounts are right-skewed with a heavy tail, so the first pass is distorted by masking: the biggest values inflate the standard deviation and can hide each other, so some true outliers survive. Iterating then has the opposite failure: each pass shrinks $s$, so ordinary large but legitimate purchases start crossing the threshold and the procedure keeps eating the right tail, biasing the mean and total revenue downwards. Instead, compute fences from order statistics (Tukey's $Q_3 + 1.5\\,\\mathrm{IQR}$ or a MAD-based robust z with a cutoff near 3.5), which the outliers cannot distort, then inspect what is flagged. Remove only values shown to be errors; for genuine whales, report a robust summary (median, trimmed mean) alongside the mean, or winsorize for modelling, rather than deleting revenue that really happened.",
+   "r": [
+    [
+     "NIST/SEMATECH e-Handbook: Measures of Skewness and Kurtosis",
+     "https://www.itl.nist.gov/div898/handbook/eda/section3/eda35b.htm",
+     "Definitions and the effect of heavy tails on these moments."
+    ],
+    [
+     "NIST/SEMATECH e-Handbook: Detection of Outliers",
+     "https://www.itl.nist.gov/div898/handbook/eda/section3/eda35h.htm",
+     "Why masking happens and the modified (robust) z-score rule."
+    ],
+    [
+     "Hyndman and Fan: Sample quantiles in statistical packages",
+     "https://robjhyndman.com/publications/quantiles/",
+     "The nine quantile definitions that NumPy and R implement."
+    ],
+    [
+     "NumPy: numpy.quantile",
+     "https://numpy.org/doc/stable/reference/generated/numpy.quantile.html",
+     "The method argument and which Hyndman-Fan type each one is."
+    ]
+   ],
+   "k": [
+    "robust statistics",
+    "quantiles"
+   ],
+   "x": [
+    "NumPy",
+    "SciPy"
+   ],
+   "p": [
+    "percentiles-quantiles",
+    "skewness-and-kurtosis",
+    "mean-median-mode",
+    "sample-variance-and-standard-deviation",
+    "winsorize"
+   ]
+  },
+  {
+   "id": "13.02",
+   "t": "Sampling distributions and the CLT",
+   "n": [
+    "A statistic computed from a random sample is itself a random variable; its distribution over repeated samples is the **sampling distribution**, and its standard deviation is the **standard error**.",
+    "For a mean of $n$ independent draws, $\\mathrm{SE} = \\sigma/\\sqrt n$: halving the error costs four times the data.",
+    "The CLT says the standardised mean tends to $N(0,1)$; Berry-Esseen bounds the error by roughly $0.5\\,\\rho/(\\sigma^3\\sqrt n)$, so skewed data need much larger $n$.",
+    "The CLT fails or is slow with infinite variance (Cauchy, Pareto with $\\alpha\\le 2$), dependent observations, statistics that are not averages (maxima), and tiny samples of skewed data.",
+    "When in doubt, simulate: draw many samples from a plausible population, compute the statistic each time and look at the histogram."
+   ],
+   "a": "## Statistics have distributions too\nLesson 12.01 introduced estimators and their bias and variance. This lesson is the practical side: how big is the noise in a number you computed from data, and when can you treat that noise as normal?\n\nDraw a sample of $n$ values, compute a statistic (mean, median, conversion rate, AUC). Draw a fresh sample and you get a different value. The distribution of that value across all the samples you could have drawn is its **sampling distribution**. Its standard deviation is the **standard error** (SE). The SE is what turns a point estimate into a statement with error bars, and it is what every test in this module divides by.\n\n%%flow The sampling distribution is a thought experiment you can run in code: repeat the whole data collection, not just the calculation.\nPopulation -(draw n)-> Sample -(compute)-> Statistic -(repeat many times)-> *Sampling distribution -(its std)-> Standard error\n%%\n\n## The standard error of a mean\nFor $n$ independent draws with variance $\\sigma^2$, $\\mathrm{Var}(\\bar x) = \\sigma^2/n$, so\n\n$$\\mathrm{SE}(\\bar x) = \\frac{\\sigma}{\\sqrt n} \\approx \\frac{s}{\\sqrt n}.$$\n\nTwo consequences drive experiment budgets. The error shrinks with $\\sqrt n$, so a 2x tighter estimate needs 4x the data. And a proportion is a mean of 0/1 values with $\\sigma^2 = p(1-p)$, so $\\mathrm{SE}(\\hat p) = \\sqrt{p(1-p)/n}$.\n\nOther statistics have their own SEs. The median of normal data has $\\mathrm{SE} \\approx 1.253\\,\\sigma/\\sqrt n$, about 25% noisier than the mean, which is the price of its robustness; on heavy-tailed data the ordering flips and the median wins. When no formula exists, the bootstrap (lesson 13.05) estimates the SE by resampling.\n\n## The central limit theorem\nIf $x_1,\\dots,x_n$ are independent and identically distributed with mean $\\mu$ and finite variance $\\sigma^2$, then\n\n$$\\frac{\\bar x - \\mu}{\\sigma/\\sqrt n} \\xrightarrow{d} N(0,1).$$\n\nThe theorem is about the limit; what matters in practice is the rate. The Berry-Esseen theorem bounds the worst-case gap between the true CDF of the standardised mean and $\\Phi$ by $C\\rho/(\\sigma^3\\sqrt n)$ with $\\rho = E|x-\\mu|^3$ and $C$ below 0.5. Skewness enters through $\\rho$: symmetric data are near-normal by $n\\approx 30$, while a conversion rate of 0.1% or revenue with a few whales may need thousands of observations before a normal approximation is honest.\n\n```\nimport numpy as np\nrng = np.random.default_rng(0)\npop = rng.lognormal(mean=3, sigma=1.5, size=1_000_000)   # skewed \"revenue\"\nfor n in (10, 100, 1000):\n    means = rng.choice(pop, size=(5000, n)).mean(axis=1)\n    z = (means - pop.mean()) / (pop.std() / np.sqrt(n))\n    print(n, round(float(np.mean(z > 1.645)), 3))   # 0.05 if normal\n```\n\nThe printed tail fraction drifts towards 0.05 as $n$ grows. At small $n$ the sampling distribution of a lognormal mean is itself right-skewed: the right tail is too heavy and the left too light, so one-sided normal tests on the left side are overconfident.\n\n## When the CLT fails\n- **Infinite variance.** A Cauchy sample mean has exactly the same distribution as a single observation, for every $n$. Pareto tails with $1 < \\alpha \\le 2$ have a mean but no variance; averages converge, slowly and to a non-normal stable law. Heavy-tailed revenue and file sizes come close to this regime.\n- **Dependence.** For an AR(1) series with lag-1 correlation $\\rho$, $\\mathrm{Var}(\\bar x) \\approx \\frac{\\sigma^2}{n}\\cdot\\frac{1+\\rho}{1-\\rho}$. With $\\rho = 0.5$ the variance triples, so the effective sample size is $n/3$. Time series, repeated measures on the same user and clustered data (pages within sessions) all break the $\\sigma/\\sqrt n$ formula.\n- **Non-averages.** The maximum, a high quantile like p99.9, or the number of distinct items do not obey the CLT at all; extreme-value theory or the bootstrap (with care) applies instead.\n- **Ratio metrics.** Clicks per page view, randomised by user, is a ratio of two correlated means. Treating each page view as independent understates the SE; the delta method or a user-level bootstrap gives the right one.\n\n| Situation | What goes wrong | Fix\n| Skewed data, small n | Tails of the sampling distribution are asymmetric | Larger n, log transform, bootstrap\n| Heavy tails (no variance) | SE formula is meaningless | Median, trimming, winsorizing\n| Correlated observations | SE too small, tests overconfident | Cluster-level analysis, block bootstrap\n| Ratio of means | Unit of analysis mismatch | Delta method, aggregate per randomisation unit\n\n! Example: how precise is a 2% click-through rate?\n! With $n = 10{,}000$ independent impressions and $\\hat p = 0.02$: $\\mathrm{SE} = \\sqrt{0.02\\cdot0.98/10000} = 0.0014$.\n! A 95% interval is $0.02 \\pm 1.96\\cdot0.0014$, roughly 1.73% to 2.27%: a relative error of about $\\pm 14\\%$.\n! To get $\\pm 5\\%$ relative you need $(13.7/5)^2 \\approx 7.5$ times as many impressions, about 75,000. Check $n\\hat p = 200 \\gg 10$, so the normal approximation is fine here; at $p = 0.001$ with the same $n$ it would be shaky.\n\n> Takeaway: the standard error, not the standard deviation, measures how much a statistic would move on fresh data; trust $\\sigma/\\sqrt n$ and the normal approximation only for independent, finite-variance data with enough observations to overcome the skew.",
+   "q": "You measure average session length on 2,000 sessions coming from 200 users (10 sessions each) and compute the SE as s divided by the square root of 2,000. Why is this probably too small, and how would you get a defensible SE?",
+   "s": "The formula assumes 2,000 independent observations, but sessions from the same user are correlated: a heavy user has consistently long sessions. With positive within-user correlation the variance of the mean is inflated by a design effect of roughly $1 + (m-1)\\rho$ for $m = 10$ sessions per user and intra-user correlation $\\rho$; with $\\rho = 0.3$ that is 3.7, so the true SE is almost twice the naive one and the effective sample size is closer to 540 than 2,000. A defensible SE treats the user as the unit: compute each user's mean (or total sessions and total time, then use the delta method for the ratio), take the SE across the 200 users, or run a bootstrap that resamples users rather than sessions. Session length is also right-skewed, so check that 200 users is enough, or use a log transform or the bootstrap.",
+   "r": [
+    [
+     "Penn State STAT 415: Introduction to Mathematical Statistics",
+     "https://online.stat.psu.edu/stat415/",
+     "Sampling distributions, the CLT and standard errors with derivations."
+    ],
+    [
+     "Wikipedia: Central limit theorem",
+     "https://en.wikipedia.org/wiki/Central_limit_theorem",
+     "Statement, Lyapunov and Lindeberg conditions, and the Berry-Esseen section on convergence rate."
+    ],
+    [
+     "Think Stats (3rd ed.), Allen Downey",
+     "https://allendowney.github.io/ThinkStats/",
+     "Free, simulation-first treatment of sampling distributions in Python."
+    ],
+    [
+     "Seeing Theory (Brown University)",
+     "https://seeing-theory.brown.edu/",
+     "Interactive CLT and sampling visualisations."
+    ]
+   ],
+   "k": [
+    "standard error",
+    "CLT"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "sampling-distribution-of-mean",
+    "central-limit-theorem",
+    "standard-error-comparison",
+    "stratified-sampling"
+   ]
+  },
+  {
+   "id": "13.03",
+   "t": "Hypothesis testing: z, t and p-values",
+   "n": [
+    "A test asks how surprising the data would be if the null hypothesis $H_0$ were true; the **p-value** is the probability, under $H_0$, of a statistic at least as extreme as the one observed.",
+    "The z-test divides an effect by a known or large-sample SE; the t-test uses an estimated SE and the heavier-tailed $t_{\\nu}$ distribution, which matters below a few dozen observations.",
+    "Pick the test to match the design: one-sample, paired (difference within units) or two-sample Welch (unequal variances, the safe default).",
+    "Type I error (false positive) is capped by $\\alpha$; Type II error $\\beta$ depends on effect size, noise and $n$; power is $1-\\beta$.",
+    "A p-value is not the probability that $H_0$ is true, and a non-significant result is not evidence of no effect; report the estimate with a confidence interval."
+   ],
+   "a": "## The logic of a test\nLesson 13.02 gave every statistic a standard error. A hypothesis test uses it to ask one question: if nothing interesting were going on, how often would we see a result this far from \"nothing\"?\n\n1. State a **null hypothesis** $H_0$ (no difference, mean equals $\\mu_0$) and an **alternative** $H_1$ (two-sided $\\mu\\ne\\mu_0$, or one-sided $\\mu>\\mu_0$, decided before looking).\n2. Compute a **test statistic** that is large when the data disagree with $H_0$, usually (estimate minus null value) / SE.\n3. Find its **null distribution**: the distribution it would have if $H_0$ were true.\n4. The **p-value** is the probability, under that distribution, of a statistic at least as extreme as the observed one.\n5. Reject $H_0$ if $p \\le \\alpha$, with $\\alpha$ fixed in advance (commonly 0.05).\n\n%%flow Every classical test is the same pipeline; only the statistic and its null distribution change.\nData -(estimate / SE)-> Test statistic -(compare to)-> Null distribution -(tail area)-> *p-value -(vs alpha)-> Decision\n%%\n\n## z-tests and t-tests\nWith a known $\\sigma$, or a large sample where $s\\approx\\sigma$, the statistic $z = (\\bar x - \\mu_0)/(\\sigma/\\sqrt n)$ is standard normal under $H_0$. With $\\sigma$ estimated from a small sample, the extra uncertainty in $s$ makes the statistic heavier-tailed. Gosset showed that for normal data\n\n$$t = \\frac{\\bar x - \\mu_0}{s/\\sqrt n} \\sim t_{n-1}.$$\n\nThe two-sided 5% critical value is 2.26 at $n=10$, 2.06 at $n=25$ and 1.98 at $n=100$, against 1.96 for $z$; beyond roughly 50 observations the distinction rarely changes a decision. The t-test is also fairly robust to non-normality at moderate $n$ thanks to the CLT, but not to strong skew at small $n$.\n\nThree designs cover most ML comparisons:\n- **One-sample**: is the mean error zero? Test the column against $\\mu_0$.\n- **Paired**: two models evaluated on the same 25 queries, or the same users before and after. Take per-unit differences and run a one-sample t-test on them. Pairing removes between-unit variance and is often several times more powerful than ignoring it.\n- **Two-sample**: independent groups. **Welch's** test uses $\\mathrm{SE} = \\sqrt{s_1^2/n_1 + s_2^2/n_2}$ and an approximate degrees of freedom; it stays valid when variances differ, so use it by default (`scipy.stats.ttest_ind(a, b, equal_var=False)`).\n\n```\nfrom scipy import stats\nd = new_scores - old_scores                      # same 25 queries, paired\nt, p = stats.ttest_1samp(d, 0.0)                 # == stats.ttest_rel(new, old)\nt2, p2 = stats.ttest_ind(new_scores, old_scores, equal_var=False)  # wrong here: ignores pairing\n```\n\n## Errors and power\n| Decision | $H_0$ true | $H_0$ false\n| Reject $H_0$ | Type I error (rate $\\alpha$) | Correct: power $1-\\beta$\n| Keep $H_0$ | Correct | Type II error (rate $\\beta$)\n\n$\\alpha$ is under your control. $\\beta$ is not chosen directly; it falls as the true effect grows, as noise shrinks and as $n$ grows. Lesson 13.06 turns that relationship into a sample-size calculation. An underpowered study has two problems: it usually misses real effects, and the effects it does declare significant are exaggerated, because only the lucky overestimates cross the threshold.\n\n## Confidence intervals and tests are the same object\nA two-sided test at level $\\alpha$ rejects $\\mu = \\mu_0$ exactly when $\\mu_0$ lies outside the $1-\\alpha$ confidence interval $\\bar x \\pm t_{n-1,\\,1-\\alpha/2}\\cdot s/\\sqrt n$ (interval estimation is covered in lesson 12.03). The interval is more informative: it shows both whether zero is plausible and how large the effect might be. A \"significant\" improvement of 0.1% with an interval of 0.01% to 0.19% and a \"non-significant\" one of 3% with an interval of -1% to 7% call for very different actions.\n\n## What a p-value is not\n- Not $P(H_0 \\mid \\text{data})$. That needs a prior; with a low prior on real effects, many results with $p\\approx0.04$ are false positives.\n- Not the size or importance of an effect. With $n = 10^7$, trivial differences are significant.\n- Not evidence of no effect when $p > \\alpha$. Absence of evidence in an underpowered test is just absence of evidence.\n- Not valid after you chose the test, the subgroup or the stopping time by looking at the data. Lesson 13.06 deals with peeking and multiple comparisons.\n\n! Example: is the new ranker better on 25 paired queries?\n! Per-query differences in NDCG: mean $\\bar d = 1.2$ points, standard deviation $s_d = 3.0$.\n! $\\mathrm{SE} = 3.0/\\sqrt{25} = 0.6$, so $t = 1.2/0.6 = 2.0$ with 24 degrees of freedom.\n! Two-sided $p = 0.057$: not significant at 0.05. The 95% interval is $1.2 \\pm 2.064\\cdot0.6$, roughly -0.04 to 2.44 points.\n! Reading: the data are compatible with no gain and with a gain of over 2 points. The right next step is more queries, not a verdict that the ranker does nothing.\n\n> Takeaway: a test measures how surprising the data are under the null, so match the statistic to the design (paired, Welch, one-sample), fix alpha and the hypotheses before looking, and always report the effect with its confidence interval rather than a bare p-value.",
+   "q": "Two models are scored on the same 40 test prompts. A Welch two-sample t-test on the two score columns gives p = 0.30, while a paired t-test gives p = 0.004. Explain how both can be correct calculations and which one answers the question.",
+   "s": "Both are arithmetically right but they test different designs. Welch treats the columns as independent groups, so its SE includes the large prompt-to-prompt variation: some prompts are easy for both models, some hard for both. That shared variation swamps a small, consistent difference, giving p = 0.30. The paired test works on per-prompt differences; prompt difficulty cancels because it affects both models, so the SE of the mean difference is far smaller and the same mean gap becomes clearly significant. Since both models saw the same prompts, the observations are paired and the paired test is the correct one; Welch's independence assumption is false here and wastes the design. You should still check that the differences are not dominated by a few prompts (look at their distribution, or use a permutation or sign test) and report the mean difference with its interval.",
+   "r": [
+    [
+     "SciPy: scipy.stats.ttest_ind",
+     "https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.ttest_ind.html",
+     "Welch versus Student, alternatives, and the permutation option."
+    ],
+    [
+     "Greenland et al.: Statistical tests, P values, confidence intervals, and power",
+     "https://link.springer.com/article/10.1007/s10654-016-0149-3",
+     "Twenty-five common misinterpretations of p-values and intervals, explained."
+    ],
+    [
+     "Penn State STAT 500: Applied Statistics",
+     "https://online.stat.psu.edu/stat500/",
+     "Lessons on z and t tests, paired designs and errors, with worked examples."
+    ]
+   ],
+   "k": [
+    "p-value",
+    "t-test",
+    "power"
+   ],
+   "x": [
+    "SciPy"
+   ],
+   "p": [
+    "z-test-one-sample",
+    "t-test-one-sample",
+    "one-sample-t-statistic"
+   ]
+  },
+  {
+   "id": "13.04",
+   "t": "Tests for counts, groups and correlation",
+   "n": [
+    "Chi-square tests compare observed counts with expected counts: $\\chi^2 = \\sum (O-E)^2/E$, with $k-1$ degrees of freedom for goodness of fit and $(r-1)(c-1)$ for an $r\\times c$ independence table.",
+    "For a $2\\times2$ table the uncorrected chi-square statistic equals the square of the two-proportion z statistic; when expected counts fall below about 5, use Fisher's exact test.",
+    "One-way ANOVA tests whether $k$ group means are all equal with $F = \\mathrm{MS_{between}}/\\mathrm{MS_{within}}$; a significant F says some mean differs, not which.",
+    "A Pearson correlation is tested with $t = r\\sqrt{n-2}/\\sqrt{1-r^2}$ on $n-2$ degrees of freedom; Fisher's $z = \\operatorname{atanh} r$ gives intervals. Spearman's rank correlation handles monotone, non-linear or outlier-prone data.",
+    "All of these assume independent observations; counting events instead of units (clicks instead of users) silently breaks them."
+   ],
+   "a": "## Beyond one mean\nLesson 13.03 compared means. Much ML data is categorical (did the user convert, which error class did the model produce) or involves more than two groups (four prompt templates, five data sources). Three families of tests cover these cases, and all of them reuse the pipeline from 13.03: a statistic, a null distribution, a tail area.\n\n| Question | Data | Test | Null distribution\n| Do counts match a target distribution? | one categorical variable | chi-square goodness of fit | $\\chi^2_{k-1}$\n| Are two categorical variables related? | contingency table | chi-square independence, Fisher exact | $\\chi^2_{(r-1)(c-1)}$\n| Do several group means differ? | numeric outcome, k groups | one-way ANOVA (Welch ANOVA if variances differ) | $F_{k-1,\\,N-k}$\n| Are two numeric variables linearly related? | paired numeric columns | Pearson t-test, Fisher z | $t_{n-2}$\n| Monotone relation, outliers, ranks? | paired columns | Spearman rank correlation | approx. $t_{n-2}$ or permutation\n\n## Chi-square tests for counts\nBoth chi-square tests compare observed counts $O$ to the counts $E$ you would expect under the null:\n\n$$\\chi^2 = \\sum_{\\text{cells}} \\frac{(O - E)^2}{E}.$$\n\n- **Goodness of fit**: one variable with $k$ categories and hypothesised proportions $\\pi_j$, so $E_j = n\\pi_j$ and $k-1$ degrees of freedom (subtract one more for each parameter estimated from the data). A sample-ratio-mismatch check in an A/B test is exactly this with $k=2$ and $\\pi = (0.5, 0.5)$.\n- **Independence**: an $r\\times c$ table of counts. Under independence $E_{ij} = (\\text{row}_i\\cdot\\text{col}_j)/n$, with $(r-1)(c-1)$ degrees of freedom.\n\nThe $\\chi^2$ approximation is a large-sample result. The usual rule is expected counts of at least 5 in (nearly) all cells; with sparse tables merge categories or use **Fisher's exact test**, which computes the probability of the table directly from the hypergeometric distribution. Note that `scipy.stats.chi2_contingency` applies Yates' continuity correction to $2\\times2$ tables by default, which makes it more conservative; pass `correction=False` to match the hand formula.\n\n! Example: does the new onboarding flow change conversion?\n! Variant A: 200 of 1,000 users converted; variant B: 240 of 1,000. The pooled rate is 0.22, so expected counts are 220 converted and 780 not in each arm.\n! $\\chi^2 = 2\\cdot\\frac{20^2}{220} + 2\\cdot\\frac{20^2}{780} = 3.636 + 1.026 = 4.66$ on 1 degree of freedom, $p = 0.031$.\n! The two-proportion z-test gives $z = 0.04/\\sqrt{0.22\\cdot0.78\\cdot(2/1000)} = 2.159$, and $2.159^2 = 4.66$: for a $2\\times2$ table the two tests are identical.\n\n## One-way ANOVA\nWith $k$ groups, running all $\\binom{k}{2}$ t-tests inflates false positives (lesson 13.06). ANOVA asks a single question: are all group means equal? It splits the total variation into variation between group means and variation within groups:\n\n$$F = \\frac{\\mathrm{SS_B}/(k-1)}{\\mathrm{SS_W}/(N-k)}, \\quad \\mathrm{SS_B} = \\sum_g n_g(\\bar x_g - \\bar x)^2, \\quad \\mathrm{SS_W} = \\sum_g\\sum_{i\\in g}(x_i - \\bar x_g)^2.$$\n\nUnder $H_0$ both mean squares estimate the noise variance, so $F\\approx1$; real differences inflate the numerator. A significant $F$ tells you that some mean differs. Follow-up comparisons (Tukey's HSD, or pairwise tests with a multiple-testing correction) say which. Classical ANOVA assumes roughly normal residuals and equal variances; Welch's ANOVA drops the second assumption, and the Kruskal-Wallis rank test drops both. With two groups, $F = t^2$ from the pooled two-sample t-test.\n\n%%flow ANOVA in one picture: the same total variation, split into the part explained by group membership and the leftover noise.\nTotal variation -(split)-> Between-group SS -(divide by k-1)-> *F = MSB / MSW\nTotal variation -(split)-> Within-group SS -(divide by N-k)-> Noise estimate MSW\n%%\n\n! Example: three prompt templates, three scores each\n! A = 4, 5, 6; B = 6, 7, 8; C = 8, 9, 10. Group means 5, 7, 9; grand mean 7.\n! $\\mathrm{SS_B} = 3(4 + 0 + 4) = 24$ on 2 df, so $\\mathrm{MS_B} = 12$. $\\mathrm{SS_W} = 2 + 2 + 2 = 6$ on 6 df, so $\\mathrm{MS_W} = 1$.\n! $F = 12$ on (2, 6) df, $p = 0.008$. The templates differ; pairwise follow-ups decide whether A versus B (a 2-point gap) holds up on its own.\n\n## Testing a correlation\nFor $n$ pairs from a bivariate normal with true correlation zero,\n\n$$t = \\frac{r\\sqrt{n-2}}{\\sqrt{1-r^2}} \\sim t_{n-2}.$$\n\nWith $r = 0.3$ and $n = 50$, $t = 2.18$ and $p = 0.034$. For a confidence interval, or to test $\\rho = \\rho_0 \\ne 0$, use **Fisher's transform** $z = \\operatorname{atanh}(r)$, which is approximately normal with SE $1/\\sqrt{n-3}$. Build the interval in $z$-space and transform back with $\\tanh$; the result is asymmetric, as it should be near $\\pm1$.\n\nPearson's $r$ measures linear association and has a breakdown point of zero (lesson 13.01): one extreme point can create or destroy a correlation. **Spearman's** $\\rho_s$ is Pearson's $r$ on ranks, so it captures any monotone relation and resists outliers. Neither says anything about causation, and with $n$ in the millions a correlation of 0.01 is significant and useless.\n\n## The assumption that breaks everything: independence\nEvery test above assumes the observations are independent. A table of 50,000 clicks from 2,000 users, or ANOVA over images of which many come from the same patient, overstates $n$ and produces tiny p-values. Aggregate to the unit that was randomised or sampled before testing, exactly as in lesson 13.02.\n\n> Takeaway: use chi-square (or Fisher's exact test when counts are small) for counts, one ANOVA instead of many t-tests for several group means, and the t or Fisher-z test for correlations, always on independent units, and treat a significant omnibus result as a pointer to follow-up comparisons, not an answer.",
+   "q": "You compare error-type distributions (5 error categories) between two model versions using every logged error: 12,000 errors from version 1 and 11,500 from version 2, collected from 300 users. The chi-square test of independence gives p = 1e-9. What would you check before concluding the versions fail differently?",
+   "s": "First, independence: the 23,500 errors come from only 300 users, and a few heavy users with their own peculiar inputs can generate thousands of correlated errors, so the chi-square treats clustered events as independent and the p-value is far too small. Re-run the analysis with the user as the unit, for example per-user error-type proportions compared with a permutation test that shuffles version labels across users, or a user-level bootstrap. Second, confounding: did the same users and traffic mix see both versions, or did version 2 roll out to different segments or later dates? Third, effect size: with 23,500 counts tiny shifts are significant, so inspect standardised residuals $(O-E)/\\sqrt E$ per cell to see which categories moved and by how much, and judge whether that matters. Finally, check expected counts in rare categories.",
+   "r": [
+    [
+     "SciPy: scipy.stats.chi2_contingency",
+     "https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.chi2_contingency.html",
+     "Expected frequencies, degrees of freedom and the Yates correction default."
+    ],
+    [
+     "NIST/SEMATECH e-Handbook: Chi-Square Goodness-of-Fit Test",
+     "https://www.itl.nist.gov/div898/handbook/eda/section3/eda35f.htm",
+     "Binning, expected counts and degrees of freedom."
+    ],
+    [
+     "SciPy: scipy.stats.f_oneway",
+     "https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.f_oneway.html",
+     "One-way ANOVA, its assumptions and the alternatives SciPy points to."
+    ],
+    [
+     "SciPy: scipy.stats.pearsonr",
+     "https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.pearsonr.html",
+     "The t-based test and Fisher-z confidence interval for r."
+    ]
+   ],
+   "k": [
+    "chi-square",
+    "ANOVA",
+    "correlation"
+   ],
+   "x": [
+    "SciPy"
+   ],
+   "p": [
+    "chi-square-goodness-of-fit",
+    "independence-testing",
+    "anova-f-statistic",
+    "correlation-significance-test"
+   ]
+  },
+  {
+   "id": "13.05",
+   "t": "Resampling: bootstrap and permutation tests",
+   "n": [
+    "The **bootstrap** estimates a sampling distribution by resampling the data with replacement: the sample stands in for the population (the plug-in principle).",
+    "Percentile intervals take the 2.5% and 97.5% quantiles of the bootstrap statistics; BCa intervals correct for bias and skew and are the better default when available.",
+    "A **permutation test** builds the null distribution by shuffling group labels, which is exact when units are exchangeable under $H_0$; report $p = (1+\\#\\{T^b \\ge T\\})/(1+B)$.",
+    "The bootstrap answers \"how uncertain is this estimate\", the permutation test answers \"could this difference be chance\"; both must resample the independent unit (users, not events).",
+    "The bootstrap fails for extremes (the max), very small samples and dependent data unless you use a block or cluster bootstrap."
+   ],
+   "a": "## When formulas run out\nThe tests in 13.03 and 13.04 rely on formulas for the standard error and on approximate normality. Many quantities you care about have no handy formula: the median latency, the AUC of a classifier, the ratio of two means, the 90th percentile, a difference in F1 scores. Resampling methods replace the algebra with computation. Both ideas below fit in ten lines of NumPy, and both are used in practice for model evaluation.\n\n## The bootstrap\nThe ideal experiment for an SE (13.02) is to draw many fresh samples from the population. The bootstrap's trick, due to Efron (1979), is to draw them from the sample itself: treat the $n$ observed values as the population, draw $n$ values **with replacement**, recompute the statistic, and repeat $B$ times. The spread of the $B$ replicates estimates the sampling spread.\n\n%%flow Bootstrap: resample with replacement, recompute, and read error bars off the replicates.\nSample of n -(draw n with replacement)-> Resample -(compute statistic)-> Replicate -(repeat B times)-> *Bootstrap distribution -(quantiles)-> Confidence interval\n%%\n\n```\nimport numpy as np\nrng = np.random.default_rng(0)\ndef bootstrap_ci(x, stat=np.median, B=10_000, level=0.95):\n    idx = rng.integers(0, len(x), size=(B, len(x)))      # B resamples at once\n    reps = stat(x[idx], axis=1)\n    a = (1 - level) / 2\n    return np.quantile(reps, [a, 1 - a]), reps.std(ddof=1)  # percentile CI, SE\n```\n\nThree intervals are common:\n- **Percentile**: the $\\alpha/2$ and $1-\\alpha/2$ quantiles of the replicates. Simple, and respects the range of the statistic.\n- **Basic (pivotal)**: reflects the percentile interval around the estimate, $[2\\hat\\theta - q_{1-\\alpha/2},\\ 2\\hat\\theta - q_{\\alpha/2}]$.\n- **BCa** (bias-corrected and accelerated): adjusts the percentiles for median bias and for how the SE changes with the parameter. It has better coverage on skewed statistics and is the default in `scipy.stats.bootstrap`.\n\n$B = 1{,}000$ is enough for an SE; for 95% interval endpoints use 5,000 to 10,000, because tail quantiles are noisy.\n\nWhere it fails:\n- **Extremes.** The bootstrap distribution of the sample maximum puts about 63% of its mass on the observed maximum, because a resample contains the largest value with probability $1-(1-1/n)^n \\approx 1 - 1/e$. High quantiles such as p99 from a few hundred points have the same problem.\n- **Tiny samples.** With $n = 8$ the sample is a poor stand-in for the population and intervals are too narrow.\n- **Dependence.** Resampling individual events from correlated data destroys the correlation and understates the SE. Resample whole clusters (users, sessions) or contiguous blocks of a time series.\n\n## Permutation tests\nA permutation test answers a different question: is the observed difference between groups larger than what random labelling would produce? Under $H_0$ the group labels are arbitrary (the units are **exchangeable**), so every reassignment of labels was equally likely to have occurred.\n\n1. Compute the observed statistic $T$, for example the difference in means.\n2. Shuffle the labels, recompute the statistic $T^b$; repeat $B$ times (or enumerate all reassignments when that is feasible).\n3. $p = \\dfrac{1 + \\#\\{b : T^b \\ge T\\}}{1 + B}$ for a one-sided test, using $|T|$ for two-sided. The $+1$ counts the observed labelling as one of the permutations, which keeps $p$ valid and never exactly zero.\n\nThe test makes no normality assumption and works with any statistic: a difference in medians, AUC or a custom business metric. Its assumption is exchangeability. If the groups have very different variances, a permutation test of means can reject because of the variance difference alone; if units are clustered, permute cluster labels, not rows.\n\n! Example: four latency measurements per configuration\n! Old: 3, 5, 4, 6 (mean 4.5). New: 7, 8, 6, 9 (mean 7.5). Observed difference $T = 3.0$.\n! There are $\\binom{8}{4} = 70$ ways to split the eight values into two groups of four. Exactly 2 give a difference of at least 3.0 (the observed split, and the one that swaps the two 6s).\n! Exact one-sided $p = 2/70 = 0.029$; two-sided $p = 4/70 = 0.057$. With so few points, 0.029 is close to the smallest p-value achievable ($1/70 = 0.014$), a useful reminder of how little 8 numbers can prove.\n\n## Which one to use\n| Goal | Method | Resamples\n| Error bars on an estimate | bootstrap | with replacement, within the sample\n| Test \"no difference between groups\" | permutation test | shuffle labels, without replacement\n| CI for a difference between two groups | bootstrap each group separately | with replacement, per group\n| Data clustered by user | either, at user level | whole users\n\nThe two are complementary. For evaluating models, a paired bootstrap over test examples (resample example indices, recompute both models' metrics on the same resample) gives an interval for the metric difference; a paired permutation test (randomly swap the two models' predictions per example) tests whether that difference is zero. The bootstrap also appears in the Machine Learning course, where bagging and random forests average models fitted on bootstrap resamples.\n\n> Takeaway: bootstrap the independent unit to get error bars for any statistic, permute labels to test whether a difference beats chance, and do not trust either for sample maxima, tiny samples or data whose dependence the resampling ignores.",
+   "q": "You bootstrap the p99 latency of 400 requests to get a 95% confidence interval, and the interval looks oddly narrow and lumpy, sitting on just a few distinct values. Explain why, and what you would do instead.",
+   "s": "The p99 of 400 points is determined by the top 4 or 5 order statistics. Every bootstrap resample is built only from the observed values, so its p99 can only land on (or interpolate between) the few largest observations; the replicates take a handful of distinct values and cannot reach beyond the observed maximum. The bootstrap is known to be unreliable for extremes and high quantiles because the empirical distribution has no tail beyond the sample. Options: collect far more requests so the p99 rests on hundreds of tail points; report a lower, better-supported quantile such as p90; use a distribution-free order-statistic interval for the quantile, based on the binomial count of points below it; or fit a tail model (for example a generalized Pareto above a threshold) if extrapolation is needed. Also check that requests are independent; bursts of slow requests would call for a block bootstrap.",
+   "r": [
+    [
+     "SciPy: scipy.stats.bootstrap",
+     "https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.bootstrap.html",
+     "Percentile, basic and BCa intervals, paired and vectorised statistics."
+    ],
+    [
+     "SciPy: scipy.stats.permutation_test",
+     "https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.permutation_test.html",
+     "Independent, paired and correlation permutation types and the p-value convention."
+    ],
+    [
+     "DiCiccio and Efron: Bootstrap confidence intervals",
+     "https://projecteuclid.org/journals/statistical-science/volume-11/issue-3/Bootstrap-confidence-intervals/10.1214/ss/1032280214.full",
+     "Why BCa improves on percentile intervals, from the method's authors."
+    ]
+   ],
+   "k": [
+    "bootstrap",
+    "permutation test"
+   ],
+   "x": [
+    "NumPy",
+    "SciPy"
+   ],
+   "p": [
+    "bootstrap-confidence-interval",
+    "random-array-generation",
+    "canary-mann-whitney"
+   ]
+  },
+  {
+   "id": "13.06",
+   "t": "A/B testing: design, power and multiple testing",
+   "n": [
+    "Fix the randomisation unit, one primary metric, guardrails, $\\alpha$, power and the minimum detectable effect **before** the test starts; analyse at the unit you randomised.",
+    "Sample size per arm is $n \\approx (z_{1-\\alpha/2}+z_{1-\\beta})^2\\,(\\sigma_A^2+\\sigma_B^2)/\\delta^2$, about $16\\sigma^2/\\delta^2$ at 5% and 80% power: halving the detectable effect quadruples traffic.",
+    "Peeking at a fixed-horizon test and stopping at the first $p<0.05$ inflates false positives (about 19% with 10 looks); use a fixed horizon or a sequential method.",
+    "Many metrics or segments need a correction: Bonferroni controls the chance of any false positive, Benjamini-Hochberg controls the fraction of false discoveries and keeps more power.",
+    "Check sample-ratio mismatch with a chi-square test first; variance reduction such as CUPED cuts the needed sample by a factor of $1-\\rho^2$."
+   ],
+   "a": "## Experiments put the module together\nAn online A/B test randomly splits units (users, sessions, devices) between a control and a treatment and compares a metric. Randomisation is what makes the comparison causal: any difference beyond chance is due to the change. Every earlier lesson appears here: robust metrics (13.01), standard errors with the right unit (13.02), z and t tests (13.03), chi-square checks (13.04) and the bootstrap for awkward metrics (13.05). This lesson covers the statistics. The Machine Learning course's production module covers shipping models through canaries and sequential tests in more depth.\n\n%%flow An experiment's decisions are made before data arrive; analysis only executes the plan.\nHypothesis -(choose)-> Unit, metric, MDE -(power calc)-> Sample size -(run, no peeking)-> SRM check -(test)-> *Effect + CI -(decide)-> Ship or not\n%%\n\n## Design decisions\n- **Randomisation unit.** Usually the user, so one person sees one experience. Analyse at that unit: a per-page-view analysis of a user-randomised test understates the SE (13.02).\n- **Primary metric.** One metric decides (an overall evaluation criterion such as conversion or revenue per user). Guardrail metrics (latency, error rate, unsubscribes) must not degrade.\n- **Minimum detectable effect (MDE).** The smallest effect worth detecting, set by the business, not by what the data happen to show.\n- **$\\alpha$ and power.** Commonly $\\alpha = 0.05$ two-sided and power $1-\\beta = 0.8$.\n- **Duration.** At least one full weekly cycle, so weekday and weekend users are both represented, and long enough to reach the sample size.\n\n## Power and sample size\nTo detect a difference $\\delta$ between two means with noise $\\sigma_A$, $\\sigma_B$, the per-arm sample size is\n\n$$n = \\frac{(z_{1-\\alpha/2} + z_{1-\\beta})^2\\,(\\sigma_A^2 + \\sigma_B^2)}{\\delta^2}.$$\n\nWith $\\alpha = 0.05$ and 80% power, $(1.96 + 0.84)^2 \\approx 7.85$, so with equal variances $n \\approx 16\\sigma^2/\\delta^2$. For a conversion rate, $\\sigma^2 = p(1-p)$.\n\n! Example: sizing a checkout test\n! Baseline conversion 5.0%; the MDE is a 10% relative lift, to 5.5%.\n! $n = 7.85\\cdot(0.05\\cdot0.95 + 0.055\\cdot0.945)/0.005^2 = 7.85\\cdot0.0995/0.000025 \\approx 31{,}200$ users per arm, 62,400 in total.\n! For a 5% relative lift (to 5.25%) the required $n$ roughly quadruples, to about 122,000 per arm. With 4,000 eligible users a day, that is the difference between about 2 weeks and 2 months.\n! Running the smaller test and \"seeing what happens\" for a 5% lift gives power of about 29%: most real 5% wins would be missed, and the ones that do reach significance would overstate the lift.\n\n## Peeking and sequential testing\nThe p-value from 13.03 assumes one analysis at a pre-set $n$. Checking every day and stopping at the first $p < 0.05$ gives the noise many chances to cross the line. In simulation, 10 equally spaced looks at an A/A test (no true effect) produce a \"significant\" result about 19% of the time instead of 5%; continuous monitoring pushes it towards certainty. Two honest alternatives:\n- **Fixed horizon**: compute $n$, wait, analyse once. Dashboards can show data, but no decision is made until the end.\n- **Sequential designs**: group-sequential boundaries (O'Brien-Fleming spends little $\\alpha$ early) or always-valid p-values such as the mixture SPRT, which stay correct under continuous monitoring at some cost in power.\n\n## Multiple testing\nTwenty metrics, or one metric in twenty segments, at $\\alpha = 0.05$ each: if nothing changed, the chance of at least one false positive is $1 - 0.95^{20} = 64\\%$.\n- **Bonferroni** controls the family-wise error rate (FWER, the probability of any false positive) by testing each of $m$ hypotheses at $\\alpha/m$. Simple and valid under any dependence, but conservative for large $m$.\n- **Benjamini-Hochberg (BH)** controls the false discovery rate (FDR, the expected fraction of rejections that are false). Sort the p-values $p_{(1)} \\le \\dots \\le p_{(m)}$, find the largest $k$ with $p_{(k)} \\le \\frac{k}{m}q$, and reject hypotheses $1..k$.\n\n| Sorted p-value | 0.001 | 0.012 | 0.021 | 0.040 | 0.300\n| BH threshold $kq/m$ ($q = 0.05$, $m = 5$) | 0.010 | 0.020 | 0.030 | 0.040 | 0.050\n| BH rejects | yes | yes | yes | yes | no\n| Bonferroni ($p \\le 0.01$) rejects | yes | no | no | no | no\n\nUse FWER control for the primary decision and FDR when screening many secondary metrics or segments. Better still, name one primary metric in advance so that only one test decides.\n\n## Sanity checks and variance reduction\n- **Sample-ratio mismatch (SRM).** A 50/50 test that ends with 50,000 versus 49,000 users gives $\\chi^2 = 2\\cdot500^2/49{,}500 = 10.1$, $p = 0.0015$ (13.04). An SRM means assignment or logging is broken (bots filtered in one arm, a crash before logging), and the result should not be trusted until it is explained.\n- **A/A tests** check the whole pipeline: over many A/A runs, about 5% should be significant.\n- **CUPED** regresses the metric on a pre-experiment covariate (the same metric last month) and analyses the residual $Y - \\theta(X - \\bar X)$. Variance is multiplied by $1-\\rho^2$; with $\\rho = 0.7$ it falls to 51% of the original, which roughly halves the sample size required.\n- **Novelty and interference.** Early lifts can fade; users in a marketplace or social network affect each other, which breaks the independence between arms and may need cluster-level randomisation.\n\n```\nfrom scipy import stats\nz_a, z_b = stats.norm.ppf(0.975), stats.norm.ppf(0.80)\np1, p2 = 0.05, 0.055\nn = (z_a + z_b) ** 2 * (p1 * (1 - p1) + p2 * (1 - p2)) / (p2 - p1) ** 2\np_adj = stats.false_discovery_control([0.001, 0.012, 0.021, 0.04, 0.3])  # BH-adjusted\n```\n\n> Takeaway: an A/B test is decided at design time: fix the unit, one primary metric, the MDE and the sample size from a power calculation, then analyse once (or with a proper sequential method), check SRM first, and correct for every extra metric or segment you look at.",
+   "q": "A test with 20 secondary metrics runs for two weeks. The primary metric is flat (p = 0.4), but 'time on page for Android users in Germany' is up 12% with p = 0.01. The PM wants to ship. What is your analysis?",
+   "s": "The headline result is the primary metric, and it shows no detectable effect. The German Android finding is one of a very large number of metric-by-segment combinations that could have been examined (20 metrics times many segments), so at least one p near 0.01 is expected by chance; with, say, 200 implicit comparisons, a Bonferroni threshold would be 0.00025, and Benjamini-Hochberg would almost certainly not reject a lone 0.01. The segment was also chosen after seeing the data, which invalidates the nominal p-value. The 12% lift is likely inflated by the same selection. Correct move: treat it as a hypothesis, not a result. Do not ship on it; if the segment matters, run a new test pre-registered on that segment and metric, sized by a power calculation, and confirm SRM and guardrails as usual.",
+   "r": [
+    [
+     "Kohavi et al.: Controlled experiments on the web: survey and practical guide",
+     "https://link.springer.com/article/10.1007/s10618-008-0114-1",
+     "Randomisation units, the overall evaluation criterion, power and common pitfalls."
+    ],
+    [
+     "Evan Miller: How Not To Run an A/B Test",
+     "https://www.evanmiller.org/how-not-to-run-an-ab-test.html",
+     "A short, concrete account of why peeking inflates false positives."
+    ],
+    [
+     "Johari et al.: Always Valid Inference",
+     "https://arxiv.org/abs/1512.04922",
+     "Always-valid p-values (mixture SPRT) for continuously monitored A/B tests."
+    ],
+    [
+     "Deng et al.: Improving the Sensitivity of Online Controlled Experiments (CUPED)",
+     "https://exp-platform.com/Documents/2013-02-CUPED-ImprovingSensitivityOfControlledExperiments.pdf",
+     "Variance reduction with pre-experiment data."
+    ]
+   ],
+   "k": [
+    "A/B testing",
+    "power analysis",
+    "multiple testing"
+   ],
+   "x": [
+    "SciPy"
+   ],
+   "p": [
+    "b-test-significance",
+    "p-values-and-significance",
+    "msprt-always-valid-pvalues"
+   ]
+  }
+ ]
+}

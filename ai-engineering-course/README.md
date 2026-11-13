@@ -7,7 +7,7 @@ A self-contained copy of the AI Engineering course. No build step, no backend.
 - `index.html`: the page
 - `assets/styles.css`: styles (light and dark mode)
 - `assets/data.js`: all 43 lessons (notes, questions, model answers, sources)
-- `assets/app.js`: routing, progress, review deck, search
+- `assets/app.js`: routing, progress, review deck, search, and the 46 interactive figures
 - `assets/favicon.svg`: tab icon
 
 ## Serve it
@@ -27,4 +27,4 @@ Upload the folder as-is to any static host. It must be served over HTTP(S); open
 
 ## Editing lessons
 
-Lessons live in `assets/data.js` as one `DATA` array: modules contain `lessons`, and each lesson has `t` (title), `a` (notes), `n` (key points), `q` (question), `s` (model answer) and `r` (sources). Notes support `## ` headings, `- ` lists, `| ` tables (first row is the header), `! ` worked examples, `> ` takeaways, and `%%flow`, `%%seq` and `%%layers` diagram blocks.
+Lessons live in `assets/data.js` as one `DATA` array: modules contain `lessons`, and each lesson has `t` (title), `a` (notes), `n` (key points), `q` (question), `s` (model answer) and `r` (sources). Notes support `## ` headings, `- ` lists, `| ` tables (first row is the header), `! ` worked examples, `> ` takeaways, `%%flow`, `%%seq` and `%%layers` diagram blocks (each gets step-through controls), and `%%widget name caption` lines that embed an interactive figure. Figure code is in `assets/app.js`, registered as `WIDGETS.name`.

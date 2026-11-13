@@ -1,0 +1,52 @@
+{
+ "id": "calculus",
+ "group": "ML Math",
+ "title": "Calculus for ML",
+ "blurb": "The calculus that training actually runs on, written as code: limits and continuity, derivatives and the chain rule, integrals over densities, Jacobians and Hessians, and the optimisation and autodiff machinery built from them.",
+ "prereq": "Comfortable Python and NumPy broadcasting, plus school-level derivatives; the matrix calculus section is easier if you have met eigenvalues and matrix products before.",
+ "next": "Move on to the optimisation-focused problems to see these gradients drive real update rules, or extend the autodiff problems into a small array-valued autograd engine.",
+ "sections": [
+  {"name": "Foundations", "problems": [
+   "limit-of-learning-rate-schedule",
+   "continuity-of-activation-functions",
+   "sigmoid-boundedness-via-squeeze-theorem",
+   "softmax-numerical-stability-and-log-sum-exp"
+  ]},
+  {"name": "Single-variable differentiation", "problems": [
+   "derivatives-of-common-activation-functions",
+   "chain-rule-through-3-layer-network",
+   "higher-order-derivatives-and-loss-curvature",
+   "subgradients-for-non-smooth-functions",
+   "finite-difference-gradient-checking"
+  ]},
+  {"name": "Integration and probability", "problems": [
+   "expected-value-via-numerical-integration",
+   "kl-divergence-discrete-and-continuous",
+   "area-under-roc-curve-via-trapezoidal-rule"
+  ]},
+  {"name": "Multivariable and matrix calculus", "problems": [
+   "gradient-of-multivariate-linear-regression-loss",
+   "directional-derivative-and-steepest-descent-dire",
+   "jacobian-of-neural-network-layer",
+   "hessian-matrix-and-convexity-of-linear-regressio",
+   "jvp-and-vjp-for-2-layer-network",
+   "second-order-partial-derivatives",
+   "jacobian-of-vector-valued-polynomial",
+   "gradient-of-matrix-valued-function",
+   "hessian-tensor-of-vector-valued-function"
+  ]},
+  {"name": "Optimization", "problems": [
+   "gradient-descent-on-non-convex-loss",
+   "learning-rate-stability-and-convergence-bounds",
+   "lagrange-multipliers-regularization-as-constrain",
+   "taylor-approximation-of-loss-landscape"
+  ]},
+  {"name": "ML applications", "problems": [
+   "forward-mode-autodiff-with-dual-numbers",
+   "backpropagation-through-computation-graph",
+   "softmax-cross-entropy-gradient",
+   "gradient-clipping-global-norm-rescaling",
+   "gradient-of-multivariate-gaussian-log-pdf"
+  ]}
+ ]
+}

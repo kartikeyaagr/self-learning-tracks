@@ -1,0 +1,355 @@
+{
+ "n": "03",
+ "name": "SQL for ML",
+ "lessons": [
+  {
+   "id": "03.01",
+   "t": "SELECT, filtering and sorting",
+   "n": [
+    "A query is evaluated in a logical order that differs from how it is written: FROM, WHERE, GROUP BY, HAVING, SELECT, DISTINCT, ORDER BY, LIMIT. That order explains which names are visible where.",
+    "`AND` binds tighter than `OR`. Parenthesise every mixed condition, or `split = 'val' OR split = 'test' AND score > 0.9` will keep every validation row.",
+    "SQL uses three-valued logic: any comparison with NULL is UNKNOWN, and WHERE keeps only TRUE rows. `x <> 'a'` silently drops the rows where x is NULL.",
+    "Without ORDER BY, row order is undefined; with ties, it is still undefined. Add a unique tie-breaker, and remember databases disagree on where NULLs sort."
+   ],
+   "a": "## Why SQL for ML\nMost training data starts life in a database or warehouse: event logs, labels, model registries, evaluation results. Pulling a whole table into pandas and filtering there is slow at scale and moves data you do not need. This module teaches enough SQL to build datasets and analyses where the data lives. The examples are standard SQL that runs in SQLite (the dialect of the practice problems) and PostgreSQL; differences are called out where they matter.\n\n## The anatomy of a query\nA `SELECT` is written in one order and evaluated, logically, in another:\n\n%%flow Logical evaluation order of a SELECT; each step only sees what earlier steps produced.\nFROM / JOIN -> WHERE -> GROUP BY -> HAVING -> *SELECT -> ORDER BY -> LIMIT\n%%\n\n```sql\nSELECT run_id, model, steps * batch_size AS examples_seen\nFROM training_runs\nWHERE status = 'finished' AND (lr >= 1e-4 OR warmup_steps > 0)\nORDER BY examples_seen DESC, run_id\nLIMIT 10;\n```\n\nTwo consequences of that order trip people up:\n- A column alias defined in SELECT is **not** visible in WHERE in standard SQL, because WHERE runs first. PostgreSQL rejects `WHERE examples_seen > 1e6`; SQLite accepts it as an extension. Repeat the expression or move it into a subquery.\n- The alias **is** visible in ORDER BY, which runs after SELECT.\n\nThe database is free to execute the query in any physical order it likes (using an index first, say). The logical order defines only what the answer must be.\n\n## WHERE logic\n`WHERE` keeps the rows for which the condition evaluates to TRUE. The operators: comparisons (`=`, `<>`, `<`, `>=`), `BETWEEN a AND b` (inclusive at both ends), `IN (...)`, `LIKE 'gpt-%'` (`%` matches any run of characters, `_` exactly one), `IS NULL`, combined with `AND`, `OR`, `NOT`.\n\nPrecedence is `NOT`, then `AND`, then `OR`. So\n\n```sql\nWHERE split = 'val' OR split = 'test' AND confidence > 0.9\n```\n\nmeans `split = 'val' OR (split = 'test' AND confidence > 0.9)`: every validation row comes through regardless of confidence. Parentheses cost nothing; use them every time AND and OR mix.\n\nWith timestamps stored as text (`'2025-03-01 14:00:00'`), prefer half-open ranges: `ts >= '2025-03-01' AND ts < '2025-04-01'`. `BETWEEN '2025-03-01' AND '2025-03-31'` misses everything after midnight on the 31st, because `'2025-03-31 09:00:00'` sorts after `'2025-03-31'`.\n\n## NULL and three-valued logic\nNULL means \"unknown\", and any comparison with an unknown is itself UNKNOWN, not TRUE or FALSE. WHERE discards both FALSE and UNKNOWN rows.\n\n| expression | value when x is NULL | row kept by WHERE?\n| `x = 1` | UNKNOWN | no\n| `x <> 1` | UNKNOWN | no\n| `x = NULL` | UNKNOWN, always | no, even for NULL rows\n| `x IS NULL` | TRUE | yes\n| `NOT (x = 1)` | UNKNOWN | no\n| `x <> 1 OR x IS NULL` | TRUE | yes\n\nThe practical rules:\n- Test for missing values with `IS NULL` / `IS NOT NULL`, never `= NULL`.\n- A filter like `label <> 'spam'` drops unlabelled rows as well. If you meant \"not known to be spam\", write `label IS NOT 'spam'` in SQLite or `label IS DISTINCT FROM 'spam'` in PostgreSQL (and in SQLite since version 3.39).\n- `COALESCE(x, default)` substitutes a value for NULL. It is a modelling decision: filling missing latency with 0 makes slow requests look fast.\n- Arithmetic with NULL gives NULL: `price * qty` is NULL if either is.\n\n`NOT IN` with a NULL inside the list is the worst version of this trap; it gets its own section in the subqueries lesson.\n\n## ORDER BY, LIMIT and DISTINCT\nA table has no inherent order. Without ORDER BY the database may return rows in any order, and that order can change between runs, after an index is added, or when the data grows. With ORDER BY on a column that has ties, the order among tied rows is still arbitrary, so `ORDER BY score DESC LIMIT 10` can return a different tenth row each time. Add a unique column as a final tie-breaker: `ORDER BY score DESC, model_id`.\n\nNULLs sort differently by database: SQLite and MySQL put NULLs **first** in ascending order, PostgreSQL puts them **last**. State it explicitly with `NULLS LAST` (PostgreSQL, and SQLite since 3.30).\n\n`LIMIT n OFFSET k` skips k rows and returns the next n. It is fine for small pages but the database still produces and discards the k skipped rows; the performance lesson shows the keyset alternative. `SELECT DISTINCT a, b` removes duplicate rows over the listed columns, and NULLs count as equal to each other for this purpose.\n\n! Example: confident mistakes on the validation split\n! Table `predictions(id, split, label, pred, confidence)`. You want the 20 most confident wrong predictions on validation data, ignoring rows with no label.\n! `SELECT id, label, pred, confidence FROM predictions WHERE split = 'val' AND label IS NOT NULL AND pred <> label ORDER BY confidence DESC, id LIMIT 20;`\n! `label IS NOT NULL` is technically redundant, because `pred <> label` is UNKNOWN when `label` is NULL and the row is dropped anyway. Writing it states the intent and survives someone later rewriting the condition with COALESCE.\n\n> Takeaway: read a query in its logical order, parenthesise mixed AND/OR, treat every comparison as possibly UNKNOWN, and make every ORDER BY total with a unique tie-breaker.",
+   "q": "A table `requests(id, model, status, latency_ms)` has NULL latency for timed-out requests. `SELECT COUNT(*) FROM requests WHERE latency_ms < 500 OR latency_ms >= 500` returns a smaller number than the table's row count. Explain why, and say what this means for a query reporting the share of requests that were 'fast' (under 500 ms).",
+   "s": "For a row with NULL latency both comparisons are UNKNOWN, and UNKNOWN OR UNKNOWN is UNKNOWN, so WHERE drops the row. The two conditions look complementary, but under three-valued logic they cover only rows with a known latency; the missing count is exactly the timed-out requests. For the 'fast share', the denominator matters. If you compute it over rows with `latency_ms IS NOT NULL`, timeouts disappear and the service looks faster than it is. Timeouts are the slowest requests, so they should normally count as not fast: compute the numerator with `latency_ms < 500` (which is never TRUE for NULL) and the denominator with `COUNT(*)` over all requests, and report the timeout count separately so the choice is visible.",
+   "r": [
+    [
+     "PostgreSQL docs: SELECT",
+     "https://www.postgresql.org/docs/current/sql-select.html",
+     "The reference for clause order, ORDER BY with NULLS FIRST/LAST, LIMIT and DISTINCT."
+    ],
+    [
+     "SQLite: NULL handling in SQLite versus other engines",
+     "https://www.sqlite.org/nulls.html",
+     "A table of how different databases treat NULL in DISTINCT, UNIQUE and sorting."
+    ],
+    [
+     "Modern SQL: Three-valued logic",
+     "https://modern-sql.com/concept/three-valued-logic",
+     "Truth tables for UNKNOWN and how they surface in WHERE, CHECK and NOT IN."
+    ],
+    [
+     "PostgreSQL docs: Comparison functions and operators",
+     "https://www.postgresql.org/docs/current/functions-comparison.html",
+     "BETWEEN, IS DISTINCT FROM and the NULL predicates."
+    ]
+   ],
+   "k": [
+    "NULL",
+    "three-valued logic"
+   ],
+   "x": [
+    "SQL",
+    "SQLite",
+    "PostgreSQL"
+   ],
+   "p": [
+    "where-clauses",
+    "order-by",
+    "basic-select",
+    "distinct-values",
+    "limit-and-offset"
+   ]
+  },
+  {
+   "id": "03.02",
+   "t": "Joins",
+   "n": [
+    "A join pairs rows from two tables that satisfy the ON condition. INNER keeps only matched pairs; LEFT also keeps unmatched left rows, padding the right side with NULLs; FULL keeps unmatched rows from both sides.",
+    "Row counts multiply: a left row that matches three right rows appears three times. Check key uniqueness before joining, or sums and averages are silently inflated.",
+    "Semi-join (`EXISTS`) asks 'has at least one match' without duplicating rows; anti-join (`NOT EXISTS`, or LEFT JOIN plus `IS NULL`) asks 'has no match'.",
+    "For an outer join, a condition on the right table belongs in ON. Put it in WHERE and the NULL-padded rows fail it, quietly turning the LEFT JOIN into an INNER JOIN."
+   ],
+   "a": "## What a join computes\nConceptually, `A JOIN B ON cond` forms every pair of a row from A with a row from B and keeps the pairs where `cond` is TRUE. Databases never actually build that full product when they can avoid it (they use hash tables, sorted merges or index lookups), but the definition tells you what the result must contain.\n\n| join | keeps | unmatched rows\n| INNER JOIN | pairs where ON is TRUE | dropped from both sides\n| LEFT JOIN | all left rows | left row kept once, right columns NULL\n| RIGHT JOIN | all right rows | mirror of LEFT (rarely needed; swap the tables)\n| FULL OUTER JOIN | all rows from both | padded with NULLs on the missing side\n| CROSS JOIN | every pair | no condition at all\n\nSQLite supports RIGHT and FULL joins since version 3.39; older versions only have INNER, LEFT and CROSS.\n\n## Cardinality and fan-out\nThe number of output rows is the number of matching pairs. That is harmless for a many-to-one join (each training run joined to its one model) and dangerous for one-to-many (each run joined to its many evaluation results).\n\n%%flow Joining a one-to-many table repeats the left rows; aggregates over the left columns then overcount.\n1,000 runs -(JOIN evals, 3 per run)-> *3,000 rows -(SUM gpu_hours)-> 3x the true total\n%%\n\nBefore writing a join, state the expected relationship (one-to-one, many-to-one, one-to-many) and verify it:\n\n```sql\nSELECT model_id, COUNT(*) FROM models GROUP BY model_id HAVING COUNT(*) > 1;\n```\n\nIf this returns rows, the \"lookup\" table has duplicates and every join through it multiplies. When you need aggregates from both sides of a one-to-many relationship, aggregate the many side first (in a subquery or CTE) and join the one-row-per-key result.\n\n## Join keys\n- **NULL keys never match**, not even each other, because `NULL = NULL` is UNKNOWN. Rows with a NULL key vanish from an inner join and get NULL padding in a left join.\n- **Types must agree.** An id stored as text in one table and as an integer in the other is a classic silent failure. PostgreSQL rejects `text = integer` with an error, which is at least loud. SQLite applies type-affinity conversions whose outcome depends on how each column was declared, so the join can match some rows and miss others (`' 42'` with a leading space never matches). Cast both sides to one type explicitly.\n- **Composite keys** need every part: joining hourly features on `user_id` alone, when the key is `(user_id, hour)`, pairs every hour with every other hour.\n- Joining on expressions (`ON lower(a.email) = lower(b.email)`) works but usually prevents index use.\n\n## Semi-joins and anti-joins\nOften you want to filter by the existence of a match, not to fetch columns from the other table.\n\n```sql\n-- semi-join: models that have at least one eval; one row per model\nSELECT m.* FROM models m\nWHERE EXISTS (SELECT 1 FROM evals e WHERE e.model_id = m.model_id);\n\n-- anti-join: models with no safety eval\nSELECT m.* FROM models m\nLEFT JOIN evals e ON e.model_id = m.model_id AND e.suite = 'safety'\nWHERE e.model_id IS NULL;\n```\n\nThe semi-join cannot duplicate rows, however many evals match, which an INNER JOIN would. The anti-join pattern relies on NULL padding: a model with no match keeps one row with NULLs on the right, and `e.model_id IS NULL` selects exactly those. Test a right-side column that cannot be NULL in a real match, such as the join key. `NOT EXISTS` expresses the same thing and is usually optimised identically.\n\n## ON versus WHERE in outer joins\nFor an inner join it makes no difference whether a condition is in ON or WHERE. For an outer join it changes the result. In the anti-join above, `e.suite = 'safety'` sits in ON: it restricts which evals count as a match, and every model still survives the LEFT JOIN. Move it to WHERE and the query asks for rows where `e.suite = 'safety'` and `e.model_id IS NULL` simultaneously, which is impossible, so the result is empty.\n\nThe general rule: in a LEFT JOIN, conditions on the **right** table go in ON; conditions on the **left** table go in WHERE. Any WHERE condition on a right-table column that is not an `IS NULL` test removes the NULL-padded rows and makes the query an inner join in disguise.\n\n## Self-joins and cross joins\nA **self-join** joins a table to itself under two aliases, for example to pair runs with identical hyperparameters but different seeds: `FROM runs a JOIN runs b ON a.config_hash = b.config_hash AND a.run_id < b.run_id`. The `<` keeps each unordered pair once and excludes pairing a run with itself. A **cross join** deliberately forms all combinations, which is useful for building grids (every model x every benchmark) that you then LEFT JOIN against actual results to find what is missing.\n\n! Example: datasets and their approved licences\n! `datasets(id, name)` has 500 rows; `licenses(dataset_id, license, status)` has several rows per dataset, with `status` either 'approved' or 'pending'.\n! Wanted: every dataset, with its approved licence if one exists. Correct: `SELECT d.name, l.license FROM datasets d LEFT JOIN licenses l ON l.dataset_id = d.id AND l.status = 'approved';` returns at least 500 rows (more if a dataset has two approved licences).\n! Wrong: moving `l.status = 'approved'` into WHERE drops every dataset without an approved licence, so the report misses exactly the datasets that need attention.\n\n> Takeaway: before each join, write down the expected cardinality and check it; filter right-table rows in ON for outer joins; use EXISTS and NOT EXISTS when you need a yes-or-no test rather than columns.",
+   "q": "`runs(run_id, model_id, gpu_hours)` has one row per run and `evals(run_id, benchmark, score)` has 0 to 5 rows per run. An analyst writes `SELECT r.model_id, SUM(r.gpu_hours), AVG(e.score) FROM runs r LEFT JOIN evals e ON e.run_id = r.run_id GROUP BY r.model_id`. Which numbers are wrong, why, and how would you fix the query?",
+   "s": "The join fans out: a run with k evals appears k times (and once if it has none, thanks to the LEFT JOIN). `SUM(r.gpu_hours)` therefore counts each run's hours once per eval, so models with many evals are overcharged; the total is inflated by the eval count per run. `AVG(e.score)` is correct as an average over eval rows (NULLs from runs without evals are ignored), but runs with more benchmarks get more weight, which may or may not be intended. Fix by aggregating each side to one row per key before joining: compute gpu hours per model from `runs` alone, compute the score average per model (or per run first, then per model) from `evals` joined to `runs`, then join the two per-model results on `model_id`. Each side is then one-to-one at the join.",
+   "r": [
+    [
+     "PostgreSQL docs: Table expressions (joined tables)",
+     "https://www.postgresql.org/docs/current/queries-table-expressions.html",
+     "Precise definitions of every join type and of ON vs USING vs NATURAL."
+    ],
+    [
+     "PostgreSQL tutorial: Joins between tables",
+     "https://www.postgresql.org/docs/current/tutorial-join.html",
+     "A short, example-driven introduction including outer and self joins."
+    ],
+    [
+     "Use The Index, Luke: The join operation",
+     "https://use-the-index-luke.com/sql/join",
+     "How databases execute joins (nested loops, hash, merge) and what that means for indexing."
+    ],
+    [
+     "SQLite: SELECT",
+     "https://www.sqlite.org/lang_select.html",
+     "SQLite's join syntax and its processing rules."
+    ]
+   ],
+   "k": [
+    "joins",
+    "anti-join",
+    "fan-out"
+   ],
+   "x": [
+    "SQL",
+    "SQLite",
+    "PostgreSQL"
+   ],
+   "p": [
+    "left-join",
+    "inner-join",
+    "multiple-joins",
+    "self-join",
+    "cross-join"
+   ]
+  },
+  {
+   "id": "03.03",
+   "t": "Aggregation",
+   "n": [
+    "GROUP BY produces one output row per distinct combination of the grouping columns; every other selected column must be inside an aggregate. NULL keys form one group of their own.",
+    "`COUNT(*)` counts rows, `COUNT(col)` counts non-NULL values, `COUNT(DISTINCT col)` counts distinct non-NULL values. `AVG` and `SUM` skip NULLs, and `SUM` over nothing is NULL, not 0.",
+    "WHERE filters rows before grouping; HAVING filters groups after aggregation. Push every condition that does not need an aggregate into WHERE.",
+    "Conditional aggregation (`SUM(CASE WHEN ... THEN 1 ELSE 0 END)` or `COUNT(*) FILTER (WHERE ...)`) computes several breakdowns in one pass, such as a whole confusion matrix per model.",
+    "Distinct counts and averages are not additive: daily active users do not sum to weekly ones, and an average of per-group averages is not the overall average."
+   ],
+   "a": "## GROUP BY collapses rows\n`GROUP BY model, region` partitions the rows that survive WHERE into groups with equal `(model, region)` values and emits one row per group. In the SELECT list you may use the grouping columns and aggregates over the group (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, plus engine-specific ones such as `percentile_cont` in PostgreSQL or `group_concat` in SQLite).\n\nSelecting a column that is neither grouped nor aggregated is an error in PostgreSQL. SQLite accepts it and returns the value from an arbitrary row of the group (or, with a single `MIN` or `MAX`, from the row holding that extreme). Treat that as a bug unless you meant exactly that. For grouping purposes NULLs compare equal, so all rows with a NULL key land in one group.\n\n%%flow Rows are filtered, grouped, aggregated, and then the groups themselves are filtered.\nRows -(WHERE)-> kept rows -(GROUP BY)-> groups -(aggregates)-> one row per group -(HAVING)-> *result\n%%\n\n## Aggregates and NULL\n| expression | what it counts or computes\n| `COUNT(*)` | rows in the group, NULLs included\n| `COUNT(latency)` | rows where latency is not NULL\n| `COUNT(DISTINCT user_id)` | distinct non-NULL user ids\n| `AVG(latency)` | mean of the non-NULL values only\n| `SUM(tokens)` | sum of non-NULL values; NULL if there are none\n\nThe consequences:\n- `AVG(x)` and `SUM(x) / COUNT(*)` differ whenever x has NULLs. Decide which denominator you mean.\n- A group where every value is NULL sums to NULL. Wrap with `COALESCE(SUM(x), 0)` when a missing total should read as zero. SQLite also has `TOTAL(x)`, which returns 0.0.\n- **Integer division**: with integer columns, `SUM(correct) / COUNT(*)` truncates to 0 or 1 in both SQLite and PostgreSQL. Use `AVG(correct)`, which returns a fractional result in both, or multiply by 1.0 before dividing.\n\n## WHERE versus HAVING\nWHERE sees individual rows and runs before grouping. HAVING sees groups and can use aggregates: `HAVING COUNT(*) >= 30 AND MIN(score) > 0.8`. A condition that does not involve an aggregate (`split = 'test'`) can go in either place, but in WHERE it shrinks the input before the expensive grouping step, and it reads as what it is: a row filter. Many planners move such conditions into WHERE for you; some do not.\n\n```sql\nSELECT model, COUNT(*) AS n, AVG(score) AS mean_score\nFROM evals\nWHERE split = 'test'\nGROUP BY model\nHAVING COUNT(*) >= 30 AND MIN(score) >= 0.7\nORDER BY mean_score DESC, model;\n```\n\n## Conditional aggregation\nAn aggregate over a CASE expression counts or sums only the rows that meet a condition, while the group still contains all rows. This turns long-format data into a wide summary in one scan:\n\n```sql\nSELECT model,\n       SUM(CASE WHEN label = 1 AND pred = 1 THEN 1 ELSE 0 END) AS tp,\n       SUM(CASE WHEN label = 0 AND pred = 1 THEN 1 ELSE 0 END) AS fp,\n       SUM(CASE WHEN label = 1 AND pred = 0 THEN 1 ELSE 0 END) AS fn,\n       SUM(CASE WHEN label = 0 AND pred = 0 THEN 1 ELSE 0 END) AS tn,\n       AVG(CASE WHEN label = pred THEN 1.0 ELSE 0.0 END)      AS accuracy\nFROM predictions\nGROUP BY model;\n```\n\nPostgreSQL and SQLite (3.30 and later) also support the standard `FILTER` clause, `COUNT(*) FILTER (WHERE label = 1 AND pred = 1)`, which says the same thing more directly. Two details: `ELSE 0` matters for SUM (without it, a group with no matching rows gives NULL rather than 0), and for AVG the ELSE branch defines the denominator. `AVG(CASE WHEN cond THEN 1.0 END)` averages only matching rows and is always 1.\n\n## Distinct counts and nested aggregation\nSome metrics do not combine across groups:\n- **Distinct counts are not additive.** Summing daily active users over a week counts a user once per active day. Weekly actives must be `COUNT(DISTINCT user_id)` over the week's rows.\n- **An average of averages is weighted wrongly.** If one country has 10 users and another 10,000, averaging the two per-country means gives the small country as much weight as the large one. Compute the overall mean from the raw rows, or weight by the counts.\n- **Per-entity then across entities.** \"Average spend per user, by country\" needs two levels: first `SUM(amount)` per user, then `AVG` of those totals per country. A single `AVG(amount) GROUP BY country` is the average *transaction*, not the average *user*.\n\nThe two-level pattern is a subquery or CTE in FROM:\n\n```sql\nSELECT country, AVG(user_total) AS avg_spend_per_user\nFROM (SELECT country, user_id, SUM(amount) AS user_total\n      FROM orders GROUP BY country, user_id) AS per_user\nGROUP BY country;\n```\n\n! Example: latency report per model and region\n! `requests(model, region, latency_ms)` with 2 million rows, of which 1% have NULL latency (timeouts).\n! Per model and region, select `COUNT(latency_ms) AS n_ok` and `AVG(latency_ms) AS mean_ok` next to the row count as `n`, and keep groups with at least 100 requests in HAVING.\n! The `timeout_rate` is `1.0 - 1.0 * n_ok / n`, computed in an outer query or by repeating the aggregates. Overall it is 1%, but a single region can be far higher.\n! `mean_ok` is the mean over completed requests only, so it understates user-facing latency; `timeout_rate` makes the excluded rows visible. The HAVING clause hides groups too small for the numbers to mean much.\n\n> Takeaway: for every aggregate, ask which rows are in the denominator and what NULLs do to it; filter rows with WHERE, groups with HAVING, and compute non-additive metrics from the raw rows.",
+   "q": "A dashboard computes weekly active users as the sum of seven daily `COUNT(DISTINCT user_id)` values, and the average session length per country as the average of per-city averages. Explain what each gets wrong, and write the shape of the correct query for each.",
+   "s": "Summing daily distinct counts counts a user once for every day they were active, so a user active all week contributes 7. Weekly actives must be one distinct count over the whole week: `SELECT week, COUNT(DISTINCT user_id) FROM events GROUP BY week`, with week derived from the timestamp. The average of per-city averages gives each city equal weight regardless of how many sessions it had, so a small city with unusual sessions distorts the country figure. The correct figure aggregates raw sessions directly, `SELECT country, AVG(session_length) FROM sessions GROUP BY country`, or, if only per-city summaries exist, weights by count: `SUM(city_avg * city_n) / SUM(city_n)`. Both mistakes come from treating non-additive statistics as if they could be combined from group results.",
+   "r": [
+    [
+     "PostgreSQL tutorial: Aggregate functions",
+     "https://www.postgresql.org/docs/current/tutorial-agg.html",
+     "GROUP BY, HAVING and the WHERE vs HAVING distinction, with examples."
+    ],
+    [
+     "PostgreSQL docs: Aggregate functions",
+     "https://www.postgresql.org/docs/current/functions-aggregate.html",
+     "Every aggregate, NULL behaviour, and FILTER and ordered-set aggregates."
+    ],
+    [
+     "SQLite: Built-in aggregate functions",
+     "https://www.sqlite.org/lang_aggfunc.html",
+     "SQLite's aggregates, including sum() vs total() on empty input."
+    ],
+    [
+     "Modern SQL: The FILTER clause",
+     "https://modern-sql.com/feature/filter",
+     "Standard conditional aggregation and the CASE fallback for engines without it."
+    ]
+   ],
+   "k": [
+    "GROUP BY",
+    "conditional aggregation"
+   ],
+   "x": [
+    "SQL",
+    "SQLite",
+    "PostgreSQL"
+   ],
+   "p": [
+    "conditional-aggregation",
+    "group-by",
+    "having-clause",
+    "count-sum-avg",
+    "nested-aggregations"
+   ]
+  },
+  {
+   "id": "03.04",
+   "t": "Window functions",
+   "n": [
+    "A window function computes a value for each row from a set of related rows, without collapsing them: `f(...) OVER (PARTITION BY ... ORDER BY ... frame)`.",
+    "Windows are evaluated after WHERE, GROUP BY and HAVING, so you cannot filter on them directly; wrap the query in a subquery or CTE and filter outside.",
+    "`ROW_NUMBER` gives unique positions, `RANK` leaves gaps after ties (1, 1, 3), `DENSE_RANK` does not (1, 1, 2). With ties, ROW_NUMBER's choice is arbitrary unless the ORDER BY is unique.",
+    "With ORDER BY and no explicit frame, the default frame is `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`, which includes tied rows. Say `ROWS` when you mean physical rows.",
+    "`LAG` and `LEAD` read the previous or next row in the partition; a flag on large gaps plus a running SUM of that flag turns a click stream into sessions."
+   ],
+   "a": "## Aggregates that keep the rows\nGROUP BY returns one row per group. A window function returns one value **per input row**, computed over a window of rows related to it. The syntax:\n\n```sql\nSELECT user_id, ts, amount,\n       SUM(amount) OVER (PARTITION BY user_id ORDER BY ts\n                         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_spend,\n       AVG(amount) OVER (PARTITION BY user_id) AS user_mean\nFROM orders;\n```\n\n- **PARTITION BY** splits rows into independent groups; the window never crosses a partition boundary. Without it, the whole result is one partition.\n- **ORDER BY** orders rows inside each partition. It is required for ranking, LAG and LEAD, and running totals.\n- **The frame** (`ROWS` or `RANGE BETWEEN ... AND ...`) selects which ordered rows around the current row feed the aggregate.\n\nAny aggregate (`SUM`, `AVG`, `COUNT`, `MIN`, `MAX`) can be used as a window function, plus dedicated ones: `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `NTILE`, `LAG`, `LEAD`, `FIRST_VALUE`, `LAST_VALUE`. SQLite has supported them since version 3.25.\n\n%%flow Window functions run late, after grouping; to filter on one, wrap the query.\nFROM + WHERE -> GROUP BY + HAVING -> *window functions -> ORDER BY + LIMIT -(outer query)-> filter on rank\n%%\n\nBecause windows are computed after WHERE, `WHERE ROW_NUMBER() OVER (...) = 1` is an error. The standard pattern is a CTE or subquery with the window, then a WHERE outside.\n\n## Ranking functions\nFor scores 95, 95, 90 in descending order:\n\n| function | values | use\n| ROW_NUMBER() | 1, 2, 3 | pick exactly one row per group (dedup, latest record)\n| RANK() | 1, 1, 3 | competition ranking: ties share, then a gap\n| DENSE_RANK() | 1, 1, 2 | \"top 3 distinct scores\", no gaps\n| NTILE(4) | bucket 1 to 4 | quartiles, deciles\n\nDeduplicating to the latest version of each record is the most common use in data pipelines:\n\n```sql\nWITH ranked AS (\n  SELECT *, ROW_NUMBER() OVER (PARTITION BY record_id\n                               ORDER BY updated_at DESC, ingest_id DESC) AS rn\n  FROM records)\nSELECT * FROM ranked WHERE rn = 1;\n```\n\nThe second ORDER BY column matters. If two versions share `updated_at`, ROW_NUMBER picks one arbitrarily, and two runs of the same pipeline can keep different rows. Make the ordering unique.\n\n## Running totals and frames\nA frame is defined relative to the current row: `UNBOUNDED PRECEDING`, `n PRECEDING`, `CURRENT ROW`, `n FOLLOWING`, `UNBOUNDED FOLLOWING`.\n- **ROWS** counts physical rows. `ROWS BETWEEN 6 PRECEDING AND CURRENT ROW` is the last 7 rows, whatever dates they carry.\n- **RANGE** works on the ORDER BY value. `CURRENT ROW` in RANGE mode means \"all rows tied with this one\" (its peers). With a numeric or date offset, `RANGE BETWEEN 6 PRECEDING AND CURRENT ROW` means values within 6 of the current one (PostgreSQL 11+ supports date intervals; SQLite supports numeric offsets).\n\nThe trap: an ORDER BY without a frame defaults to `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`. If two rows share a timestamp, both get the running total *including both*, so the total jumps by two rows at once, and the per-row values no longer reflect the intended cumulative sequence. Specify `ROWS` and a unique ordering when you mean a row-by-row cumulative sum.\n\nThe same default bites `LAST_VALUE(x) OVER (ORDER BY ts)`: the frame ends at the current row, so it returns the current row's value. Use `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING`, or `FIRST_VALUE` with the order reversed.\n\nA 7-row moving average over daily data is only a 7-day average if every day has a row. Fill missing days first (a calendar table or recursive CTE, next lesson), or use a RANGE frame over a day number.\n\n## LAG and LEAD\n`LAG(x, k, default)` returns `x` from k rows earlier in the partition (default k = 1), or `default` (NULL if omitted) when there is no such row. `LEAD` looks forward. They express \"change since the previous event\" or \"time until the next one\" without a self-join.\n\nSessionisation combines them with a running sum: start a new session whenever the gap since the user's previous event exceeds 30 minutes, then number sessions by summing the start flags.\n\n```sql\nWITH g AS (\n  SELECT user_id, ts,\n         CASE WHEN LAG(ts) OVER w IS NULL\n                OR ts - LAG(ts) OVER w > 1800 THEN 1 ELSE 0 END AS new_session\n  FROM clicks\n  WINDOW w AS (PARTITION BY user_id ORDER BY ts))\nSELECT user_id, ts,\n       SUM(new_session) OVER (PARTITION BY user_id ORDER BY ts\n                              ROWS UNBOUNDED PRECEDING) AS session_id\nFROM g;\n```\n\nHere `ts` is Unix seconds. The `WINDOW` clause names a window definition for reuse.\n\n! Example: a leaderboard with ties\n! Scores per model on a benchmark: A 91.2, B 91.2, C 90.4, D 88.0.\n! `RANK() OVER (ORDER BY score DESC)` gives 1, 1, 3, 4: C is third because two models beat it. `DENSE_RANK` gives 1, 1, 2, 3, which answers \"which score level is this\".\n! `ROW_NUMBER` gives 1, 2, 3, 4, but whether A or B is first is unspecified; add `model` to the ORDER BY to make the result reproducible.\n! To keep the top two per benchmark: compute `RANK() OVER (PARTITION BY benchmark ORDER BY score DESC)` in a CTE and filter `rnk <= 2` outside. Ties at the boundary can return more than two rows; with ROW_NUMBER you get exactly two, chosen by your tie-breaker.\n\n> Takeaway: partition to define the group, order to define the sequence, and always state the frame and a unique ordering; then filter window results in an outer query.",
+   "q": "`SELECT day, SUM(gpu_hours) OVER (ORDER BY day) FROM usage` is meant to give cumulative GPU hours, but `usage` has one row per (team, day). What does the query return for a day with three rows, how does adding `ROWS UNBOUNDED PRECEDING` change it, and what is the cleanest correct query?",
+   "s": "With ORDER BY and no frame, the default is RANGE from the start to the current row, and in RANGE mode the current row includes all its peers. Each of the three rows for that day gets the same value: the cumulative total through the end of that day, including all three teams. With `ROWS UNBOUNDED PRECEDING` the three rows get three different partial totals, in an arbitrary order among the ties, so the intermediate values depend on which team happens to come first. Neither is a clean per-day cumulative series. The clean query aggregates to one row per day first and then runs the window: `SELECT day, SUM(SUM(gpu_hours)) OVER (ORDER BY day ROWS UNBOUNDED PRECEDING) FROM usage GROUP BY day`, or equivalently a CTE with daily sums and a window over it. Per-team cumulative totals would add `PARTITION BY team` instead.",
+   "r": [
+    [
+     "PostgreSQL tutorial: Window functions",
+     "https://www.postgresql.org/docs/current/tutorial-window.html",
+     "The clearest short introduction, including frames and the WINDOW clause."
+    ],
+    [
+     "PostgreSQL docs: Window functions",
+     "https://www.postgresql.org/docs/current/functions-window.html",
+     "Reference for ROW_NUMBER, RANK, LAG, LEAD, FIRST_VALUE and the rest."
+    ],
+    [
+     "SQLite: Window functions",
+     "https://www.sqlite.org/windowfunctions.html",
+     "SQLite's implementation, frame types, defaults and the EXCLUDE clause."
+    ]
+   ],
+   "k": [
+    "window functions",
+    "ranking",
+    "frames"
+   ],
+   "x": [
+    "SQL",
+    "SQLite",
+    "PostgreSQL"
+   ],
+   "p": [
+    "row-number",
+    "rank-and-dense-rank",
+    "running-totals",
+    "lag-and-lead",
+    "sql-running-total"
+   ]
+  },
+  {
+   "id": "03.05",
+   "t": "Subqueries and CTEs",
+   "n": [
+    "A subquery is a query used as a value: a scalar (one row, one column), a set for `IN` or `EXISTS`, or a derived table in FROM. A **correlated** subquery refers to the outer row and is logically re-run for each one.",
+    "`x NOT IN (subquery)` returns no rows at all if the subquery yields a single NULL. Use `NOT EXISTS` for anti-joins.",
+    "`WITH name AS (...)` names intermediate results so a long query reads as a pipeline of steps. In PostgreSQL 12+ and SQLite, a CTE is usually inlined into the main query rather than computed separately.",
+    "A recursive CTE has an anchor query `UNION ALL` a recursive query that references the CTE itself; it repeats until a step adds no rows. Use it for hierarchies, lineage and generated sequences, with a depth guard against cycles."
+   ],
+   "a": "## Kinds of subqueries\nA subquery is a SELECT nested in another statement. Where it sits decides what it must return:\n- **Scalar subquery** in SELECT or WHERE: exactly one column and at most one row. `WHERE score > (SELECT AVG(score) FROM evals)`. If it returns no row, the value is NULL; if it returns two, PostgreSQL raises an error and SQLite silently takes the first.\n- **Set subquery** with `IN`, `NOT IN`, `EXISTS`, `NOT EXISTS`, `ANY`, `ALL`.\n- **Derived table** in FROM: `FROM (SELECT ...) AS t`, used like any table. This is how you aggregate twice, or filter on a window function.\n\nA subquery is **correlated** when it refers to a column of the outer query:\n\n```sql\nSELECT e.*\nFROM evals e\nWHERE e.score = (SELECT MAX(e2.score) FROM evals e2\n                 WHERE e2.benchmark = e.benchmark);   -- best run per benchmark\n```\n\nLogically it runs once per outer row. Good planners rewrite many correlated subqueries into joins (decorrelation); when they cannot, and the inner query has no supporting index, the cost becomes outer rows times inner rows. An index on `evals(benchmark, score)` makes each inner lookup a quick seek. The same question can also be answered with a window function, `RANK() OVER (PARTITION BY benchmark ORDER BY score DESC)`, which scans the table once.\n\n## The NOT IN trap\n`x NOT IN (a, b, NULL)` expands to `x <> a AND x <> b AND x <> NULL`. The last comparison is UNKNOWN, so the whole condition is never TRUE, and the query returns nothing.\n\n```sql\n-- models without a safety eval: returns ZERO rows if any evals.model_id is NULL\nSELECT * FROM models WHERE model_id NOT IN (SELECT model_id FROM evals WHERE suite = 'safety');\n\n-- correct regardless of NULLs\nSELECT * FROM models m\nWHERE NOT EXISTS (SELECT 1 FROM evals e WHERE e.model_id = m.model_id AND e.suite = 'safety');\n```\n\n`IN` does not have the problem (a NULL in the list just fails to match), which is why the bug appears only when someone adds the `NOT`. Make `NOT EXISTS` your default for \"has no match\"; it is also what the LEFT JOIN plus `IS NULL` pattern from the joins lesson expresses.\n\n## Common table expressions\nA CTE gives a subquery a name, defined before the main query:\n\n%%flow A query written as named steps: each CTE reads from the ones before it.\nevents -(group per user, day)-> daily -(n_events >= 3)-> active -(final SELECT)-> *engaged users per day\n%%\n\n```sql\nWITH daily AS (\n  SELECT user_id, date(ts) AS d, COUNT(*) AS n_events\n  FROM events GROUP BY user_id, date(ts)),\nactive AS (\n  SELECT user_id, d FROM daily WHERE n_events >= 3)\nSELECT d, COUNT(DISTINCT user_id) AS engaged_users\nFROM active GROUP BY d ORDER BY d;\n```\n\nCTEs change readability, not semantics: the same query can be written with nested derived tables. Performance is engine-specific. Before PostgreSQL 12, every CTE was computed once and stored, which blocked the planner from pushing filters into it (an \"optimisation fence\"). Since version 12, a non-recursive CTE referenced once is inlined; `AS MATERIALIZED` forces the old behaviour when you want a result computed once and reused. SQLite also inlines or materialises at its discretion and accepts the same hints since 3.35.\n\n## Recursive CTEs\n`WITH RECURSIVE` lets a CTE refer to itself. It has two parts joined by `UNION ALL`:\n1. The **anchor** query produces the starting rows.\n2. The **recursive** query references the CTE and produces new rows from the rows added in the previous step.\n3. The engine repeats step 2 until it produces no new rows, and the CTE is the union of everything produced.\n\nModel lineage is a natural fit: each fine-tuned model points at its parent.\n\n```sql\nWITH RECURSIVE lineage(model_id, parent_id, depth) AS (\n  SELECT model_id, parent_id, 0 FROM models WHERE model_id = 'chat-v7'\n  UNION ALL\n  SELECT m.model_id, m.parent_id, l.depth + 1\n  FROM models m JOIN lineage l ON m.model_id = l.parent_id\n  WHERE l.depth < 50)                       -- guard against cycles\nSELECT * FROM lineage ORDER BY depth;\n```\n\nThis walks from `chat-v7` up to the base model, one ancestor per step. Without the depth guard, a data error that makes a model its own ancestor loops forever (or until a recursion limit). `UNION` instead of `UNION ALL` deduplicates rows and so stops on exact repeats, but with a growing `depth` column no two rows repeat, so the explicit guard is the reliable choice. Recursive CTEs also generate sequences: a calendar of every date in a range, which you LEFT JOIN against sparse daily data to make missing days explicit.\n\n## Choosing a form\nSeveral forms often answer the same question: \"latest eval per model\" can be a correlated subquery on `MAX(ts)`, a join to a grouped derived table, or `ROW_NUMBER` in a CTE. Prefer the one that states the intent most directly and scans the data the fewest times. The window version usually wins on both counts, and unlike the `MAX` version it returns exactly one row per model even when two evals share the latest timestamp, provided the ordering is unique.\n\n! Example: depth of every model in a registry\n! `models(model_id, parent_id)` with 2,000 models; base models have `parent_id` NULL.\n! Anchor: all base models with depth 0. Recursive step: children of rows found so far, `JOIN models c ON c.parent_id = l.model_id`, with depth + 1.\n! The result has one row per model reachable from a base model. Any model missing from it sits on a cycle or points at a nonexistent parent, which makes this query a cheap integrity check as well.\n\n> Takeaway: use derived tables and CTEs to build queries as readable steps, `NOT EXISTS` instead of `NOT IN`, and recursive CTEs, always with a depth guard, for hierarchies and generated ranges.",
+   "q": "A query lists users who never bought anything: `SELECT user_id FROM users WHERE user_id NOT IN (SELECT user_id FROM orders)`. It worked for months, then started returning zero rows after guest checkout was launched. Explain the cause and give two correct rewrites.",
+   "s": "Guest checkout probably writes orders with a NULL `user_id`. Once the subquery returns a NULL, `user_id NOT IN (...)` expands to a chain of `<>` comparisons joined by AND, one of which is `user_id <> NULL`, which is UNKNOWN. The condition can then be FALSE or UNKNOWN but never TRUE, so every row is filtered out. Rewrite 1: `SELECT u.user_id FROM users u WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.user_id)`, where NULL order rows simply never match. Rewrite 2: `SELECT u.user_id FROM users u LEFT JOIN orders o ON o.user_id = u.user_id WHERE o.user_id IS NULL`. Adding `WHERE user_id IS NOT NULL` inside the original subquery also works, but it leaves the trap ready for the next nullable column.",
+   "r": [
+    [
+     "PostgreSQL docs: WITH queries (CTEs)",
+     "https://www.postgresql.org/docs/current/queries-with.html",
+     "Recursive CTEs, cycle detection, and the MATERIALIZED / NOT MATERIALIZED options."
+    ],
+    [
+     "PostgreSQL docs: Subquery expressions",
+     "https://www.postgresql.org/docs/current/functions-subquery.html",
+     "EXISTS, IN, NOT IN, ANY and ALL, including their exact NULL semantics."
+    ],
+    [
+     "SQLite: The WITH clause",
+     "https://www.sqlite.org/lang_with.html",
+     "SQLite's recursive CTE rules, with tree-walking and sequence examples."
+    ]
+   ],
+   "k": [
+    "CTE",
+    "recursive CTE",
+    "NOT IN"
+   ],
+   "x": [
+    "SQL",
+    "SQLite",
+    "PostgreSQL"
+   ],
+   "p": [
+    "subqueries",
+    "common-table-expressions",
+    "nested-aggregations"
+   ]
+  },
+  {
+   "id": "03.06",
+   "t": "Building training data with SQL",
+   "n": [
+    "A training set is a **spine** of (entity, prediction time) rows. Each row gets features computed only from data before its cutoff and a label computed from a window after it.",
+    "Point-in-time correctness means joining each spine row to the latest feature value whose timestamp is at or before the cutoff, using the time the data became **available**, not the time the event happened.",
+    "Leakage usually enters through innocent-looking joins: a current-state table (`users.plan` today), an aggregate over all history, a row that was later overwritten, or a feature derived from the outcome itself.",
+    "Split by time, and keep each entity on one side of the split, so evaluation looks like deployment: the model always predicts a future it has not seen."
+   ],
+   "a": "## The shape of a training set\nEvent tables (clicks, orders, logins, model requests) are not training data. A supervised dataset needs one row per **prediction**: an entity and the moment at which the model would have been asked. Call this table the **spine**. For a churn model scored every Monday:\n\n%%flow Every spine row splits time at its cutoff: features look back, the label looks forward.\nFeature window, 30 days before -(cutoff t)-> *Prediction time -(label window)-> Did the user return within 30 days?\n%%\n\n- **Features** use only data with timestamps before the cutoff `t`: purchases in the last 30 days, days since last login, plan at time `t`.\n- **Label** uses only data in the label window after `t`: no login in the 30 days after `t`.\n- An entity appears once per cutoff, so 100,000 users scored weekly for a year gives 5.2 million rows.\n\nBuilding the dataset this way, rather than as one row per user with \"all their data\", is what makes it resemble production, where the model sees the past and predicts the future.\n\n## Labels from event tables\nThe spine and labels are ordinary SQL. With dates as text in ISO format (`'2025-03-03'`), SQLite's `date()` function does the arithmetic; PostgreSQL would use `interval '30 days'`.\n\n```sql\nWITH spine AS (\n  SELECT u.user_id, c.cutoff\n  FROM users u CROSS JOIN cutoffs c            -- one row per Monday\n  WHERE u.signup_date < c.cutoff),             -- only users who existed then\nlabels AS (\n  SELECT s.user_id, s.cutoff,\n         CASE WHEN EXISTS (SELECT 1 FROM logins l\n                           WHERE l.user_id = s.user_id\n                             AND l.ts >= s.cutoff\n                             AND l.ts <  date(s.cutoff, '+30 days'))\n              THEN 0 ELSE 1 END AS churned\n  FROM spine s)\nSELECT * FROM labels;\n```\n\nTwo details matter. The spine includes only users who existed at the cutoff; including later sign-ups creates rows with impossible features. And cutoffs too close to the present have incomplete label windows: a cutoff 10 days ago cannot yet say whether the user returned within 30. Drop those rows, or the newest data will look full of churners.\n\n## Point-in-time feature joins\nFeature tables usually store history as rows `(user_id, valid_from, value)`. For each spine row you need the latest value **as of** the cutoff:\n\n```sql\nSELECT s.user_id, s.cutoff, f.value AS credit_score\nFROM spine s\nLEFT JOIN features f\n  ON f.user_id = s.user_id\n AND f.valid_from = (SELECT MAX(f2.valid_from) FROM features f2\n                     WHERE f2.user_id = s.user_id\n                       AND f2.valid_from <= s.cutoff);\n```\n\nA `ROW_NUMBER() OVER (PARTITION BY s.user_id, s.cutoff ORDER BY f.valid_from DESC)` over the join filtered to `valid_from <= cutoff` does the same thing. Warehouses such as DuckDB and Snowflake offer an `ASOF JOIN` that expresses it directly, and feature stores such as Feast implement exactly this join for you.\n\nThe subtle part is which timestamp you compare. An event that happened at 09:00 but landed in the warehouse at 23:00 (batch ingestion, late-arriving data, a nightly ETL job) was not available to a model scoring at noon. If the table records it, join on the ingestion or availability time, or add the pipeline's known delay to the event time. Otherwise offline features are fresher than online ones, and the model looks better in evaluation than in production. This mismatch is one form of training/serving skew.\n\n## Where leakage comes from\n| source | how it looks in SQL | fix\n| current-state tables | `JOIN users` for `plan` or `country` as they are today | use a history table or snapshot as of the cutoff\n| all-history aggregates | `COUNT(*)` of orders per user over the whole table | restrict to `ts < cutoff` inside the aggregate\n| overwritten rows | `status` updated in place after the outcome | read from change logs or append-only history\n| outcome proxies | `refund_issued` used to predict fraud | drop features caused by the label\n| encodings fit on everything | target mean per category over all rows | compute from training rows before the cutoff only\n| random splits | same user in train and test, future in train | split by time, group by entity\n\nThe last row matters as much as the others. A random row split puts a user's week-10 row in training and their week-11 row in test; the model learns the user, not the pattern. Choose a time boundary: train on cutoffs before it, validate on cutoffs after it. Keep a gap at least as long as the label window, so no training label peeks into the validation period. If entities repeat, also assign each entity to a single side, for example by a stable hash of its id. The Machine Learning course's lessons on splits and pipelines treat leakage from the modelling side, and the pandas module covers lag features without leakage.\n\n! Example: a churn table, sized and checked\n! 100,000 users, 52 weekly cutoffs, about 70% of users existing at a typical cutoff: about 3.6 million spine rows. With a 30-day label window, the cutoffs less than 30 days old (the last 4 or 5 weeks) are dropped as incomplete.\n! Sanity checks worth running in SQL: the churn rate per cutoff should be roughly stable (a jump at the end means incomplete label windows); no joined feature is newer than its row's cutoff (a query for rows with `f.valid_from > s.cutoff` must return nothing); and the count of spine rows per user never exceeds the number of cutoffs.\n! A feature with suspiciously high importance, such as \"days until next login\", is almost always a leak.\n\n> Takeaway: build a spine of (entity, cutoff) rows, join features as of each cutoff using availability time, derive labels strictly after it, and split by time and entity so evaluation repeats deployment.",
+   "q": "A fraud model is trained on `transactions` joined to `accounts` for features like `account_age_days`, `num_chargebacks` and `is_frozen`. Offline AUC is 0.97; in production it is 0.71. Identify at least two likely leaks in this setup and say how to rebuild the features point-in-time correctly.",
+   "s": "First, `accounts` is a current-state table. `is_frozen` is very likely set *because* fraud was detected, so it encodes the label; it must be dropped or taken as of the transaction time, which would usually be false. Second, `num_chargebacks` counted over all history includes chargebacks filed after the transaction, often for that very transaction. It must count only chargebacks known before the transaction time, using the date the chargeback was recorded, not the date of the original purchase. Third, `account_age_days` computed from today's date rather than the transaction date gives every account a later age, distorting the feature. The rebuild: make the spine one row per transaction with its timestamp as the cutoff, compute each feature from history tables filtered to records available before that cutoff, and evaluate on a later time period than training.",
+   "r": [
+    [
+     "Feast docs: Point-in-time joins",
+     "https://docs.feast.dev/getting-started/concepts/point-in-time-joins",
+     "How a feature store joins feature history to an entity table at each event time."
+    ],
+    [
+     "DuckDB blog: ASOF joins, fuzzy temporal lookups",
+     "https://duckdb.org/2023/09/15/asof-joins-fuzzy-temporal-lookups.html",
+     "The as-of join explained with examples, and how it is executed efficiently."
+    ],
+    [
+     "scikit-learn: Common pitfalls (data leakage)",
+     "https://scikit-learn.org/stable/common_pitfalls.html",
+     "Leakage from preprocessing and splitting, from the modelling side."
+    ],
+    [
+     "Sculley et al.: Hidden technical debt in machine learning systems",
+     "https://papers.nips.cc/paper/5656-hidden-technical-debt-in-machine-learning-systems",
+     "Data dependencies and feedback loops that make training data drift from serving."
+    ]
+   ],
+   "k": [
+    "point-in-time",
+    "leakage",
+    "training data"
+   ],
+   "x": [
+    "SQL",
+    "SQLite"
+   ],
+   "p": [
+    "point-in-time-feature-join",
+    "lag-and-lead",
+    "date-functions",
+    "null-handling"
+   ]
+  },
+  {
+   "id": "03.07",
+   "t": "SQL performance for analysts",
+   "n": [
+    "Query time is driven by the rows and pages the database must **read**, not the rows it returns. A full scan of 100 million rows costs the same whether one row or a million match.",
+    "A B-tree index on `(a, b)` serves conditions on `a`, or on `a` and `b`, but not on `b` alone; wrapping the column in a function (`date(ts) = ...`) usually stops the index from being used.",
+    "Read the plan before guessing: `EXPLAIN QUERY PLAN` in SQLite shows SCAN vs SEARCH, and `EXPLAIN ANALYZE` in PostgreSQL shows estimated vs actual rows for each step.",
+    "Most slow analyst queries come from a handful of patterns: non-sargable filters, join fan-out followed by DISTINCT, per-row correlated subqueries without an index, deep OFFSET pagination and needless wide scans.",
+    "In columnar warehouses (BigQuery, Snowflake, DuckDB) the levers are different: select fewer columns and filter on partition or cluster keys, because cost follows bytes scanned."
+   ],
+   "a": "## Where the time goes\nA row-store database keeps each table as pages (8 KB in PostgreSQL, 4 KB by default in SQLite) on disk, with recently used pages cached in memory. A query's cost is dominated by how many pages it reads and how much work it does per row: comparisons, hashing for joins and GROUP BY, sorting for ORDER BY and window functions.\n\nWithout a usable index, finding the requests of one user in a 100-million-row table means reading all of it, a **full scan**. With an index on `user_id`, the database descends a B-tree (three or four levels even for a huge table) to the matching entries and reads only the pages that hold those rows. That is the difference between seconds and milliseconds. The System Design course's lessons on database indexing, B-trees and query planning go deeper into the data structures; this lesson is about using them from the query side.\n\n%%layers What an index lookup touches for WHERE user_id = 42, versus a full scan.\nRoot page | one page, always cached\nInner pages | 1 to 2 more levels, mostly cached\n*Leaf entries | (user_id, row pointer) for every row with user_id 42\nTable pages | only the pages holding those rows; a full scan reads every page\n%%\n\n## How indexes are used\nA B-tree index is a sorted copy of one or more columns with pointers back to the rows. It helps with equality and range conditions, joins on the indexed column, and ORDER BY on it (the rows come out already sorted). The rules that decide whether it can be used:\n- **Leftmost prefix.** An index on `(user_id, ts)` serves `user_id = 42`, and `user_id = 42 AND ts >= '2025-03-01'`, and `ORDER BY ts` within one user. It cannot serve `ts >= '2025-03-01'` alone, because entries are sorted by `user_id` first. Put equality columns first, then the range column.\n- **Sargable predicates.** The condition must compare the bare column with a value. `WHERE date(ts) = '2025-03-01'` or `WHERE lower(email) = ...` hides the column inside a function; rewrite as a range, `ts >= '2025-03-01' AND ts < '2025-03-02'`, or create an expression index on `lower(email)`. Leading wildcards (`LIKE '%gpt'`) and implicit type casts on the column defeat indexes the same way.\n- **Selectivity.** If a condition matches a large fraction of the table (`split = 'train'` for 80% of rows), jumping between index and table pages is slower than scanning, and the planner rightly ignores the index.\n- **Covering indexes.** If the index contains every column the query needs, the table is never touched. `CREATE INDEX ON evals (model_id, score)` lets `SELECT MAX(score) ... WHERE model_id = ?` run from the index alone.\n\nIndexes are not free: each one slows inserts and updates and takes disk space. Build them for the queries you actually run repeatedly.\n\n## Reading a query plan\nEvery engine will tell you what it intends to do. In SQLite:\n\n```sql\nEXPLAIN QUERY PLAN\nSELECT COUNT(*) FROM requests WHERE user_id = 42 AND ts >= '2025-03-01';\n-- before:  SCAN requests\n-- after CREATE INDEX idx_req_user_ts ON requests(user_id, ts):\n--          SEARCH requests USING COVERING INDEX idx_req_user_ts (user_id=? AND ts>?)\n```\n\nWords to look for: `SCAN` (full pass over a table), `SEARCH ... USING INDEX` (index lookup), `USE TEMP B-TREE FOR ORDER BY` or `GROUP BY` (an explicit sort, often avoidable with an index in the right order), and `CORRELATED SCALAR SUBQUERY` (something run per outer row).\n\nIn PostgreSQL, `EXPLAIN ANALYZE` actually runs the query and prints each node (Seq Scan, Index Scan, Hash Join, Nested Loop, Sort) with its estimated and actual row counts and time. The most useful single check is whether estimated and actual rows differ by orders of magnitude. A planner that expects 10 rows and gets 10 million will pick a nested loop that runs forever. Out-of-date statistics are a common cause; run `ANALYZE`.\n\n## Why some queries are slow\n1. **Non-sargable filters**: functions or casts on an indexed column. Rewrite as ranges on the bare column.\n2. **Fan-out then DISTINCT**: a one-to-many join multiplies rows, and `SELECT DISTINCT` hides it at the cost of a huge sort. Use `EXISTS`, or aggregate before joining.\n3. **Correlated subqueries without support**: per-row execution over an unindexed inner table is outer times inner work. Index the correlation column or rewrite as a join or window function.\n4. **Deep OFFSET pagination**: `LIMIT 50 OFFSET 1000000` reads and discards a million rows. Keyset pagination remembers the last key, `WHERE id > :last_id ORDER BY id LIMIT 50`, and seeks straight there.\n5. **Sorting for windows**: `OVER (PARTITION BY user_id ORDER BY ts)` sorts the whole input unless an index on `(user_id, ts)` supplies the order.\n6. **Wide reads**: `SELECT *` on wide tables drags every column through memory and the network.\n\n## Columnar warehouses\nAnalytical engines store each column separately and compress it. There are usually no B-tree indexes to tune, and a full scan of a few columns is fast. What you pay for, in time and often in money, is bytes read. The levers become:\n- select only the columns you need (`SELECT *` on a 300-column event table reads all 300);\n- filter on the **partition** column (usually a date) so whole partitions are skipped, and on clustering keys so blocks can be pruned by their min/max statistics;\n- avoid wrapping the partition column in a function in the filter, for the same sargability reason as above.\n\n! Example: a slow feature query, diagnosed\n! `SELECT user_id, COUNT(*) FROM events WHERE date(ts) >= '2025-01-01' GROUP BY user_id` takes 40 s on 200 million rows. The plan shows `SCAN events` and `USE TEMP B-TREE FOR GROUP BY`.\n! Rewriting the filter as `ts >= '2025-01-01'` makes it sargable, and an index on `(ts, user_id)` lets the range be read from the index alone. The GROUP BY still sorts, because the index is ordered by `ts`, not `user_id`.\n! If the query mostly runs for one user at a time, an index on `(user_id, ts)` is better: each lookup becomes a seek plus a short range read.\n\n> Takeaway: ask the planner what it will do, make filters sargable, index for the access paths you actually use (equality columns first, range last), and in columnar warehouses read fewer columns and fewer partitions.",
+   "q": "A dashboard query, `SELECT * FROM predictions WHERE model_id = 'm7' AND CAST(created_at AS DATE) = '2025-05-01' ORDER BY created_at`, is slow despite an index on `(created_at, model_id)`. Explain why the index does not help and propose an index and a query rewrite that would.",
+   "s": "Two problems. The filter casts `created_at`, so the condition is not a bare-column comparison and the planner cannot use the index's ordering on `created_at`. Even without the cast, the index puts `created_at` first, so it would still read that day's predictions for every model and discard the ones that are not `m7`. Rewrite the filter as a half-open range, `created_at >= '2025-05-01' AND created_at < '2025-05-02'`, and create an index on `(model_id, created_at)`: equality column first, range column second. The planner then seeks to model `m7`, reads one day's contiguous range, and returns rows already in `created_at` order, so no sort is needed. `SELECT *` still requires a table lookup per row; listing the needed columns and adding them to the index would make it covering.",
+   "r": [
+    [
+     "Use The Index, Luke",
+     "https://use-the-index-luke.com/",
+     "A free book on SQL indexing for developers: leftmost prefixes, functions in WHERE, joins and sorting."
+    ],
+    [
+     "SQLite: The query planner",
+     "https://www.sqlite.org/queryplanner.html",
+     "How SQLite uses indexes, covering indexes and sorting, with diagrams."
+    ],
+    [
+     "SQLite: EXPLAIN QUERY PLAN",
+     "https://www.sqlite.org/eqp.html",
+     "How to read SCAN, SEARCH and temp B-tree lines."
+    ],
+    [
+     "PostgreSQL docs: Using EXPLAIN",
+     "https://www.postgresql.org/docs/current/using-explain.html",
+     "Reading plan nodes, costs, and estimated vs actual rows with EXPLAIN ANALYZE."
+    ]
+   ],
+   "k": [
+    "indexes",
+    "query plans",
+    "performance"
+   ],
+   "x": [
+    "SQL",
+    "SQLite",
+    "PostgreSQL"
+   ],
+   "p": [
+    "limit-and-offset",
+    "subqueries",
+    "multiple-joins"
+   ]
+  }
+ ]
+}

@@ -1,17 +1,33 @@
 @15.01
 ## What we are building
-A URL shortener turns `https://example.com/some/very/long/path?with=params` into `https://sho.rt/zn9edcu`, and redirects anyone who opens the short link. ByteByteGo's chapter sets the requirements: 100 million new URLs a day, short codes using only `0-9a-zA-Z`, no editing or deleting, and high availability.
+A URL shortener turns `https://example.com/some/very/long/path?with=params` into `https://sho.rt/zn9edcu`, and redirects anyone who opens the short link to the original. It looks trivial, which is exactly why it is a classic design exercise: the whole problem fits in your head, so you can go deep on the two interesting parts, **generating short codes** and **serving redirects fast**. This lesson designs the one-machine version and settles the code-generation question. Lesson 15.03 scales it out.
 
-Its back-of-the-envelope numbers:
-- Writes: 100M ÷ 86,400 s ≈ **1,160 per second**.
-- Reads at 10:1: ≈ **11,600 per second**.
+Typical requirements:
+- **Functional**: create a short link from a long URL; redirect the short link to the long URL; short codes use only `0-9a-zA-Z`; links are never edited or deleted (in this version).
+- **Non-functional**: 100 million new URLs a day; redirects must be fast (tens of milliseconds) and highly available; a short code must never point to the wrong URL.
+
+### Back-of-the-envelope numbers
+- Writes: 100M ÷ 86,400 s ≈ **1,160 per second** on average, perhaps 2,000 to 3,000 at peak.
+- Reads at 10:1: ≈ **11,600 per second** (many real shorteners see 100:1; lesson 15.03 uses that).
 - Over 10 years: 100M × 365 × 10 = **365 billion** records. At about 100 bytes each, that is **36.5 TB**.
-- Code length: 62 characters per position. 62^6 ≈ 56.8 billion is too few; 62^7 ≈ 3.5 trillion covers 365 billion. So **7 characters**.
+- Code length: 62 characters per position.
 
-The System Design Primer's Pastebin solution is the same problem with a body attached (10M pastes and 100M reads a month: about 4 writes and 40 reads per second). It keeps metadata in SQL and the paste text in an object store.
+%%bars How many distinct codes each length of Base62 gives, against the 365 billion links needed over 10 years.
+5 characters | 916000000 | 916 million
+6 characters | 56800000000 | 56.8 billion
+*7 characters | 3520000000000 | 3.5 trillion
+8 characters | 218000000000000 | 218 trillion
+Needed in 10 years | 365000000000 | 365 billion
+%%
+
+62^6 ≈ 56.8 billion is too few; 62^7 ≈ 3.5 trillion covers 365 billion with almost 10× headroom. So **7 characters**.
+
+Pastebin is the same problem with a body attached (10M pastes and 100M reads a month: about 4 writes and 40 reads per second). Keep metadata in SQL and the paste text in an object store, because large text blobs in database rows bloat the table and its backups.
 
 ## The one-machine design
-Start simple: one web server and one SQL database. The table:
+Start simple: one web server and one SQL database. Do the numbers allow it? 1,160 inserts per second is comfortable for a single PostgreSQL or MySQL server on SSD (a well-tuned server handles several thousand small inserts per second). 11,600 indexed reads per second is also feasible, especially with a cache in memory. Storage is the constraint that will eventually force a second machine: 36.5 TB will not fit on one server, but the first year's 3.65 TB will. So one machine is a valid starting point, and the design should make the later split easy.
+
+The table:
 
 ```
 urls
@@ -21,19 +37,46 @@ urls
   created_at TIMESTAMP
 ```
 
-APIs: `POST /api/v1/data/shorten {longUrl}` returns the short URL; `GET /{code}` returns a redirect. The unique index on `short_code` makes each lookup an index probe, not a table scan.
+APIs:
+- `POST /api/v1/data/shorten {longUrl}` returns the short URL.
+- `GET /{code}` returns a redirect (or 404).
 
-%%flow One machine: the shorten path writes a row; the redirect path reads it.
-[Shorten] Client -(POST longUrl)-> Web server -(new id, encode)-> *Database row
-[Redirect] Browser -(GET /zn9edcu)-> Web server -(lookup by code)-> Database -(long URL)-> 302 redirect
+The unique index on `short_code` makes each lookup a B-tree probe (lesson 03.04), a handful of page reads, rather than a table scan. With Base62 IDs you can even drop the separate `short_code` column and index: decode the code back into the integer ID and look up the primary key directly.
+
+%%seq The two endpoints on one machine: shortening writes a row, redirecting reads it.
+Client > Web server : POST /shorten longUrl
+Web server > Database : SELECT code WHERE long_url = ? (optional dedupe)
+Database -> Web server : not found
+Web server > Database : INSERT, get id 11157
+Web server > Web server : base62(11157) = 2TX
+Web server -> Client : https://sho.rt/2TX
+Browser > Web server : GET /2TX
+Web server > Database : SELECT long_url WHERE id = 11157
+Database -> Web server : https://example.com/long/path
+Web server -> Browser : 302 Location: https://example.com/long/path
 %%
 
 ## Two ways to make the code
-**Option 1: hash the URL.** Hash the long URL with CRC32, MD5 or SHA-1 and keep the first 7 characters. All of those hashes are longer than 7 characters, so you must cut them, and cutting creates **collisions**: two different URLs with the same first 7 characters. ByteByteGo's fix is to check the database; on a collision, append a fixed string to the URL and hash again, repeating until the code is free. Checking the database on every write is expensive, so a **Bloom filter** in memory can answer "definitely not used" quickly. The Pastebin solution does a variant: MD5 of the user's IP plus a timestamp, Base62-encoded, first 7 characters, with a retry if taken.
+The real question of this design is how to turn a long URL into a 7-character code that is unique.
 
-**Option 2: Base62 of a unique ID.** Give every URL a unique integer ID (an auto-increment column or an ID generator), then write that number in base 62. Different IDs always give different strings, so there are **no collisions** and no need to check.
+### Option 1: hash the URL
+Hash the long URL with CRC32, MD5 or SHA-1 and keep the first 7 characters. A hash function maps any input to a fixed-size, random-looking output: MD5 is 128 bits (32 hex characters), SHA-1 is 160 bits (40 hex characters). All of them are longer than 7 characters, so you must cut them, and cutting creates **collisions**: two different URLs with the same first 7 characters.
 
-How Base62 works: repeatedly divide by 62 and map each remainder to a character (`0-9` = 0 to 9, `a-z` = 10 to 35, `A-Z` = 36 to 61). ByteByteGo's small example:
+How likely is that? This is the **birthday problem**: in a room of 23 people, two probably share a birthday, because the number of pairs grows with the square of the number of people.
+
+! Example: how often does a truncated hash collide?
+! Seven Base62 characters give N ≈ 3.5 trillion possible codes. Once you have stored n = 1 billion links, a new link collides with an existing one with probability n ÷ N = 10^9 ÷ 3.5 × 10^12 ≈ 0.03%, about 1 in 3,500 inserts.
+! Across the whole history, the expected number of colliding pairs is about n² ÷ 2N. At n = 1 billion: 10^18 ÷ 7 × 10^12 ≈ 140,000 collisions.
+! At 365 billion links (10 years), a new insert collides about 365 ÷ 3,520 ≈ 10% of the time. Collisions are not a rare edge case; they are routine, and the code must handle them.
+
+So hashing needs **collision resolution**. The usual fix is to check the database; on a collision, append a fixed string (or a counter) to the URL and hash again, repeating until the code is free. Checking the database on every write is an extra read per insert, so a **Bloom filter** in memory (lesson 04.13) can answer "definitely not used" quickly and send only the "maybe used" cases to the database. A variant hashes something other than the URL, such as the user's IP plus a timestamp, then Base62-encodes and truncates, with a retry if taken.
+
+Even with a check, there is a race: two servers can both check code `abc1234`, both find it free, and both insert. The unique index on `short_code` is the real guarantee: the second insert fails with a duplicate-key error, and that server retries with a new code.
+
+### Option 2: Base62 of a unique ID
+Give every URL a unique integer ID (an auto-increment column on one machine, or a distributed ID generator later, lesson 04.08), then write that number in base 62. Base62 is not a hash; it is just another way of **writing a number**, like decimal or hexadecimal. Different numbers always give different strings, so there are **no collisions** and no need to check.
+
+How Base62 works: repeatedly divide by 62 and map each remainder to a character (`0-9` = 0 to 9, `a-z` = 10 to 35, `A-Z` = 36 to 61). Reading the remainders from last to first gives the code.
 
 ! Example: encoding 11157
 ! 11157 ÷ 62 = 179 remainder **59** → `X`
@@ -41,383 +84,845 @@ How Base62 works: repeatedly divide by 62 and map each remainder to a character 
 ! 2 ÷ 62 = 0 remainder **2** → `2`
 ! Read the remainders backwards: `2TX`. Check: 2 × 62² + 55 × 62 + 59 = 7,688 + 3,410 + 59 = 11,157.
 ! A larger ID, 2009215674938, encodes to `zn9edcu`, giving `https://tinyurl.com/zn9edcu`.
+! Decoding is the reverse: for each character, multiply the running total by 62 and add the character's value.
 
-%%flow Base62 turns a unique number into a short string; unique in, unique out.
-[Encode] ID 11157 -(divide by 62, remainder 59)-> X -(179 ÷ 62, remainder 55)-> T -(2 ÷ 62, remainder 2)-> *code 2TX
+%%compare Hashing a URL versus Base62-encoding a unique ID: the ID approach cannot collide, the hash approach needs no counter.
+[Hash + truncate]
+long URL -(MD5)-> 32 hex chars -(first 7)-> code
++ no ID generator needed
++ same URL gives same code
+- collisions grow with table size
+- check, retry and unique index required
+[*Base62 of unique ID]
+long URL -(next ID 11157)-> base62 -> 2TX
++ unique in, unique out: no collisions
++ no extra read per write
+- needs a counter or ID generator
+- sequential codes are guessable
 %%
 
 | | Hash + collision resolution | Base62 of a unique ID |
-| Length | fixed (7) | grows with the ID |
+| Length | fixed (7) | grows with the ID (pad or start high for fixed length) |
 | Needs an ID generator | no | yes |
 | Collisions | possible; must check and retry | impossible |
-| Same URL twice | can return the same code (deterministic) | new code unless you look up the URL first |
+| Same URL twice | can return the same code (deterministic) | new code unless you look the URL up first |
 | Guessable | no | yes, IDs are sequential |
 
-The guessability point matters: with sequential IDs, anyone can enumerate every link by counting. If links might be private, apply a reversible scramble to the ID before encoding, or use random IDs (general practice; Hello Interview mentions applying a reversible transform).
+### Making IDs unguessable
+With sequential IDs, anyone can enumerate every link by counting: `2TX`, `2TY`, `2TZ`... If links may point to private documents, that is a data leak. Two fixes:
+- **Scramble the ID before encoding** with a reversible permutation of the 64-bit space, such as a small Feistel network or a block cipher with a secret key. Each ID maps to a unique, random-looking number, so uniqueness is kept and codes look random. Decoding runs the permutation backwards.
+- **Use random IDs**: generate a random 7-character code and insert it, relying on the unique index to reject the rare collision. This is effectively the hash approach with randomness instead of the URL.
 
-**The write flow** (ByteByteGo, Base62 version): look the long URL up; if it already exists, return its code; otherwise get a new ID, encode it, and save ID, code and long URL.
+### Fixed length
+Base62 of small IDs gives short codes (`2TX`). If you want every code to be exactly 7 characters, start the counter at 62^6 (about 56.8 billion), so every ID encodes to 7 characters, and you still have 3.4 trillion IDs left.
 
-**The redirect flow**: look up the code (cache first, then the database); if missing, return 404; otherwise redirect.
+## Same URL, same code?
+Should shortening the same long URL twice return the same code? With hashing it does naturally. With IDs you must look the URL up first, which needs an index on `long_url`. URLs can be thousands of characters long, so index a hash of the URL instead (a fixed 16-byte MD5 column with an index), and compare the full URL on a match. Many products choose **not** to deduplicate: two users shortening the same URL may want separate click statistics, and skipping the lookup saves a read per write.
+
+## The write and redirect flows
+**The write flow** (Base62 version):
+1. Validate the URL (scheme is http or https, length limit, not on a malware blocklist).
+2. Optionally look up an existing code for this URL.
+3. Get a new ID, encode it, and save ID, code and long URL.
+4. Return the short URL.
+
+**The redirect flow**:
+1. Decode or look up the code (cache first, then the database).
+2. If missing, return 404.
+3. Otherwise return a redirect with the long URL in the `Location` header.
 
 ## 301 or 302?
-- **301 Moved Permanently**: the browser caches the redirect and goes straight to the long URL next time. Less load on you, but you no longer see repeat clicks.
-- **302 Found** (temporary): every click comes back to you. More load, but you can count clicks and later change or expire the link.
+- **301 Moved Permanently**: the browser caches the redirect and goes straight to the long URL next time, without asking you. Less load on you, but you no longer see repeat clicks, and you can never change where that link goes for that browser.
+- **302 Found** (temporary): every click comes back to you. More load, but you can count clicks, expire links, block a link that turns out to be malicious, and change the destination later.
 
-ByteByteGo presents it as a trade-off; Hello Interview prefers 302 (lesson 15.03).
+Both are defensible; lesson 15.03 argues for 302 when analytics or control matter.
 
-> Takeaway: 100M URLs a day needs 7 Base62 characters for 10 years. Hashing and truncating needs collision checks; Base62 of a unique ID can't collide but is guessable unless scrambled. One SQL table with a unique index on the code serves a single machine fine.
+## Common mistakes
+- **Truncating a hash with no collision handling**, then silently overwriting another user's link.
+- **Checking for a free code without a unique index**, leaving a race between two servers.
+- **Sequential codes for private links**, letting anyone enumerate them.
+- **Indexing the full long URL**, which can be thousands of bytes; index a hash of it.
+- **Picking 6 characters** without doing the 10-year arithmetic.
 
-?? Base62 of a unique ID avoids collisions. Each URL gets a distinct integer from a counter or ID generator, and Base62 is just a way of writing that number, so two different IDs always give two different codes. Hashing the URL and keeping the first 7 characters throws most of the hash away, so different URLs can share the same 7 characters; you have to check the database (or a Bloom filter) and rehash on a clash. The cost of Base62 IDs is that codes are sequential and guessable unless you scramble them.
+## In an interview
+Do the arithmetic out loud (writes per second, total records, 62^7), then present both code-generation options with their trade-offs and choose Base62 of a unique ID, scrambled if links should not be guessable. Mention the unique index as the final guard, and say which redirect status you would use and why.
+
+> Takeaway: 100M URLs a day needs 7 Base62 characters for 10 years. Hashing and truncating creates birthday-problem collisions that need checks, retries and a unique index; Base62 of a unique ID cannot collide but is guessable unless the ID is scrambled first. One SQL table with a unique key serves a single machine fine until storage forces a split.
+
+?? Base62 of a unique ID avoids collisions. Each URL gets a distinct integer from a counter or ID generator, and Base62 is only a way of writing that number in 62 symbols, so two different IDs always give two different codes. Hashing the URL and keeping the first 7 characters throws most of the hash away, so different URLs can share the same 7 characters (by the birthday problem, after 1 billion links about 1 in 3,500 new links collides); you must check the database or a Bloom filter, rely on a unique index and rehash on a clash. The cost of Base62 IDs is that you need an ID generator, and codes are sequential and guessable unless you scramble the ID with a reversible permutation before encoding.
 
 @15.02
 ## The problem: twenty servers, one limit
-Say the rule is 100 requests per minute per user, and your API runs on 20 servers behind a load balancer. If each server counts on its own, a user whose requests are spread evenly gets 100 on *each* server: up to 2,000 a minute. Each server only sees about 1/20 of a user's traffic, so a local counter can't enforce a global limit. Hello Interview's breakdown of a distributed rate limiter solves this with **shared state**.
+Say the rule is 100 requests per minute per user, and your API runs on 20 servers behind a load balancer. If each server counts on its own, a user whose requests are spread evenly gets 100 on *each* server: up to 2,000 a minute. Each server sees only about one twentieth of a user's traffic, so a local counter cannot enforce a global limit. Dividing the limit by 20 does not work either, because load balancers do not spread one user's traffic evenly: a user with one keep-alive connection may send everything to one server and be blocked at 5 a minute.
+
+The fix is **shared state**: every server consults the same counter for the same user. This lesson designs that system end to end, using the placement and key choices from lesson 14.11 and the algorithms from lesson 14.12.
 
 ## Requirements
-Hello Interview's version: a social media API at about 1 million requests per second from 100 million daily users, identifying clients by user ID, IP or API key, with configurable rules. The check must add under **10 ms**. It must stay available, and it can be eventually consistent: being off by a few requests is acceptable.
+The scenario: a social media API at about **1 million requests per second** from 100 million daily users.
+- **Functional**: identify clients by user ID, IP or API key; support configurable rules per endpoint and per plan ("5 logins per minute per account", "free plan: 60 requests per minute"); reject over-limit requests with a clear response.
+- **Non-functional**: the check adds under **10 ms** (ideally about 1 ms); the limiter itself must be highly available, because if every request depends on it, its outage is your outage; it can be **eventually consistent**: being off by a few requests is acceptable, being off by 20× is not.
 
 ## Design: gateway plus Redis
-%%flow Every server checks the same per-user bucket in Redis, so 20 servers enforce one limit.
-[Servers] Request for user 42 -(any of 20 gateways)-> Gateway 7 -(Lua script on key rl:user:42)-> *Redis shard
-[Answer] Redis shard -(tokens left)-> Gateway 7 -(allow)-> App -(or reject)-> 429 + Retry-After
+%%flow Every gateway checks the same per-user bucket in Redis, so 20 servers enforce one limit; rules are cached locally and refreshed in the background.
+[Request path] Client -(user 42)-> Load balancer -> Gateway 7 -(Lua on rl:user:42)-> *Redis shard 3 -(allow)-> App servers
+[Reject path] Redis shard 3 -(no tokens)-> Gateway 7 -(429, Retry-After)-> Client
+[Control plane] Rules DB -(poll every 30 s)-> Gateway rule cache -(metrics)-> Dashboards and alerts
 %%
 
-- **Place it at the API gateway** so rejected traffic never reaches the app servers.
-- **Keep the counters in Redis**, keyed by client (`rl:user:42`). All 20 gateway instances read and update the same key, so together they enforce one limit.
-- **Algorithm: token bucket**, which needs only two fields per client: `tokens` and `last_refill`. On each request, add the tokens earned since `last_refill` (capped at capacity), then take one if available. Set an `EXPIRE` of about an hour so idle clients' keys disappear.
+- **Place it at the API gateway** so rejected traffic never reaches the app servers. A rejected request should cost you about a millisecond of gateway CPU and one Redis call, nothing more.
+- **Keep the counters in Redis**, keyed by rule and client (`rl:api:user:42`). All 20 gateway instances read and update the same key, so together they enforce one limit.
+- **Algorithm: token bucket**, which needs only two fields per client: `tokens` and `last_refill`. On each request, add the tokens earned since `last_refill` (capped at capacity), then take one if available. Set an `EXPIRE` of about an hour so idle clients' keys disappear by themselves.
+
+### How a token bucket behaves over time
+A bucket with capacity 10 and refill rate 1 per second (that is, 60 per minute with bursts of 10) gives this behaviour:
+
+%%timeline One user's token bucket (capacity 10, refill 1 per second): a burst is absorbed, then the steady rate takes over.
+t = 0 s | Bucket full: 10 tokens
+t = 0.1 s | Burst of 10 requests, all allowed, 0 tokens left
+t = 0.2 s | *11th request rejected: 429, Retry-After 1
+t = 1.1 s | 1 token refilled, 1 request allowed
+t = 5 s | Steady 1 per second allowed, bucket stays near 0
+t = 30 s | User idle 20 s: bucket refilled to 10 (capped)
+%%
 
 ## The race condition
-The naive version reads with `HMGET`, computes in the gateway, then writes back. Two gateways can both read "1 token left" at the same moment, both allow, and both write 0: two requests passed when only one should have. ByteByteGo shows the same bug with a plain counter: two requests read 3, both write 4, when the right answer is 5.
+The naive version reads with `HMGET`, computes in the gateway, then writes back with `HSET`. Two gateways can both read "1 token left" at the same moment, both allow, and both write 0: two requests passed when only one should have. A plain counter has the same bug: two requests read 3, both write 4, when the right answer is 5. Under a burst of 50 concurrent requests from one client, dozens can slip through.
 
-Fixes: a lock (correct but slow), or a **Lua script** that Redis runs atomically: read, refill, decide and write happen as one step on the Redis server, and nothing else runs in between. Hello Interview uses Lua. ByteByteGo also mentions Redis sorted sets for a sliding log.
-
-%%seq Without atomicity, two servers both spend the last token.
+%%seq Without atomicity, two gateways both spend the last token; a Lua script makes read, refill and take one step.
 Gateway A > Redis : HMGET rl:user:42 (tokens = 1)
 Gateway B > Redis : HMGET rl:user:42 (tokens = 1)
 Gateway A > Redis : HSET tokens = 0 (allow)
 Gateway B > Redis : HSET tokens = 0 (allow, wrong)
-Gateway A > Redis : fix: EVAL lua (read+refill+take in one step)
+Gateway A > Redis : fix: EVALSHA bucket.lua rl:user:42
+Redis > Redis : read, refill, take, write: nothing runs in between
+Redis -> Gateway A : allowed, 0 left
 %%
 
-**Sticky sessions** (sending each user to the same limiter server) are an alternative ByteByteGo rejects: they don't scale or handle failures well.
+Fixes:
+- **A lock** around the read-modify-write: correct but slow, with an extra round trip and lock contention on hot keys.
+- **A Lua script** that Redis runs atomically: read, refill, decide and write happen as one step on the Redis server, and Redis (being single-threaded per shard) runs nothing else in between. This is the usual choice: one round trip, no lock.
+- **Single atomic commands** where the algorithm allows: `INCR` for a fixed window, which is atomic on its own.
+
+The script is short:
+
+```lua
+-- KEYS[1] = bucket key; ARGV = capacity, rate per ms, now in ms
+local cap, rate, now = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3])
+local b = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+local tokens = tonumber(b[1]) or cap
+local ts = tonumber(b[2]) or now
+tokens = math.min(cap, tokens + (now - ts) * rate)
+local allowed = tokens >= 1
+if allowed then tokens = tokens - 1 end
+redis.call('HSET', KEYS[1], 'tokens', tokens, 'ts', now)
+redis.call('PEXPIRE', KEYS[1], 3600000)
+return { allowed and 1 or 0, tokens }
+```
+
+Gateways load it once with `SCRIPT LOAD` and call it by its hash with `EVALSHA`, so the script text is not sent on every request. One subtlety: `now` comes from the gateway's clock, so gateways with skewed clocks can refill a bucket early or late. Either keep clocks in sync (NTP keeps them within milliseconds) or read the time inside the script with Redis's `TIME` command.
+
+**Sticky sessions** (routing each user always to the same gateway, which then counts locally) are an alternative without shared state. But they make load uneven, and when a gateway fails its users move elsewhere with fresh counters. They do not scale or handle failures well.
 
 ## Scaling and failure
-- **Throughput**: one Redis instance handles roughly 100,000 to 200,000 operations per second; with a few operations per check, Hello Interview estimates 50,000 to 100,000 checks per second. For 1M per second, **shard by client key** over about 10 shards. Redis Cluster does this with its 16,384 hash slots.
-- **Availability**: each shard gets a replica with automatic failover.
-- **Redis down: fail open or closed?** Stripe fails open, letting traffic through, so a limiter bug can't take the API down. Hello Interview picks fail-closed for its social API, because Redis failures often coincide with spikes, when backends most need protecting. Either way, alert when it happens.
-- **Latency**: pooled connections to Redis, and Redis deployed in each region. Hello Interview notes that cross-region eventual consistency is fine for rate limits.
-- **Hot keys**: an abusive client hitting one key can overload a shard. Put repeat offenders on a blocklist, and handle floods at the edge (Cloudflare, AWS Shield).
-- **Rules**: stored in a config table that gateways poll about every 30 seconds, like Lyft's rule files in ByteByteGo's chapter (for example, `auth` / `login`: 5 per minute).
+### Throughput
+One Redis instance handles roughly 100,000 to 200,000 simple operations per second; a Lua check does several operations, so budget 50,000 to 100,000 checks per second per shard. For 1 million per second, **shard by client key** over about 10 to 20 shards. Redis Cluster does this with 16,384 hash slots: the key is hashed to a slot and each shard owns a range of slots. All of one client's data lives on one shard, so the Lua script sees the whole bucket.
+
+! Example: sizing the cluster
+! Peak load is 1.2 million requests per second. 70% are authenticated (one check against the user key); 30% are anonymous and need an IP check, and logins (1% of traffic) also check a per-account key: about 1.2M × (1 + 0.01) ≈ 1.21 million checks per second.
+! At a planned 70,000 checks per second per shard, that is 18 shards; round up to 24 so that one shard failing over (and briefly slow) does not push the others past their limit. Each shard gets one replica: 48 Redis processes.
+! Memory: 100 million daily users plus 30 million IP keys, about 100 bytes each with overhead, is 13 GB in total, about 550 MB per shard. Memory is not the constraint; operations per second are.
+! Latency: inside one datacentre a Redis round trip is 0.2 to 0.5 ms, well inside the 10 ms budget.
+
+### Availability
+Each shard gets a replica with automatic failover. Replication is asynchronous, so a failover may lose the last few hundred milliseconds of counter updates. For a rate limiter that means a few clients get a slightly bigger allowance for a moment, which the requirements accept.
+
+### Redis down: fail open or closed?
+If the limiter cannot reach Redis, it must decide what to do with the request. There is no universally right answer; decide per rule.
+
+%%matrix Fail open or fail closed when the limiter's store is unreachable: decide per endpoint, and alert either way.
+Endpoint type | Fail open | Fail closed | Local fallback limit
+Public read API | yes, outage of limiter is not an API outage | no | yes, coarse per-gateway cap
+Login and password reset | no, opens brute force window | yes | yes, strict
+Expensive exports | partial | partial | yes, per-gateway concurrency cap
+Payments and SMS sending | no, costs real money | yes | yes
+%%
+
+Stripe fails open, letting traffic through, so a limiter bug cannot take the API down. A social API might fail closed on some routes, because Redis failures often coincide with traffic spikes, exactly when backends most need protection. A good compromise is a **local fallback**: each gateway keeps a coarse in-memory limit (say, its fair share times two) that applies only while Redis is unreachable. Either way, alert when the fallback activates.
+
+### Latency and regions
+Use pooled, persistent connections to Redis, and pipeline when a request needs several checks. Deploy Redis in each region and count per region: a user served from Europe and Asia at once gets up to two allowances, which is acceptable for rate limits. Synchronising counters across regions on every request would add 100 ms or more, far over budget.
+
+### Hot keys
+An abusive client hitting one key can overload a shard (all its checks land on the same Redis process). Put repeat offenders on a **blocklist** cached in each gateway's memory, so their requests are rejected without touching Redis, and handle volumetric floods at the edge (Cloudflare, AWS Shield) before they reach your gateways.
+
+### Rules
+Rules live in a config table that gateways poll about every 30 seconds and cache locally, like Lyft's rule files (for example, domain `auth`, key `login`: 5 per minute). Urgent changes, such as blocking an attacking IP range, are pushed. Each rule needs an owner, a reason and a dark-launch mode that logs instead of blocking.
 
 ## Responses
-Reject immediately with **429 Too Many Requests** and headers so clients can back off: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, and `Retry-After`. Don't queue rejected requests: queueing uses memory, makes latency unpredictable and encourages retries.
+Reject immediately with **429 Too Many Requests** and headers so clients can back off:
+- `X-RateLimit-Limit`: the limit for this rule;
+- `X-RateLimit-Remaining`: requests left in the current period;
+- `X-RateLimit-Reset`: when the allowance resets;
+- `Retry-After`: seconds to wait (add a little random jitter so blocked clients do not all return at once).
+
+Do not queue rejected requests: queueing uses memory, makes latency unpredictable and encourages clients to pile on more retries. Well-behaved clients use exponential backoff with jitter (lesson 02.09).
+
+! Example: a request traced end to end
+! User 42 sends `GET /feed`. Gateway 7 extracts the user ID from the JWT, finds two applicable rules in its local cache (per user 100 per minute with burst 20; global per endpoint 200,000 per second), and pipelines two `EVALSHA` calls to the shards owning `rl:feed:user:42` and `rl:feed:global`.
+! Both return allowed in 0.4 ms. The user's bucket was full, so the gateway adds `X-RateLimit-Remaining: 19` and forwards the request.
+! Thirty seconds later a script on the same account sends 300 requests in a second. The bucket has refilled to its cap of 20 by then, so the first 20 pass (the burst), the rest get 429 with `Retry-After: 1`. The app servers never see them, and a counter of rejections per user feeds an alert if one client is rejected more than 10,000 times an hour.
 
 ## Beyond per-user limits
-Stripe's post adds the wider picture of abuse and overload. Besides the per-user **request rate limiter**, it runs a **concurrent requests limiter** (at most about 20 in-flight requests per user, for slow endpoints), and two **load shedders** that act on whole-system health: one keeps about 20% of capacity for critical calls like creating charges, the other sheds test-mode traffic first when workers run out. Rate limiting stops one client hogging resources; load shedding keeps the most important traffic alive when the whole system is overloaded.
+Rate limiting is one part of protecting an API. Stripe runs, besides the per-user **request rate limiter**, a **concurrent requests limiter** (at most about 20 in-flight requests per user, for slow endpoints) and two **load shedders** that act on whole-system health: one keeps about 20% of capacity for critical calls like creating charges, the other sheds test-mode traffic first when workers run out. Rate limiting stops one client hogging resources; load shedding keeps the most important traffic alive when the whole system is overloaded. And for abuse that stays under every limit (slow credential stuffing from 50,000 IPs), you need detection on patterns, covered in lesson 14.10.
 
-> Takeaway: local counters on 20 servers enforce 20× the limit. Put the limiter at the gateway, keep one token bucket per client in Redis, update it atomically with a Lua script, shard Redis by client key, choose fail-open or fail-closed deliberately, and answer with 429 and Retry-After.
+## Common mistakes
+- **Local counters** behind a load balancer: 20 servers, 20 times the limit.
+- **Read, compute, write** in the gateway without atomicity.
+- **One Redis instance** for a million checks per second, with no replica.
+- **Global cross-region counters** on the request path, blowing the latency budget.
+- **No decision on fail open versus fail closed** until the first Redis outage makes it for you.
 
-?? They share state. Each server keeps no counter of its own; instead every request does an atomic check-and-decrement against the same per-user key in a central store like Redis (a token bucket updated by a Lua script, so two servers can't both spend the last token). Redis is sharded by user key so each user's counter lives on one shard, with replicas for failover. Then however the load balancer spreads a user's requests, all 20 servers are drawing from the same bucket.
+## In an interview
+Start from the 20-server problem, then present: gateway placement, Redis token buckets keyed by client, a Lua script for atomicity, sharding by key with replicas, per-region counting, a fail-open policy with a local fallback, 429 with Retry-After, and rules in a config store. Put numbers on throughput and memory. If time allows, separate rate limiting from load shedding.
+
+> Takeaway: local counters on 20 servers enforce 20× the limit. Put the limiter at the gateway, keep one token bucket per client in Redis, update it atomically with a Lua script, shard Redis by client key with replicas, count per region, choose fail-open or fail-closed deliberately per endpoint, and answer with 429 and Retry-After.
+
+?? They share state. No server keeps its own counter; instead every request does an atomic check-and-decrement against the same per-user key in a central store like Redis: a token bucket (tokens and last refill time) updated by a Lua script that Redis runs as one step, so two servers cannot both spend the last token. Redis is sharded by the user key, so each user's bucket lives on exactly one shard, with a replica for failover, and a policy decides whether to fail open (with a coarse local fallback) if Redis is unreachable. However the load balancer spreads a user's requests, all 20 servers draw from the same bucket.
 
 @15.03
 ## Why scale changes the design
-Hello Interview's Bitly breakdown sets different numbers from 15.01: **1 billion URLs**, **100 million daily users**, redirects under **100 ms**, 99.99% availability, and preferring availability over consistency. Traffic is extremely read-heavy: each new URL is clicked about 1,000 times on average.
+Lesson 15.01 built a URL shortener on one machine and settled how to make codes. Now take a Bitly-scale version: **1 billion URLs**, **100 million daily users**, redirects under **100 ms**, 99.99% availability, and a preference for availability over consistency (a redirect that works is better than a perfectly fresh one). Traffic is extremely read-heavy: each new URL is clicked about 1,000 times on average over its life, and clicks are very unevenly spread.
 
-Its estimates:
-- **Storage**: about 500 bytes a row (generous), × 1B rows ≈ **500 GB**. That fits one Postgres instance. Storage isn't the problem.
+The estimates:
+- **Storage**: about 500 bytes a row (generous: code, long URL, owner, timestamps, expiry), × 1 billion rows ≈ **500 GB**. That fits on one modern Postgres instance. Storage is not the problem.
 - **Writes**: about 100,000 new URLs a day ≈ **1 per second**. Also not the problem.
-- **Reads**: 100M users × 5 redirects ≈ 500M a day ≈ **5,800 per second** average. With a 100× peak (a link going viral), about **600,000 per second**.
+- **Reads**: 100 million users × 5 redirects ≈ 500 million a day ≈ **5,800 per second** on average. Allow a 100× spike when a link goes viral: about **600,000 per second** at peak.
 
-So the whole design is about **serving redirects fast**.
+So almost the whole design is about **serving redirects fast and reliably**. It is worth saying this out loud in an interview: the estimate tells you where not to spend effort (sharding a 500 GB table, distributed writes) and where to spend it (the read path).
+
+## Splitting reads from writes
+Because reads outnumber writes by about 5,000 to 1 on average (500 million redirects against 100,000 new links a day), and far more during a spike, split them into separate services that scale independently:
+- **Write service**: a few stateless instances handling `POST /shorten`: validate the URL, get an ID, encode, insert.
+- **Read service**: many stateless instances handling `GET /{code}`: look up and redirect. They autoscale on request rate.
+- **Shared state**: the database (primary plus replicas), a Redis cache, and a counter for IDs.
+
+Separate services also isolate failures: a bug or overload in the shorten path cannot slow redirects.
 
 ## Generating codes across many servers
-Hello Interview compares approaches:
+On one machine an auto-increment column was enough. With several write servers (in several regions), you need IDs that are unique across all of them. The options:
 - **Use a prefix of the long URL**: rejected; URLs sharing a prefix collide.
-- **Hash + Base62** (canonicalise the URL, SHA-256, Base62, take the first N characters): the same URL always gets the same code. Collisions are caught by a UNIQUE constraint and retried with a salt.
-- **Global counter + Base62**: a Redis `INCR` gives each write server a unique number. No collisions, no checks. Codes are predictable, so scramble them if that matters.
-- **Counter batching**: each write server reserves a **block of 1,000** numbers from Redis at a time and hands them out locally. That is one Redis call per 1,000 URLs. Different regions can get separate ranges. If a server crashes, its unused numbers are lost, which is fine: codes only need to be unique, not contiguous.
+- **Hash + Base62** (canonicalise the URL, SHA-256, Base62, take the first N characters): the same URL always gets the same code. Collisions are caught by a UNIQUE constraint and retried with a salt, as in lesson 15.01.
+- **Global counter + Base62**: a Redis `INCR` gives each new URL a unique number. No collisions, no checks. Codes are predictable, so scramble them if that matters.
+- **Counter batching**: each write server reserves a **block of 1,000** numbers from Redis at a time (`INCRBY counter 1000`) and hands them out locally. That is one Redis call per 1,000 URLs. Different regions can get separate ranges. If a server crashes, its unused numbers are lost, which is fine: codes only need to be unique, not contiguous.
+- **Snowflake-style IDs** (lesson 04.10): each server builds IDs from a timestamp, a machine number and a sequence, with no coordination at all. They are 64-bit, so they encode to 11 Base62 characters, longer than the alternatives.
 
-Length: 62^6 ≈ 56 billion is plenty for 1B URLs, so **6 characters** suffice here.
-
-%%flow Counter batching: one Redis call hands a server 1,000 IDs to use locally.
-[Allocate] Write server 1 -(INCRBY 1000)-> *Redis counter -(range 5,001 to 6,000)-> Write server 1
-[Use] new long URL -(next local id 5,001)-> Base62 code -(insert)-> Database
+%%seq Counter batching: one Redis call gives a write server 1,000 IDs, which it then hands out from memory.
+Write server 1 > Redis : INCRBY url_counter 1000
+Redis -> Write server 1 : 6000 (range 5,001 to 6,000 is yours)
+Client > Write server 1 : POST /shorten long URL
+Write server 1 > Write server 1 : next local id 5,001, base62 = 1iF
+Write server 1 > Database : INSERT (5001, 1iF, long URL)
+Write server 1 -> Client : https://sho.rt/1iF
+Write server 1 > Write server 1 : ids 5,002 to 6,000 served locally
+Write server 1 > Redis : INCRBY url_counter 1000 when the block runs out
 %%
+
+What if the Redis counter is lost? If it restarts from an old snapshot, it could hand out ranges already used, causing duplicate codes. Protect against it: persist the counter with append-only logging, keep the database's unique constraint as the final guard, and on restart set the counter to `max(id)` from the database plus a safety gap.
+
+Length: 62^6 ≈ 56 billion is plenty for 1 billion URLs, so **6 characters** suffice here.
 
 ## Making redirects fast
-Hello Interview's layers, from the database outward:
-1. **Index the code.** A primary key or B-tree index makes each lookup O(log n) instead of a table scan.
-2. **In-memory cache** (Redis or Memcached) of `code → long URL`, read-through: check the cache, on a miss read the database and fill the cache. Memory is roughly 1,000× faster than SSD. Links are immutable, so caching is easy: no invalidation unless a link expires or is deleted. Keep cache TTLs no longer than the link's expiry, and evict with LRU, since a small fraction of links gets most clicks.
-3. **CDN / edge.** Serve popular redirects from points of presence near users, optionally with edge functions doing the lookup. Fastest, but costs more and is more complex.
-4. **Split read and write services** so each scales on its own: many stateless read servers, a few write servers, a Redis counter shared by the writers.
-5. **Database replicas** for availability and to absorb cache misses, plus backups.
+The read path has layers, each catching most of what the previous one missed. From the database outward:
+1. **Index the code.** A primary key or B-tree index makes each lookup O(log n) instead of a table scan: about 4 levels for a billion rows, often all but the leaf already in memory.
+2. **Database replicas** absorb cache misses and give availability. Since links never change once created, replica lag only matters for brand-new links (see below).
+3. **In-memory cache** (Redis or Memcached) of `code → long URL`, read-through: check the cache; on a miss, read the database and fill the cache. Memory is roughly 1,000× faster than SSD. Links are immutable, so caching is easy: there is nothing to invalidate unless a link expires or is deleted. Keep cache TTLs no longer than the link's expiry, and evict with LRU, since a small fraction of links gets most clicks.
+4. **CDN / edge.** Serve popular redirects from points of presence near users, either by letting the CDN cache the redirect response for a short time or with edge functions doing the lookup in an edge key-value store. Fastest for users, but adds cost and complexity.
 
-%%flow The redirect path: most clicks never reach the database.
-[Hot] Browser -(GET /abc123)-> CDN edge -(hit)-> *302 to long URL
-[Warm] CDN edge -(miss)-> Read service -(cache hit)-> Redis
-[Cold] Read service -(cache miss)-> DB replica -(fill cache)-> Redis
+%%layers The redirect read path, outermost first: each layer absorbs most of the traffic before it reaches the next.
+*CDN edge | caches redirect responses for seconds to minutes, near users
+Read service | stateless, autoscaled, in-process LRU for the hottest codes
+Redis cache | code to long URL, read-through, LRU eviction
+DB replicas | indexed lookup for cache misses
+Primary DB | writes only, plus fallback reads for brand-new links
 %%
 
+! Example: how much traffic reaches each layer at peak
+! Peak is 600,000 redirects per second. Click traffic is heavily skewed: suppose the CDN can cache the hottest links and answers 90% at the edge. That leaves 60,000 per second for the read service.
+! Redis holds the 20 million most-clicked codes (20M × about 200 bytes ≈ 4 GB, fits in one shard with a replica; use 3 shards for throughput). It hits 99% of what reaches it: 59,400 per second, which 3 shards serve easily.
+! The remaining 1%, about 600 per second, go to the database replicas: trivial for two replicas doing indexed lookups.
+! Without the CDN, Redis would need to serve 600,000 per second, about 6 to 10 shards. Without Redis, the database would face 60,000 per second, needing many replicas. Each layer turns an expensive problem into a cheap one.
+
+%%bars Requests per second reaching each layer at a 600,000 per second peak (log scale).
+CDN edge | 600000 | 600,000/s
+Read service | 60000 | 60,000/s
+Redis | 60000 | 60,000/s, 99% hits
+*Database replicas | 600 | 600/s
+%%
+
+### The brand-new link problem
+A user shortens a link and immediately clicks it. The write went to the primary; the read goes to a replica that may lag by a second, so it returns 404, and the 404 might even be cached. Fixes: write the new code into Redis as part of the shorten request (so the first read is a cache hit), fall back to the primary when a replica misses on a code younger than a few seconds, and never cache 404s for long (a few seconds at most).
+
+### Hot keys
+A viral link sends all its traffic to one Redis shard. At 200,000 clicks per second for one key, that shard is saturated. The CDN layer usually absorbs this. Without one, keep a small in-process LRU cache (a few thousand entries, a few seconds' TTL) on each read server, so each server asks Redis for the hot code only once every few seconds.
+
 ## 301 or 302 at scale
-A 301 is cached by the browser, so repeat clicks never reach you. That sounds like free scaling, but you lose control: you can't count clicks, change the destination, or expire the link, because browsers keep following the cached redirect. A 302 sends every click through you. Hello Interview picks **302**, and handles the extra load with the cache and CDN layers above. If you never need analytics or expiry, 301 is a valid way to cut traffic. Expired links return **410 Gone**, and a background job deletes expired rows.
+A **301** is cached by the browser (often indefinitely), so repeat clicks from the same browser never reach you. That sounds like free scaling, but you lose control: you cannot count clicks, change the destination, take down a link that turns out to be phishing, or expire the link, because browsers keep following the cached redirect. A **302** sends every click through you.
 
-**Custom aliases** (`sho.rt/my-launch`) need a separate namespace or prefix so a user can't claim a string the generator will produce later.
+%%compare 301 versus 302 for a large shortener: 301 saves traffic, 302 keeps control.
+[301 Moved Permanently]
+click -(browser cache hit)-> long URL directly
++ repeat clicks cost you nothing
+- no click analytics for repeats
+- cannot change, expire or block the link
+[*302 Found]
+click -> CDN or read service -> long URL
++ every click counted
++ links can expire, be edited or blocked
+- every click is served by you
+- needs the cache and CDN layers
+%%
 
-! Example: a viral link
-! A celebrity tweets `sho.rt/xK3pQ9`. Within a minute it's 200,000 clicks per second. The first request at each CDN edge misses and goes to a read server, which finds it in Redis (or loads it from a replica and caches it). Every later click at that edge is answered by the CDN in a few milliseconds. The database sees a handful of reads for this code in total, and the write path (1 per second) is unaffected.
+Pick **302** for a product like Bitly, whose value is analytics and control, and handle the extra load with the cache and CDN layers above. If you never need analytics or expiry, 301 is a valid way to cut traffic. **307** is like 302 but preserves the HTTP method; for plain link clicks (GET) the difference does not matter.
 
-> Takeaway: at 1B URLs storage and writes are small; redirects (up to about 600k per second at peak) are everything. Generate codes with a counter handed out in batches, then put an index, an in-memory cache and a CDN in front of the database. Choose 302 if you need analytics or expiry, and absorb the extra traffic with caching.
+**Analytics without slowing redirects.** If clicks are counted, do not write to the database on the redirect path. Emit a click event (code, timestamp, country, referrer) to a log or stream (Kafka) asynchronously and aggregate it elsewhere (lesson 10.02). The redirect stays a pure read.
 
-?? Cache at every layer of the read path: a CDN or edge cache for popular links, an in-memory cache (Redis) of code to URL in front of the database, and indexed lookups on database replicas for misses. Links don't change, so the cache rarely needs invalidating; just keep the TTL within any expiry. Use 302 if you want click analytics, the ability to change or expire links, or to avoid browsers caching the redirect forever; the caching layers absorb the extra load. Use 301 only if you never need to see or change repeat clicks.
+**Expiry.** Expired links return **410 Gone**, and a background job deletes expired rows. Store the expiry with the cached value so the read service can enforce it without a database call.
+
+**Custom aliases** (`sho.rt/my-launch`) need their own namespace or a distinguishing rule (for example, aliases must be at least 8 characters or contain a hyphen) so a user cannot claim a string the generator will produce later.
+
+## Availability: 99.99%
+Four nines is about 4 minutes of downtime a month (lesson 14.02), too little for humans to react. So:
+- run read services in at least two regions, behind health-checked DNS or anycast;
+- replicate the database to each region (asynchronous is fine: links are immutable);
+- if Redis fails, the read service falls back to replicas (with a circuit breaker so a dead Redis does not add a timeout to every request);
+- if the primary fails, redirects keep working from replicas and cache; only shortening stops until failover.
+
+! Example: a viral link, second by second
+! A celebrity posts `sho.rt/xK3pQ9`. Within a minute it is getting 200,000 clicks per second worldwide.
+! The first request at each of 300 CDN edges misses and goes to a read service, which finds the code in Redis (or loads it from a replica and caches it). That is about 300 requests to the origin in total.
+! Every later click at each edge is answered by the CDN in a few milliseconds, until the edge's cached copy expires (say after 60 seconds), at which point the next request refreshes it. The origin sees about 5 requests per second for this code; the database sees almost none. The write path (1 per second) is unaffected.
+! Click events stream to Kafka at 200,000 per second and are counted by an aggregation job, so the dashboard shows the spike within a minute.
+
+## Common mistakes
+- **Over-engineering the write path** (sharding, distributed transactions) when it handles 1 write per second.
+- **Writing click counts synchronously** on the redirect path.
+- **Choosing 301 by default** and later discovering you cannot take down a malicious link.
+- **Caching 404s for a long time**, breaking freshly created links.
+- **One Redis shard for a viral key** with no in-process or CDN layer in front.
+
+## In an interview
+Show the arithmetic first (500 GB, 1 write per second, 600,000 reads per second at peak), then say: "the problem is the read path". Present code generation with batched counters, then the cache layers with hit-rate arithmetic, then the 301 versus 302 choice with a reason. Finish with analytics off the hot path and multi-region reads.
+
+> Takeaway: at 1 billion URLs, storage and writes are small; redirects (up to about 600,000 per second at peak) are everything. Generate codes with a counter handed out in batches, then put an index, replicas, an in-memory cache and a CDN in front of the database, so each layer absorbs most of what reaches it. Choose 302 if you need analytics, expiry or the ability to block links, record clicks asynchronously, and absorb the extra traffic with caching.
+
+?? Cache at every layer of the read path: a CDN or edge cache that answers popular links near users, an in-memory cache (Redis, plus a small in-process cache for hot keys) of code to long URL in front of the database, and indexed lookups on database replicas for the remaining misses. Links do not change, so the caches rarely need invalidating; just keep TTLs within any expiry and seed the cache on creation so new links work at once. With a 90% CDN hit rate and 99% Redis hit rate, a 600,000 per second peak leaves only about 600 per second for the database. Use 302 if you want click analytics, the ability to change, expire or block links, or to avoid browsers caching the redirect forever; the caching layers absorb the extra load, and clicks are logged asynchronously. Use 301 only if you never need to see or change repeat clicks.
 
 @15.04
 ## The shape of the problem
-A product page is read about a million times for every update. At that ratio the answer is clearly caching. But caching works against the other requirement: a price change must show up **within seconds**, and stale prices cost money (selling below cost) or trust (charging more than the page showed).
+A product page on a large shop is read about a million times for every update. At that ratio the answer is clearly caching: if every view hit the database, a popular product during a sale could demand tens of thousands of queries per second for the same row. But caching works against the other requirement. A price change must show up **within seconds**, and a stale price costs money (selling below cost after a supplier price rise, or honouring a mistaken price) or trust (charging more at checkout than the page showed, which in some countries is also a legal problem).
 
-Hello Interview's scaling-reads pattern is paywalled beyond its outline. The visible part gives the order to try things: first optimise inside the database (indexes, better hardware, denormalisation), then scale out (read replicas, sharding), then add external caches (application cache, CDN and edge). It notes read:write ratios start around 10:1 and often reach 100:1 or more for content-heavy apps. The cache invalidation and stampede details below are general practice, not from that page.
+So the design is a negotiation between two forces: serve almost everything from cache, yet make the few things that change fast visible fast. The order in which to reach for tools is usually: first make each read cheap inside the database (indexes, denormalisation, better hardware), then scale out (read replicas, sharding), then add external caches (application cache, CDN and edge). Read-to-write ratios start around 10:1 for ordinary apps and reach 100:1 or far more for catalogue and content sites.
+
+### Numbers for a mid-sized shop
+- 5 million products; 200 million product page views a day, 2,300 per second on average, 25,000 per second at a sale peak.
+- 500,000 price or stock changes a day (6 per second), with bursts of 50,000 in a minute when a sale starts.
+- A product view document of about 20 KB (text, image URLs, attributes, rating summary).
+- Requirement: a price change is visible on every page within 5 seconds.
+- Across the whole catalogue that is about 400 views per change. For the most popular products, which are viewed constantly but repriced rarely, the ratio reaches a million to one, and those are the pages that matter most for load.
 
 ## Step 1: make each read cheap
-- **Denormalise the page model.** A product page usually joins products, prices, inventory, images, ratings and seller data. Precompute a single "product view" document on write, so a read is one key lookup.
-- **Index** on product ID (and on category or seller for listing pages).
-- **Read replicas** take reads off the primary. They lag by milliseconds to seconds, which matters for prices (below).
+- **Denormalise the page model.** A product page usually joins products, prices, inventory, images, ratings and seller data, often across several services. Precompute a single "product view" document whenever any part changes, so a read is one key lookup rather than six queries. This is the **materialised view** idea: pay at write time, which is rare, to save at read time, which is constant.
+- **Index** on product ID, and on category or seller for listing pages.
+- **Read replicas** take reads off the primary. They lag by milliseconds to seconds, which matters for prices (see below).
 
-The System Design Primer's sales-rank solution shows the same idea for listing pages. A MapReduce job over sales logs computes each category's top sellers hourly into a `sales_rank` table. Reads (`GET /api/v1/popular?category_id=1234`) are just an indexed lookup, with a memory cache in front for popular categories. Its numbers: 1 billion transactions and 100 billion reads a month, about 400 writes and 40,000 reads per second.
+Listing pages work the same way. For a best-sellers page, a batch job over sales logs computes each category's top sellers hourly into a `sales_rank` table. Reads (`GET /api/v1/popular?category_id=1234`) are then just an indexed lookup, with a memory cache in front for popular categories. At 1 billion transactions and 100 billion reads a month, that is about 400 writes and 40,000 reads per second, and the reads never touch the transaction tables.
 
 ## Step 2: cache in layers
-%%layers Read path for a product page, outermost first.
-CDN / edge | whole page or static parts; short TTL or purge on change
-App cache (Redis) | product view by ID; invalidated on price change *
+%%layers The read path for a product page, outermost first; each layer can hold an old price, so each needs a freshness rule.
+CDN / edge | whole page or static parts; long TTL plus purge on change
+*App cache (Redis) | product view by ID; overwritten on price change
+In-process cache | hottest products for 1 to 2 s on each app server
 Read replicas | absorb cache misses; may lag by a second or two
-Primary database | the source of truth; only writes and fallback reads
+Primary database | the source of truth; writes and fallback reads
 %%
 
-The difficulty is that each layer may hold an old price.
+Each layer multiplies the protection of the one below. With a 90% CDN hit rate and a 98% Redis hit rate, 25,000 page views per second become 2,500 requests to the app and 50 to the database. The difficulty is that **each layer may hold an old price**, and each needs its own way of being told about a change.
 
 ## Step 3: keep prices fresh
-**Split what changes from what doesn't.** Descriptions, images and reviews change rarely; cache them long (minutes or hours, at the CDN). Price and stock change often; serve them separately, from a small, fast lookup or a short-TTL fragment. Many stores render the page from the CDN and fetch price and stock with a separate small API call.
+### Split what changes from what does not
+Descriptions, images, specifications and reviews change rarely; cache them long (minutes or hours, at the CDN). Price and stock change often; serve them separately, from a small, fast lookup or a short-TTL fragment. Many shops render the page shell from the CDN and fetch price and stock with a separate small API call (or an edge-side include) that is cached for only a second or two. The 20 KB document stays cached; only a 100-byte price object needs to be fresh.
 
-**Invalidate on write, don't wait for TTLs.** When a price changes:
-1. Write the new price to the primary database (the source of truth).
-2. Publish a `price_changed` event (from the application, or by reading the database's change log, CDC).
-3. A consumer **deletes** (or overwrites) the cache entry for that product and **purges** the CDN URL.
-4. The next read misses and loads the new price.
+### Invalidate on write, do not wait for TTLs
+A TTL alone gives you a bad choice: a long TTL means stale prices; a short one means low hit rates and more load. Instead, push changes from the write path. When a price changes:
+1. Write the new price to the primary database, the source of truth.
+2. Publish a `price_changed` event, either from the application (using an outbox table written in the same transaction, so the event cannot be lost) or by reading the database's change log (**change data capture**, CDC, such as Debezium reading the Postgres WAL).
+3. A consumer **overwrites** (or deletes) the cache entry for that product and **purges** the CDN URL for its price fragment.
+4. The next read gets the new price.
 
-A TTL (say 60 seconds) stays as a safety net in case an invalidation is lost.
+A TTL (say 60 seconds) stays as a safety net in case an invalidation message is lost.
 
-%%flow Price change: the write path pushes invalidations instead of waiting for TTLs.
-[Write] Pricing admin -(UPDATE price)-> Primary DB -(change event)-> Event stream
-[Invalidate] Event stream -(consumer)-> *Delete product:123 in Redis -(and)-> Purge CDN /p/123
-[Read] Next request -(miss)-> Load from primary -(fill)-> Redis
+%%flow A price change: the write path pushes the new value outward instead of waiting for caches to expire.
+[Write] Pricing admin -(UPDATE price, outbox row)-> Primary DB -(CDC)-> Event stream
+[Push] Event stream -(consumer)-> *Overwrite product:123 in Redis -(and)-> Purge CDN /api/price/123
+[Read] Next shopper -(edge miss)-> Price API -(Redis hit, new value)-> Shopper sees new price
 %%
 
-**Beware replica lag after invalidation.** If the cache is refilled from a replica that hasn't received the update yet, you cache the old price again, with a fresh TTL. Fixes: refill from the primary for a short time after a change, delay the invalidation slightly past the replica lag, or have the invalidation message carry the new value and write it straight into the cache.
+%%timeline How long a price change takes to reach shoppers along the push path; the 5-second target is met with room to spare.
+0 ms | *Price UPDATE commits on the primary
+50 ms | CDC reads the change from the WAL
+150 ms | price_changed event published to the stream
+300 ms | Consumer overwrites product:123 in Redis
+800 ms | CDN purge of /api/price/123 completes at all edges
+2,800 ms | Last in-process caches expire (2 s TTL)
+3 s | Every shopper sees the new price
+%%
 
-**Order and races.** Two quick changes ($10 then $12) can be processed out of order. Including a version number with each price, and having the cache ignore older versions, prevents setting it back to $10.
+### Beware replica lag after invalidation
+If you **delete** the cache entry and the next miss refills it from a replica that has not yet received the update, you cache the old price again, with a fresh TTL. Now the stale price lives for the whole TTL, and no further invalidation is coming.
 
-## Step 4: protect against stampedes
-When a hot product's cache entry is deleted, thousands of concurrent requests can miss at once and all hit the database (a **cache stampede**). Fixes:
+%%seq The stale refill race: the cache is deleted, then refilled from a replica that has not yet seen the update.
+Admin > Primary : UPDATE price = 40 (was 50)
+Primary > Consumer : price_changed(123)
+Consumer > Redis : DEL product:123
+Shopper > App : GET /p/123
+App > Redis : GET product:123
+Redis -> App : miss
+App > Replica : SELECT price (replica 800 ms behind)
+Replica -> App : 50 (old)
+App > Redis : SET product:123 price 50, TTL 60 s
+Primary > Replica : replicate price = 40 (too late)
+%%
+
+Fixes, from simplest:
+- **Overwrite instead of delete**: the invalidation message carries the new value (or the consumer reads it from the primary) and writes it straight into the cache. The entry is never empty, so no refill race.
+- **Refill from the primary** for a short window (a few seconds) after a change, using a "recently changed" marker.
+- **Delayed second delete**: delete now, and again after a delay longer than the worst replica lag. Crude but effective.
+
+### Order and races between updates
+Two quick changes ($10, then $12) can be processed out of order by parallel consumers, leaving $10 in the cache. Give each price a **version number** (incremented on every write, or the database's commit position) and make the cache write conditional: only overwrite if the incoming version is newer. In Redis this is a small Lua script comparing versions. Partitioning the event stream by product ID also keeps one product's events in order.
+
+## Step 4: protect against stampedes and hot keys
+When a hot product's cache entry is deleted or expires, thousands of concurrent requests can miss at once and all hit the database. This is a **cache stampede** (lesson 05.05). Fixes:
 - **Request coalescing** (single-flight): only one request per key reloads; the others wait for its result.
 - **Refresh instead of delete**: overwrite the entry with the new value, so it is never empty.
-- **Jittered TTLs**, so many keys don't expire at the same moment.
+- **Jittered TTLs**, so many keys do not expire at the same moment.
+- **Early refresh**: when a hot entry is close to expiry, one request refreshes it in the background while others keep using the old value.
 
-**Hot keys**: a flash sale product can overload the single Redis shard holding it. Keep a tiny in-process cache (a second or two) on each app server, or replicate the hot key across shards.
+**Hot keys**: a flash-sale product can overload the single Redis shard holding it. If one product draws most of the 25,000 views per second, its 20 KB entry alone is about 500 MB/s of network traffic from one shard, more than a typical network card carries. Keep a tiny in-process cache (a second or two) on each app server, so 100 servers each ask Redis at most once a second, or replicate the hot key across shards under suffixed names.
 
-! Example: a price drop during a sale
-! At 12:00:00 the price of product 123 changes from $50 to $40. The write commits on the primary; the change event is consumed within about 200 ms. The consumer writes the new view `{price: 40, version: 17}` into Redis (rather than deleting, so there's no stampede), and purges `/p/123` from the CDN. Page HTML at the CDN had a 5-minute TTL but the price comes from `/api/price/123` with a 2-second edge TTL. Within about 3 seconds every shopper sees $40, and the database sees only a few reads.
+! Example: a price drop at the start of a sale
+! At 12:00:00 the price of product 123 changes from $50 to $40, along with 50,000 other products in the same minute.
+! The writes commit on the primary. CDC publishes 50,000 events, partitioned by product ID across 32 partitions; 32 consumers process them in parallel at about 2,000 per second each, so the whole batch is pushed within about a second.
+! For product 123 the consumer writes `{price: 40, version: 17}` into Redis with a conditional Lua script (it would refuse version 16 if that arrived late), and purges `/api/price/123` from the CDN. The page HTML at the CDN has a 5-minute TTL, but the price comes from `/api/price/123` with a 2-second edge TTL.
+! Within about 3 seconds every shopper sees $40. The database sees a handful of reads for product 123, not 25,000 per second.
 
-> Takeaway: for a million reads per update, precompute a denormalised product view and cache it at the app and CDN layers. Keep prices fresh by pushing invalidations (or new values) from the write path, not by waiting for TTLs. Separate fast-changing price and stock from slow-changing content, and guard against replica lag, out-of-order updates and stampedes.
+! Example: what checkout does
+! Even with all this, some shopper somewhere loaded the page at 11:59:59 and clicks "buy" at 12:00:30 with $50 on screen. The checkout service never trusts the displayed price: it reads the current price from the primary (or a strongly consistent price service) and, if it differs from what the cart shows, tells the user before charging. Caches serve the browsing; the source of truth serves the money.
 
-?? Precompute a denormalised product view and serve it from layered caches (CDN, then Redis, then read replicas), since reads dwarf writes. For freshness, don't rely on TTLs: when a price changes, the write to the primary emits an event, and a consumer updates or deletes the Redis entry and purges the CDN path, with a short TTL as a safety net. Serve price and stock as a small separate fragment with a very short cache time, refill from the primary (or with the new value) to avoid caching stale replica data, use versions to ignore out-of-order updates, and coalesce requests to avoid a stampede.
+## Common mistakes
+- **TTL-only freshness**, forcing a choice between stale prices and low hit rates.
+- **Caching the whole page with the price inside it**, so every price change purges a 20 KB document from every edge.
+- **Delete-then-refill from a lagging replica**, re-caching the old price.
+- **Unordered invalidations**, letting an older price overwrite a newer one.
+- **Trusting the cached price at checkout.**
+
+## In an interview
+Start with the ratio and the freshness requirement, then present: denormalised product view, layered caches with hit-rate arithmetic, split of slow and fast-changing data, push invalidation via CDC or an outbox, overwrite with versions to avoid replica-lag and ordering races, coalescing for stampedes, and checkout reading from the source of truth.
+
+> Takeaway: for a million reads per update, precompute a denormalised product view and cache it at the app and CDN layers. Keep prices fresh by pushing new values from the write path (CDC or an outbox), not by waiting for TTLs. Separate fast-changing price and stock from slow-changing content, overwrite with version checks to avoid replica-lag and ordering races, coalesce to prevent stampedes, and let checkout read the source of truth.
+
+?? Precompute a denormalised product view and serve it from layered caches (CDN, then Redis, then read replicas), since reads dwarf writes. For freshness, do not rely on TTLs: when a price changes, the write to the primary emits an event (via an outbox or change data capture), and a consumer overwrites the Redis entry with the new value and purges the CDN path, with a short TTL as a safety net. Serve price and stock as a small separate fragment with a very short cache time while the heavy page content stays cached for long. Overwrite rather than delete (or refill from the primary) so a lagging replica cannot re-cache the old price, use version numbers so out-of-order updates are ignored, coalesce requests to avoid a stampede, and have checkout always read the price from the source of truth.
 
 @15.05
 ## The problem
-Two people edit the same document at the same time. Alice types "x" at position 5; at the same instant Bob deletes the character at position 3. Each applies their own change locally first, so the editor feels instant, then sends it to the other. Now their copies have diverged. If Bob applies Alice's "insert x at 5" literally, it lands one character too far right, because his delete shifted everything after position 3 left by one. Without help, the two documents end up different, which is the one thing a collaborative editor can't allow.
+Two people edit the same document at the same time. A collaborative editor must feel instant, so each keystroke is applied to the local copy **immediately**, before any server has seen it, and then sent to everyone else. That is what makes the problem hard: by the time Alice's edit reaches Bob, Bob's document has already changed underneath it.
 
-Two families of algorithms solve this: **operational transformation (OT)** and **CRDTs**. Hello Interview's Google Docs breakdown is paywalled after its requirements: create documents, many users editing at once, changes visible in real time, and other users' cursors and presence. The OT and CRDT explanations below combine Figma's post, crdt.tech and general knowledge.
+Consider the document `abcdef`. Alice types "x" at position 5 (between `e` and `f`, counting from 0). At the same instant Bob deletes the character at position 3 (`d`). Each applies their own change locally first:
+- Alice now has `abcdexf`.
+- Bob now has `abcef`.
+
+Then they exchange operations. Alice applies "delete at 3" and gets `abcexf`. Bob applies "insert x at 5" literally, to `abcef`, and gets `abcefx`: the `x` lands one place too far right, because his delete shifted everything after position 3 left by one. The two copies now differ, and they will drift further apart with every edit. **Convergence**, every replica ending in the same state once all operations are applied, is the one property a collaborative editor cannot give up.
+
+Two families of algorithms solve this: **operational transformation (OT)** and **conflict-free replicated data types (CRDTs)**. The surrounding system for a Google Docs-like editor needs: create documents, many users editing at once, changes visible to others within a few hundred milliseconds, other users' cursors and presence, and history.
 
 ## Operational transformation
-OT keeps operations as simple edits ("insert 'x' at 5", "delete at 3"), but **transforms** each incoming operation against concurrent ones that were already applied, adjusting its position.
-- Bob receives "insert x at 5". He has already applied his own "delete at 3", which is concurrent with it. Since the delete was before position 5, the transform shifts the insert to position 4. Now both documents match.
-- When two users insert at the **same** position, a tie-break rule (for example, the lower user ID goes first) makes both sides order them the same way.
+OT keeps operations as simple position-based edits ("insert 'x' at 5", "delete at 3"), but **transforms** each incoming operation against the concurrent operations that were already applied, adjusting its position so it still means what its author intended.
 
-Google Docs uses OT with a **central server**: the server decides the single order of operations, and each client transforms its pending operations against the ones the server confirms. Having one server order everything keeps OT manageable. Figma's post explains why it didn't choose OT: it is complex and hard to get right, with a "combinatorial explosion" of cases to reason about. It suits long text documents, but Figma is a design tool.
+The transform function takes two concurrent operations A and B (both made against the same document version) and produces A′, a version of A that can be applied after B. For insert and delete on plain text, the rules are short:
+- An insert at position p, transformed against a delete at position q < p, moves to p − 1.
+- An insert at p, transformed against an insert at q < p, moves to p + 1.
+- A delete at p, transformed against an insert at q ≤ p, moves to p + 1.
+- Two deletes of the same character: the second becomes a no-op.
+- Two inserts at the **same** position: a tie-break rule decides which goes first (for example, lower site or user ID first), and both sides must apply the same rule.
 
-%%seq OT with a central server: the second operation is transformed against the first.
-Alice > Server : insert "x" at 5 (based on v10)
-Bob > Server : delete at 3 (based on v10)
-Server > Server : order: Bob's delete = v11
-Server > Server : transform Alice's insert: 5 becomes 4 = v12
-Server -> Alice : apply v11: delete at 3
-Server -> Bob : apply v12: insert "x" at 4
+In the example, Bob receives "insert x at 5" and transforms it against his own "delete at 3". Since 3 < 5, the insert becomes "insert x at 4", and Bob gets `abcexf`, the same as Alice.
+
+### Why OT uses a central server
+Transforming two operations is easy. Transforming arbitrary interleavings among many peers, each with their own pending operations, is notoriously hard: some published peer-to-peer OT algorithms were later shown to diverge in rare cases. The practical answer, used by Google Docs, is a **central server** that decides a single order of operations. Each operation carries the document **revision** it was based on. The server transforms an incoming operation against everything committed since that revision, assigns it the next revision, and broadcasts it.
+
+%%seq OT with a central server: Bob's delete is committed first, so Alice's concurrent insert is transformed from position 5 to 4.
+Alice > Server : insert "x" at 5 (based on rev 10)
+Bob > Server : delete at 3 (based on rev 10)
+Server > Server : commit Bob's delete as rev 11
+Server > Server : transform Alice's insert past rev 11: 5 becomes 4, commit rev 12
+Server -> Alice : rev 11: delete at 3
+Server -> Bob : ack rev 11, then rev 12: insert "x" at 4
+Alice > Alice : already applied own insert; transform delete, result abcexf
+Bob > Bob : apply insert at 4, result abcexf
 %%
+
+Each client also has to transform: Alice's own insert is already applied locally, so the incoming delete must be transformed against it before she applies it. To keep this manageable, a client sends **one operation at a time** and buffers further edits until the server acknowledges the previous one.
+
+%%state An OT client's synchronisation states: at most one operation is in flight, and later edits are buffered and composed.
+[*] -> Synchronised
+Synchronised -> Awaiting ack : local edit, send it
+Awaiting ack -> Synchronised : server acks
+Awaiting ack -> Awaiting with buffer : more local edits, compose into buffer
+Awaiting with buffer -> *Awaiting ack : ack arrives, send buffer
+%%
+
+Figma considered OT and chose not to use it: the transform logic is complex and hard to get right, with a combinatorial explosion of cases as you add operation types (move, resize, reparent, set property). OT suits long text documents with a small set of operations; a design tool has hundreds.
 
 ## CRDTs
-crdt.tech describes a **conflict-free replicated data type** as a data structure where every replica can be changed independently, even offline, and replicas always **merge into the same state** when they sync, with no conflict-resolution code in the app. They don't need a central server, so they also work peer to peer and **offline-first**.
+A **conflict-free replicated data type** is a data structure where every replica can be changed independently, even offline, and replicas always **merge into the same state** when they exchange updates, in any order, with no conflict-resolution code in the application. CRDTs do not need a central server, so they also work peer to peer and **offline-first**.
 
-For text, a CRDT avoids positions entirely. Each character gets a **unique, permanent ID** (for example, a counter plus the user's ID), and an insert says "put 'x' **after the character with ID (Alice, 17)**". Deleting just marks a character as deleted (a **tombstone**), so its ID stays as a stable anchor. Because operations refer to IDs, not shifting positions, they can be applied in any order and still give the same result. Two inserts after the same character are ordered by a deterministic rule on their IDs, so everyone agrees.
+The trick is to design operations that **commute**: applying A then B gives the same result as B then A. Simple examples: a grow-only counter where each replica increments its own slot and the value is the sum; a set where adds and removes are tagged with unique IDs.
 
-%%flow CRDT text: inserts refer to character IDs, so the order of arrival doesn't matter.
-[Alice] insert x after char A5 -(id Alice:9)-> merged in any order
-[Bob] delete char A3 -(tombstone, ID stays)-> merged in any order
-[Result] both replicas -(same IDs, same tie-break)-> *identical text
+For text, a sequence CRDT avoids positions entirely. Each character gets a **unique, permanent ID**, for example a pair (counter, site ID), where the site ID identifies the user or device. An insert says "put 'x' **after the character with ID (17, Alice)**". Deleting only marks a character as deleted (a **tombstone**), so its ID stays as a stable anchor for anything inserted next to it. Because operations refer to IDs, not shifting positions, they can be applied in any order and still give the same result.
+
+### Same position, both approaches
+The lesson's question is the hardest case: two users insert at the same place at the same moment.
+
+! Example: two users type at the same position, resolved by OT
+! The document is `cat` at revision 7. Alice types "s" at position 3 (end). Bob types "!" at position 3 at the same moment. Both are based on rev 7.
+! Locally Alice sees `cats`; Bob sees `cat!`.
+! The server receives Alice's first and commits it as rev 8. Bob's insert also targets position 3; equal positions need the tie-break. The rule says the operation already committed (or the lower user ID) goes first, so Bob's insert shifts to position 4 and is committed as rev 9.
+! Alice receives rev 9: "insert ! at 4", giving `cats!`. Bob receives rev 8: "insert s at 3"; he transforms it against his own pending insert at 3. With the same tie-break, Alice's "s" goes before his "!", so it stays at 3 and his own character moves to 4: `cats!`. Both converge.
+
+! Example: the same edit, resolved by a CRDT
+! The characters of `cat` have IDs c = (1, A), a = (2, A), t = (3, A). Alice inserts "s" after (3, A) with the new ID (4, Alice). Bob inserts "!" after (3, A) with the new ID (4, Bob).
+! Both inserts reference the same anchor. A deterministic rule orders siblings, for example: higher counter first, then higher site ID first. The counters tie at 4; comparing site IDs, "Bob" > "Alice", so "!" comes immediately after `t` and "s" after it.
+! Every replica, whether it receives Alice's insert first or Bob's, applies the same rule to the same IDs and gets `cat!s`. No server was needed. The result may be `cat!s` rather than `cats!`, but it is the same everywhere, which is what matters; the users see it within a second and fix it if they care.
+
+%%tree A sequence CRDT stored as a tree of character IDs: concurrent inserts after the same anchor become siblings ordered by a fixed rule.
+start
+  c (1, A)
+    a (2, A)
+      t (3, A)
+        *! (4, Bob) | first
+        s (4, Alice) | second
 %%
 
-The costs: every character carries an ID and deleted characters remain as tombstones, so memory and document size grow. Collapsing old tombstones needs extra work. Libraries such as Yjs and Automerge use compact encodings to keep this down (general knowledge).
+### The cost of CRDTs
+Every character carries an ID (often 8 to 16 bytes before compression) and deleted characters remain as tombstones, so memory and document size grow. A 100,000-character document with heavy editing history might hold several times that many entries. Collapsing old tombstones needs every replica to agree that nobody will reference them again, which is hard without a coordinator. Libraries such as Yjs and Automerge use compact run-length encodings (consecutive characters typed by one user share one ID range), bringing overhead down to a small multiple of the plain text size.
+
+There is also an **interleaving anomaly**: when two users concurrently type whole words at the same spot, some CRDT algorithms can interleave their characters ("hweolrllod" instead of "hello world"). Modern algorithms are designed to avoid this by keeping each user's run together.
+
+%%compare OT versus CRDTs for collaborative text: OT moves complexity into transforms and a server; CRDTs move it into metadata.
+[OT]
+local edit -> server orders -(transform)-> broadcast
++ small operations, compact documents
++ proven at Google Docs scale
+- needs a central server in practice
+- transform logic is subtle per op type
+[*CRDT]
+local edit -(ID-based op)-> any peer -> merge in any order
++ works offline and peer to peer
++ convergence guaranteed by construction
+- per-character IDs and tombstones
+- document grows with history
+%%
 
 | | OT | CRDT |
-| What travels | position-based edits | edits referencing unique IDs |
+| What travels | position-based edits plus a base revision | edits referencing unique IDs |
 | Needs a central server | in practice yes, to order operations | no; peer to peer and offline work |
 | Main cost | complex transform logic | metadata per character, tombstones |
-| Used by | Google Docs | Figma (CRDT-inspired), Yjs and Automerge-based editors |
+| Used by | Google Docs | Figma (CRDT-inspired), Yjs- and Automerge-based editors |
 
 ## What Figma actually does
-Figma's post is a useful middle ground: CRDT ideas, but with a **server as the authority**, which removes most CRDT overhead.
+Figma took a useful middle ground: CRDT ideas, but with a **server as the authority**, which removes most CRDT overhead.
 - **One server process per document.** Everyone editing that file connects to it over WebSockets. On open, a client downloads the whole file; afterwards, changes flow both ways.
 - **Data model**: a tree of objects, each with an ID and properties: `Map<ObjectID, Map<Property, Value>>`.
 - **Last writer wins per property.** The server keeps the latest value received for each property of each object. Edits to different properties, or different objects, never conflict. Two edits to the same property: whichever reached the server last wins. The server's arrival order decides, so no clocks are needed.
-- **Text is a single value** in this model, so concurrent text edits produce "AB" or "BC" but never a merged "ABC". Figma accepts this for a design tool; a text editor couldn't.
+- **Text is a single value** in this model, so concurrent text edits in one text box produce one user's version, never a merge. Figma accepts this for a design tool; a text editor could not.
 - **No flicker**: clients apply their own changes immediately and **ignore server updates to properties they have unacknowledged changes for**, because their pending value is the best guess of the final one.
 - **IDs include a client ID**, so a client (even offline) can create objects without asking the server.
 - **Parent links as properties.** Moving an object sets its parent property; the server rejects moves that would create a cycle. Child order uses **fractional indexing**: the position is a fraction between its neighbours (between 0.5 and 0.75 → 0.625), so inserting never renumbers other items.
 - **Offline**: on reconnect, download a fresh copy, reapply local edits on top, and continue.
 
 ## The surrounding system
-For any of these (partly general practice, since Hello Interview's details are paywalled):
-- **WebSocket servers**, with all editors of one document routed to the same server (consistent hashing on document ID), so one place orders the operations.
-- An **operation log** per document, appended for every change, with periodic **snapshots** so loading doesn't replay millions of operations; old operations are compacted.
-- **Cursors and presence** are separate, ephemeral messages (who is here, where their cursor is); they're broadcast but not stored.
+- **WebSocket servers**, with all editors of one document routed to the same server process (consistent hashing on document ID, lesson 04.07), so one place orders the operations. A popular document with 200 editors is still one process; a server hosts thousands of quieter documents.
+- An **operation log** per document, appended for every committed change, with periodic **snapshots** (say every 1,000 operations) so loading does not replay millions of operations. The log also gives version history and undo.
+- **Cursors and presence** are separate, ephemeral messages (who is here, where their cursor is). They are broadcast, throttled to a few per second, and never stored.
+- **Failover**: if a document's server dies, clients reconnect, are routed to a new server that loads the latest snapshot plus the log tail, and resend their unacknowledged operations, which carry IDs so the server can drop duplicates.
 
-> Takeaway: concurrent edits shift each other's positions. OT fixes this by transforming operations against each other, usually with a central server ordering them (Google Docs). CRDTs give each element a unique ID so edits merge in any order, even offline, at the cost of metadata. Figma takes CRDT ideas but uses a server as the authority with last-writer-wins per property.
+! Example: sizing the document servers
+! 2 million documents are open at peak, with 3 editors on average, each producing about 2 operations per second while typing (keystrokes are batched every 100 ms or so). Assume a quarter are actively typing at any moment: 2M × 3 × 0.25 × 2 = 3 million operations per second.
+! Each operation is about 100 bytes in the log: 300 MB per second, about 26 TB a day before snapshots allow old log segments to be compacted.
+! If one server process handles 30,000 operations per second (transform, append, fan out to a few sockets), you need about 100 servers, plus headroom for failover.
 
-?? Both users apply their own insert locally, then exchange operations. With OT, a central server puts the two inserts in an order; the later one is transformed against the earlier (its position is shifted past the first insert, with a tie-break such as user ID when the positions are equal), and both clients end with the same text. With a CRDT, each insert refers to the unique ID of the character it follows, not a position; both inserts follow the same character, so a deterministic rule on their own IDs decides which comes first, and every replica reaches the same order whatever order the operations arrive in, without needing a server.
+## Common mistakes
+- **Sending raw positions without transformation** and assuming edits rarely overlap.
+- **Peer-to-peer OT** without a proven algorithm; subtle divergence shows up months later.
+- **Last-writer-wins on whole text fields** in a text editor, silently losing a user's paragraph.
+- **Storing presence updates in the operation log**, bloating history with cursor moves.
+- **No snapshots**, so opening an old busy document replays its entire history.
+
+## In an interview
+Start with the divergence example in two lines, then explain OT (transform plus central ordering) and CRDTs (unique IDs, tombstones, commutative merge), and show how each resolves two inserts at the same spot. Choose OT with a server for a classic online editor or a CRDT if offline and peer-to-peer matter, and describe the session server, the operation log with snapshots, and separate presence.
+
+> Takeaway: concurrent edits shift each other's positions. OT fixes this by transforming operations against each other, with a central server ordering them (Google Docs) and a tie-break for equal positions. CRDTs give each element a unique ID so edits merge in any order, even offline, at the cost of metadata and tombstones. Figma takes CRDT ideas but uses a server as the authority with last-writer-wins per property.
+
+?? Both users apply their own insert locally, then exchange operations. With OT, a central server puts the two inserts in a single order; the later one is transformed against the earlier, and because the positions are equal a fixed tie-break (for example, already-committed operation or lower user ID first) decides that it shifts one place right. Each client transforms the incoming operation against its own pending one using the same rule, so both end with the same text. With a CRDT, each insert refers to the unique ID of the character it follows, not to a position; both inserts follow the same character, so a deterministic rule on their own new IDs (counter, then site ID) decides which comes first. Every replica reaches the same order whatever order the operations arrive in, without needing a server.
 
 @15.06
 ## What an object store is
-An object store like Amazon S3 stores **objects** (a blob of bytes plus metadata) under a **key** inside a **bucket**, accessed over an HTTP API: `PUT /bucket/key`, `GET /bucket/key`, `DELETE`, `LIST` by prefix. There are no in-place edits: you replace a whole object. The design has to provide enormous scale, very high durability, and enough throughput for any single customer's burst.
+An object store like Amazon S3 stores **objects** (a blob of bytes plus metadata such as content type and custom headers) under a **key** inside a **bucket**, accessed over an HTTP API. There is no directory tree and no in-place editing: you write a whole object and read it back, or replace it. Keys like `photos/2024/cat.jpg` look like paths, but the slash is just a character; "folders" are an illusion created by listing keys with a common prefix.
+
+That simple model is exactly what lets it scale. Because objects are immutable once written, there is no need for byte-range locking, partial-update consistency or a file system's metadata operations (rename a directory with a million files). The design must provide three things at once:
+- **Enormous scale**: trillions of objects, exabytes of data, millions of requests per second.
+- **Very high durability**: S3 is designed for 99.999999999% (eleven nines) annual durability, meaning that if you store 10 million objects you would expect to lose one about every 10,000 years.
+- **Throughput for any one customer's burst**: a single job may suddenly read petabytes in parallel.
+
+### The API
+- `PUT /bucket/key` with the body: create or replace an object.
+- `GET /bucket/key` (optionally with a `Range` header for part of it).
+- `DELETE /bucket/key`.
+- `LIST /bucket?prefix=photos/2024/&continuation-token=…`: keys in sorted order, 1,000 per page.
+- **Multipart upload** for large objects: initiate, upload parts (5 MB to 5 GB each, in parallel, retryable individually), then complete, which stitches the parts into one object. Objects can reach 5 TB.
 
 ## The four parts
-Andy Warfield's post about building S3 names the main layers:
-1. **Front end**: the fleet that speaks the HTTP API, authenticates and authorises requests, and routes them.
-2. **Namespace (index) service**: maps `bucket + key` to where the object's pieces are stored. It answers `LIST` and makes new objects visible.
-3. **Storage fleet**: millions of hard drives holding the data. Each disk is managed by **ShardStore**, S3's per-disk storage layer, rewritten in Rust.
-4. **Background services**: replication, repair, moving data between storage classes, and garbage collection.
+1. **Front end**: a stateless fleet that speaks the HTTP API, authenticates and authorises requests, and routes them.
+2. **Namespace (metadata index) service**: maps `bucket + key` to where the object's pieces are stored, answers `LIST`, and makes new objects visible. It is a huge, partitioned, sorted key-value store (lesson 07.17).
+3. **Storage fleet**: millions of hard drives holding the data. In S3 each disk is managed by **ShardStore**, a per-disk storage layer written in Rust.
+4. **Background services**: replication, repair, moving data between storage classes, scrubbing (re-reading data to detect silent corruption), and garbage collection of deleted objects.
 
-%%flow An object store separates the API, the metadata index and the bytes.
-[PUT] Client -(PUT /photos/cat.jpg)-> Front end -(erasure-code into shards)-> *Storage nodes
-[Index] Front end -(record key to shard locations)-> Metadata index
-[GET] Client -(GET /photos/cat.jpg)-> Front end -(lookup)-> Metadata index -(read any k shards)-> Storage nodes
+### The write path
+%%seq A PUT: data is made durable on storage nodes first, and only then is the key committed in the index.
+Client > Front end : PUT /photos/cat.jpg (4 MB)
+Front end > Front end : authenticate, authorise, checksum body
+Front end > Placement : choose 14 drives in 3 zones
+Front end > Storage nodes : write 10 data + 4 parity shards
+Storage nodes -> Front end : 14 acks, each checksum verified
+Front end > Metadata index : commit key -> shard locations, version
+Metadata index -> Front end : committed
+Front end -> Client : 200 OK, ETag
 %%
 
-A write: the front end splits the object into pieces, writes them to storage nodes on different drives and racks, and only after enough pieces are durable does it commit the key in the index. Committing last means a reader never sees a key whose data isn't there yet.
+The front end splits the object into pieces, writes them to storage nodes on different drives, racks and zones, and only after enough pieces are durable does it **commit the key** in the index. Committing last means a reader never sees a key whose data is not there yet. If the front end crashes halfway, the written shards are orphans with no key pointing at them, and garbage collection removes them later. Checksums travel with the data end to end (lesson 07.20), so corruption anywhere along the path is detected rather than stored.
+
+Since late 2020, S3 gives **strong read-after-write consistency**: once a PUT returns, every subsequent GET and LIST sees it. That is a property of the metadata index: the commit is the single point where the new version becomes visible.
+
+### The read path
+A GET looks up the key in the index, gets the shard locations, reads enough shards (from the least busy drives), reassembles and streams the object. For a 4 MB object erasure coded 10 + 4, that is 10 reads of 400 KB, in parallel.
 
 ## Durability: replication and erasure coding
-- **Replication** keeps full copies (often 3). Simple, and reads can go to any copy, which helps steer load away from busy disks. But it costs 3× the storage.
-- **Erasure coding** (Reed-Solomon style), which S3 also uses, splits an object into **k data shards** plus **m parity shards**; **any k of the k + m** are enough to rebuild it. For example, 10 + 4 survives losing any 4 shards for 1.4× the storage instead of 3×. Reads touch k drives, so it suits larger, colder data.
+- **Replication** keeps full copies, often 3. Simple, and a read can go to any copy, which helps steer load away from busy disks. But it costs 3× the storage.
+- **Erasure coding** (Reed-Solomon style) splits an object into **k data shards** plus **m parity shards**; **any k of the k + m** are enough to rebuild it. For example, 10 + 4 survives losing any 4 shards for 1.4× the storage instead of 3×. Reads touch k drives, and rebuilding a lost shard needs k reads, so it suits larger and colder data.
 
-Shards go on different drives, racks and Availability Zones, so one failure can't take out more than one shard. A background repair process constantly finds lost shards (dead disks) and rebuilds them elsewhere. Durability depends on repair being faster than failures accumulate.
+%%compare Three-way replication versus 10 + 4 erasure coding for the same object.
+[3x replication]
+object -(copy)-> drive A, drive B, drive C
++ read from any one drive
++ cheap repair: copy one replica
+- 3x storage
+- survives only 2 lost copies
+[*Erasure coding 10 + 4]
+object -(split + parity)-> 14 shards on 14 drives
++ 1.4x storage
++ survives any 4 lost shards
+- a read touches 10 drives
+- repair reads 10 shards to rebuild 1
+%%
+
+Shards go on different drives, racks and Availability Zones, so one failure takes out at most one shard (or a few, in the case of a zone). A background repair process constantly finds lost shards (dead disks, failed scrubs) and rebuilds them elsewhere. Durability is a race: **repair must be faster than failures accumulate**.
+
+! Example: why repair speed sets durability
+! A fleet of 1 million drives with a 1% annual failure rate loses about 10,000 drives a year, roughly 27 a day. Each 20 TB drive holds shards of millions of objects.
+! With 10 + 4 erasure coding, an object is lost only if 5 of its 14 drives fail before repair completes. If repair takes 1 hour, the chance that one particular drive fails within the hour is about 0.01 ÷ 8,760 ≈ 1.1 × 10^-6. Losing 4 more of the other 13 drives in the same hour is astronomically unlikely.
+! If repair takes a week because the repair system is short of bandwidth, the per-drive probability rises to about 2 × 10^-4, and correlated failures (a batch of bad drives, a rack power fault) start to matter. Spreading each object's shards across many drives also means a dead drive's data is rebuilt by thousands of drives in parallel, so a 20 TB drive is rebuilt in minutes, not the 30-plus hours a single drive would need to copy itself.
 
 ## The real bottleneck: disk I/O, not capacity
-Warfield's key point is physics. Hard drive capacity has grown about 7.2 million times since IBM's first disk in 1956, but a drive still manages only about **120 random I/Os per second**, a number that barely changed in decades. Drives keep getting bigger (26 TB then, with 200 TB on roadmaps), so **I/O per terabyte keeps falling**. On a 200 TB drive, each 2 TB would get about 1 I/O per second.
+The key point is physics. Hard drive capacity has grown about 7.2 million times since IBM's first disk in 1956, but a drive still manages only about **120 random I/Os per second**: the arm must move and the platter must rotate, and that mechanical time barely changes. Drives keep getting bigger (26 TB shipping, with 200 TB on roadmaps), so **I/O per terabyte keeps falling**.
 
-So the problem is **heat**: the request rate hitting a disk. If a popular dataset sits on a few disks, those disks queue up, and their tail latency spreads to every request that needs them, including metadata lookups and erasure-coded reads that need several disks to answer.
+%%bars Random I/O available per terabyte as drives get bigger, at a fixed 120 IOPS per drive.
+1 TB drive | 120 | 120 IOPS per TB
+4 TB drive | 30 | 30 IOPS per TB
+26 TB drive | 4.6 | 4.6 IOPS per TB
+*200 TB drive | 0.6 | 0.6 IOPS per TB
+%%
+
+So the problem is **heat**: the request rate hitting each disk. If a popular dataset sits on a few disks, those disks queue up, and their tail latency spreads to every request that needs them. With erasure coding a read needs 10 drives, so it is as slow as the slowest of the 10.
 
 S3's answer is to make scale an advantage:
-- **Spread every customer across many disks.** Objects are placed on different sets of drives, so any one customer uses only a tiny slice of any disk. Tens of thousands of customers' buckets span millions of drives.
+- **Spread every customer across many disks.** Objects are placed on different sets of drives, so any one customer uses only a tiny slice of any disk. Tens of thousands of customers' buckets span millions of drives, and each drive holds data from thousands of customers.
 - **Aggregate demand is smooth.** Any single workload is bursty and mostly idle, but millions of them added together are steady and predictable. No one workload moves the total much.
 - **Bursts get huge parallelism.** A genomics job using thousands of Lambda functions can read from over a million disks at once, far more than it could ever buy for itself.
+- **Read the least busy shards.** With 14 shards and only 10 needed, a reader can pick the 10 fastest, or request 11 and use the first 10 to arrive, cutting tail latency (lesson 02.12).
 
-%%layers Where an object store's limits sit, and how S3 handles each.
+! Example: can one customer melt a disk?
+! A customer stores 100 TB and reads all of it once a day: about 1.2 GB/s average, or 300 random 4 MB reads per second.
+! If that 100 TB sat on five 20 TB drives, each would need 60 large reads per second plus seeks, near saturation, and every other customer on those drives would suffer.
+! Spread across 1 million drives, each drive holds about 100 MB of this customer's data. The 300 reads per second become about 3,000 shard reads per second spread over a million drives, so each drive sees one of them every five minutes or so. The customer is invisible in any one drive's load, and even a sudden 100× burst is only one request per drive every few seconds.
+
+## The metadata index: the other bottleneck
+Every request touches the index, and its load is not spread by hashing: keys are kept **sorted** so that LIST by prefix works, which means a burst of writes to keys with the same prefix (`logs/2024-11-12/…`) all land in one key range. The index is therefore partitioned by key range, and it **splits hot ranges automatically** when their request rate grows, moving the halves to different servers. S3 documents a baseline of at least 3,500 writes and 5,500 reads per second per prefix, with automatic scaling beyond that. Clients that need far more spread their keys across many prefixes (for example, a short hash at the start of the key).
+
+%%layers Where an object store's limits sit, and how each is handled.
 Front end | stateless; scale horizontally behind load balancers
-Metadata index | hot prefixes and LIST; partition the key space, split hot ranges
-Storage nodes | ~120 random IOPS per disk; spread data so no disk runs hot *
-Repair and background | must rebuild lost shards faster than disks fail
+Metadata index | sorted key ranges; split and move hot ranges automatically
+*Storage nodes | about 120 random IOPS per disk; spread data so no disk runs hot
+Repair and background | rebuild lost shards faster than disks fail
 %%
-
-**The metadata index** is the other limit. Every request touches it, and a single hot bucket or key prefix can concentrate load on one part. The index must be partitioned by key range and split hot ranges automatically (general knowledge about S3; the post doesn't detail the index).
 
 ## The Windows Azure Storage design
-The Windows Azure Storage paper (SOSP 2011) describes a comparable system. Its page could not be fetched; this summary is from general knowledge of the paper.
-- **Storage stamps**: clusters of racks (roughly 10 to 20 racks of storage nodes), each a self-contained unit. A **location service** maps accounts to stamps and updates DNS.
-- Inside each stamp, three layers:
-  - **Front-end layer**: stateless servers that authenticate and route requests.
-  - **Partition layer**: understands blobs, tables and queues; splits the namespace into key **ranges** served by partition servers, and moves or splits ranges to balance load.
-  - **Stream layer**: stores data as append-only **extents** replicated 3 ways synchronously within the stamp. Full extents are sealed and can be erasure coded.
-- **Replication within a stamp is synchronous** (strong consistency for writes), and **between stamps it is asynchronous** (for geo-disaster recovery).
+Windows Azure Storage is a comparable system, and its layering makes the same split very explicit.
 
-%%layers Windows Azure Storage: one stamp, three layers.
-Front-end layer | authenticate, route by partition map
-Partition layer | key ranges served by partition servers; split and move hot ranges *
-Stream layer | append-only extents, 3 replicas in the stamp, sealed then erasure coded
+%%tree Windows Azure Storage: accounts map to stamps, and each stamp has three layers.
+Location service | account to stamp
+  Storage stamp | 10 to 20 racks
+    Front-end layer | stateless
+    *Partition layer | key ranges
+    Stream layer | 3 replicas
+  Second stamp | async geo copy
 %%
 
+- **Storage stamps** are clusters of roughly 10 to 20 racks of storage nodes, each a self-contained unit. A **location service** maps accounts to stamps and updates DNS, so it can move an account between stamps.
+- The **partition layer** understands blobs, tables and queues; it splits the namespace into key **ranges** served by partition servers, and moves or splits ranges to balance load.
+- The **stream layer** stores data as append-only **extents** replicated 3 ways synchronously within the stamp. Full extents are sealed and can then be erasure coded to save space.
+- **Replication within a stamp is synchronous** (strong consistency for writes), and **between stamps it is asynchronous** (for geo-disaster recovery).
+
 ## Reliability engineering
-Warfield also describes how S3 protects durability as a process: every change gets a **durability review**, like a security threat model, listing what could go wrong and how it is handled. ShardStore is checked against an executable model about 1% of its size, with property-based tests on every commit.
+Durability is protected as a process, not just a design. At S3 every change gets a **durability review**, like a security threat model, listing what could go wrong and how it is handled. ShardStore is checked against an executable model about 1% of its size, with property-based tests on every commit. Background **scrubbing** reads every shard periodically and verifies its checksum, because a disk can return wrong data without reporting an error.
 
-> Takeaway: an object store has a stateless HTTP front end, a partitioned metadata index mapping keys to shard locations, and a storage fleet that replicates or erasure codes data across drives, racks and zones. The bottleneck is disk I/O (about 120 random IOPS per drive while capacity keeps growing) and hot index ranges, so spread every customer's data thinly across huge numbers of disks and split hot key ranges.
+## Common mistakes
+- **Putting metadata and data in one system**: the bytes and the index have completely different access patterns and scaling limits.
+- **Committing the key before the data is durable**, exposing objects that cannot be read.
+- **Sizing by capacity only**, then finding that the drives cannot serve the I/O.
+- **Hashing keys in the index**, which breaks prefix listing; or sorting without splitting hot ranges.
+- **Replication only**, paying 3× storage for cold data that erasure coding would protect better at 1.4×.
 
-?? API: PUT, GET, DELETE and LIST on bucket/key over HTTP. A stateless front-end fleet authenticates and routes. A metadata service, partitioned by key range, maps each key to the locations of its pieces and commits a key only after the data is durable. Storage nodes hold the data, replicated (often 3 copies) or erasure coded (k data + m parity shards, any k rebuild it), spread across drives, racks and zones, with background repair. The bottleneck is disk random I/O, about 120 IOPS per drive however big it gets, so hot data overloads disks unless it is spread thinly over very many drives; hot key ranges in the metadata index are the second bottleneck.
+## In an interview
+Draw the four parts, walk the PUT path (shards first, commit last) and the GET path, explain replication versus erasure coding with the storage overhead numbers, then name the bottlenecks: random I/O per disk (spread data thinly, read the fastest k shards) and hot key ranges in the index (range partitioning with automatic splits). Mention repair speed as the core of durability.
+
+> Takeaway: an object store has a stateless HTTP front end, a range-partitioned metadata index mapping keys to shard locations, and a storage fleet that replicates or erasure codes data across drives, racks and zones, committing the key only after the data is durable. The bottlenecks are disk random I/O (about 120 IOPS per drive while capacity keeps growing) and hot index ranges, so spread every customer's data thinly across huge numbers of disks, split hot key ranges, and repair faster than drives fail.
+
+?? API: PUT, GET (with ranges), DELETE and LIST by prefix on bucket/key over HTTP, plus multipart upload for large objects. A stateless front-end fleet authenticates and routes. A metadata service, partitioned by sorted key range, maps each key to the locations of its pieces and commits a key only after the data is durable, which gives read-after-write consistency. Storage nodes hold the data, either replicated (often 3 copies, 3× storage) or erasure coded (k data + m parity shards such as 10 + 4, any k rebuild it, 1.4× storage), spread across drives, racks and zones, with background repair and scrubbing. The main bottleneck is disk random I/O, about 120 IOPS per drive however large it gets, so hot data overloads disks unless every customer's data is spread thinly across very many drives; the second is hot key ranges in the metadata index, handled by splitting and moving ranges automatically.
 
 @15.07
 ## The log
-Jay Kreps' essay "The Log" starts from the simplest storage structure there is: an **append-only sequence of records, ordered by time**. You only add at the end, and every record gets the next sequential number, its **offset**. That number acts as a timestamp that doesn't depend on any clock.
+Start from the simplest storage structure there is: an **append-only sequence of records, ordered by time**. You only ever add at the end, and every record gets the next sequential number, its **offset**. Record 0, record 1, record 2. That number acts as a timestamp that does not depend on any clock, so there is never a question of which of two records came first: the one with the lower offset.
 
-Databases already depend on logs: changes go to the write-ahead log before tables, and replicas copy the log. The key principle is **state machine replication**: if deterministic processes read the same inputs in the same order, they end up in the same state. So a replica's state is described by one number, the last offset it has applied, and the **order** is everything ("+1 then ×2" is not "×2 then +1").
+Databases already depend on logs. Every change goes to the write-ahead log before the tables (lesson 03.08), and replicas stay in sync by copying the log. The principle underneath is **state machine replication**: if deterministic processes read the same inputs in the same order, they end up in the same state. So a replica's state is described by one number, the last offset it has applied, and the **order** is everything: "+1 then ×2" applied to 3 gives 8, "×2 then +1" gives 7.
 
-Kreps calls **tables and logs two views of the same thing**. Applying the log of changes gives you the table; recording a table's changes gives you the log, like bank transactions and balances.
+Tables and logs are two views of the same thing. Applying a log of changes in order gives you the table; recording a table's changes gives you the log. Bank transactions and balances are the everyday example: the balance is a table, the statement is a log, and you can always rebuild the balance from the statement.
 
 ## The log as a company's data backbone
-At LinkedIn the problem was data integration. With N systems (databases, search, Hadoop, monitoring, caches), connecting each pair directly means about N² custom pipelines. Instead, every source publishes to a log and every consumer reads it **at its own pace**, tracking its own position. Adding a consumer changes nothing for the producer. LinkedIn's Kafka handled over 60 billion message writes a day at the time.
+At LinkedIn the problem was data integration. With N systems (databases, search, Hadoop, monitoring, caches, recommendation engines), connecting each pair directly means up to N² custom pipelines, each with its own format, failure modes and backlog. Instead, every source publishes its changes to a log and every consumer reads it **at its own pace**, tracking its own position. Adding a consumer changes nothing for the producer; a slow consumer does not slow anyone else. LinkedIn built Kafka for this, and it was handling over 60 billion message writes a day early in its life; large deployments today handle trillions.
 
-%%flow N producers and M consumers meet at one log instead of N × M pipelines.
-[Producers] Profile DB, page views, metrics -(append)-> *Kafka topics
-[Consumers] Kafka topics -(each reads at its own offset)-> Search index, Hadoop, cache, recommendations
+%%flow N producers and M consumers meet at one log instead of N × M point-to-point pipelines.
+[Producers] Profile DB changes, page views, metrics -(append)-> *Kafka topics
+[Consumers] Kafka topics -(each reads at its own offset)-> Search index, Hadoop, caches, recommendations
 %%
 
 ## Partitions: how a log scales
-A single log can't hold a company's data on one machine, so a **topic** is split into **partitions**. Each partition is its own ordered log on some broker. Kreps is clear about the trade: **each partition is totally ordered; there is no global order across partitions**. Appends to different partitions need no coordination, so throughput grows with the number of machines.
+A single log cannot hold a company's data on one machine or take all its writes, so a **topic** (a named stream, such as `orders`) is split into **partitions**. Each partition is its own ordered log, stored on one broker (a Kafka server) and replicated to others. On disk a partition is a directory of **segment files** (1 GB each by default) plus an index from offset to file position, so finding offset 1,234,567 is a quick lookup, and old data is deleted a whole segment at a time.
 
-The Kafka docs and Hello Interview's Kafka deep dive explain how producers choose a partition:
-- With a **key**, the key is hashed (murmur2 by default) to pick the partition. The same key always lands in the same partition, so **all messages for one key are in order**.
-- Without a key, messages are spread across partitions for balance, and related messages have no order.
-
-So Kafka's ordering guarantee is: **messages are ordered within a partition, by offset**. Pick the key so that everything that must stay in order shares it: `user_id` for a user's actions, `order_id` for an order's state changes. Messages from one producer to one partition are stored in the order sent.
-
-%%flow Hashing the key picks the partition, so one key's messages stay in order.
-[Producer] order 42 events -(hash of key 42)-> *Partition 1 -(offsets 0, 1, 2)-> created, paid, shipped
-[Producer] order 77 events -(hash of key 77)-> Partition 3 -(own offsets)-> created, cancelled
+%%tree How a Kafka topic is laid out: partitions are the unit of order and parallelism, segments the unit of storage and deletion.
+Topic orders | 6 partitions, replication factor 3
+  Partition 0 | leader on broker 1, offsets 0 to 9,812,004
+    *Active segment | appends go here
+    Older segments | 1 GB each, deleted by age or size
+    Offset index | offset to file position
+  Partition 1 | leader on broker 2, its own offsets
+  Partitions 2 to 5 | spread over brokers 1 to 6
 %%
 
-**Hot partitions**: if one key gets huge traffic (Hello Interview's example: a viral ad ID), its partition becomes a bottleneck. Options: drop the key (lose order), add a random suffix (spreads load but complicates aggregating), or use a **compound key** such as ad ID plus region.
+The trade: **each partition is totally ordered; there is no global order across partitions**. Offset 5 in partition 0 and offset 5 in partition 1 have no relationship at all. In return, appends to different partitions need no coordination, so throughput grows with the number of partitions and brokers.
 
-## Why it's fast
-The Kafka docs explain several design choices:
-- **Sequential disk I/O.** Linear writes on their test disks ran at about 600 MB/s against about 100 KB/s for random writes, over 6,000× faster. Kafka only appends and reads in order, so operations are O(1) regardless of how much data is stored.
-- **Use the OS page cache** instead of an in-process cache: no Java object overhead or garbage collection, the cache survives broker restarts, and the OS handles read-ahead.
-- **Batching** everywhere: producers gather messages (up to, say, 64 KB or 10 ms), brokers append whole batches, consumers fetch big chunks.
-- **Zero-copy**: producers, brokers and consumers share one binary format, so a broker sends file data straight from the page cache to the socket with `sendfile`, skipping copies through user space.
-- **Batch compression** (gzip, Snappy, LZ4, zstd): stored and sent compressed, only decompressed by the consumer.
+### Choosing the partition
+How producers choose a partition:
+- With a **key**, the key is hashed (murmur2 by default) and taken modulo the number of partitions. The same key always lands in the same partition, so **all messages for one key are in order**.
+- Without a key, messages are spread across partitions for balance (newer clients fill a batch for one partition, then move on), and related messages have no order between them.
+
+So Kafka's ordering guarantee is: **messages are ordered within a partition, by offset**. Choose the key so that everything that must stay in order shares it: `user_id` for a user's actions, `order_id` for an order's state changes, `account_id` for ledger entries. Messages from one producer to one partition are stored in the order sent.
+
+! Example: why the key matters for an order's events
+! Order 42 emits `created`, `paid`, `shipped`. With key `order_id = 42`, all three hash to partition 1 and get offsets 7,001, 7,002, 7,003. A consumer always sees them in that order.
+! Without a key, `created` lands in partition 4, `paid` in partition 0 and `shipped` in partition 2. Three different consumers may process them in parallel, and the warehouse may receive `shipped` before `paid`, then reject it.
+! Order 77's events, with key 77, land in partition 3. There is no order between order 42 and order 77, and none is needed.
+
+### Pitfalls with ordering
+- **Changing the partition count** changes `hash(key) mod N`, so a key's new messages go to a different partition while its old ones are still being consumed from the old one. Order breaks across the change. Pick enough partitions up front (for example, enough for 2 to 3 years of growth).
+- **Retries can reorder.** If a producer has several batches in flight to one partition and the first fails and is retried, the second may land first. The **idempotent producer** (on by default in recent versions) uses sequence numbers so the broker rejects out-of-order batches, preserving order with up to 5 in-flight requests.
+- **Hot partitions**: if one key gets huge traffic (a viral ad ID, say), its partition becomes a bottleneck, because one partition is consumed by one consumer. Options: drop the key (lose order), add a random suffix (spreads load but complicates aggregating), or use a **compound key** such as ad ID plus region, if order only matters within a region.
+
+## Why it is fast
+- **Sequential disk I/O.** On spinning disks, linear writes can run around 600 MB/s against roughly 100 KB/s for small random writes: over 6,000× faster. Kafka only appends and reads in order, so operations stay O(1) however much data is stored.
+- **The operating system's page cache** instead of an in-process cache: no Java object overhead or garbage collection pauses, the cache survives broker restarts, and the OS handles read-ahead. Consumers that keep up are served from RAM, not disk.
+- **Batching** everywhere: producers gather messages (up to, say, 64 KB or 10 ms), brokers append whole batches, consumers fetch large chunks. A few large I/Os replace millions of small ones.
+- **Zero-copy**: producers, brokers and consumers share one binary format, so a broker sends file data straight from the page cache to the network socket with `sendfile`, skipping copies through user space.
+- **Batch compression** (gzip, Snappy, LZ4, zstd): batches are stored and sent compressed and only decompressed by the consumer.
+
+%%bars Disk throughput by access pattern on a spinning disk: why an append-only log is so fast.
+*Sequential writes | 600000 | about 600 MB/s
+Random small writes | 100 | about 100 KB/s
+%%
+
+! Example: sizing a cluster
+! Producers write 500 MB/s at peak (about 1 million messages per second of 500 bytes, after compression). With replication factor 3, the cluster writes 1.5 GB/s to disk and moves 1 GB/s between brokers for replication.
+! Retention is 7 days: 500 MB/s × 604,800 s ≈ 302 TB, × 3 replicas ≈ 907 TB of disk. With brokers holding 40 TB usable at 70% fill, that is about 32 brokers for storage alone.
+! Network: each broker takes 1.5 GB/s ÷ 32 ≈ 47 MB/s in, plus consumer reads; if 4 consumer groups each read everything, that is another 2 GB/s ÷ 32 ≈ 63 MB/s out per broker. Comfortable on 10 or 25 Gbit/s networking.
+! Partitions: if one consumer can process 10 MB/s, the busiest topic at 200 MB/s needs at least 20 partitions. Choose 64: room for three times the growth before you would ever need to change the count, and an even spread of 2 partitions per broker.
 
 ## Consumers
-Consumers **pull**: they ask for data after their position, so slow consumers aren't overwhelmed and can catch up later. In a **consumer group**, each partition is read by exactly one consumer at a time, so the group splits the work while each partition is still processed in order. A consumer's state is just **one offset per partition**, which is cheap to store and lets a consumer **rewind** and reprocess (after fixing a bug, for instance). If a consumer dies, its partitions are reassigned to others. Data is kept by time or size (Hello Interview: 7 days by default).
+Consumers **pull**: they ask for data after their position, so a slow consumer is never overwhelmed and can catch up later. Pulling also allows big batched reads. In a **consumer group**, each partition is read by exactly one consumer in the group at a time, so the group splits the work while each partition is still processed in order. With 12 partitions, up to 12 consumers in a group can work in parallel; a 13th sits idle. This is why the partition count caps consumer parallelism.
 
-**Delivery guarantees** depend on when you commit the offset:
-- Commit, then process: crash in between and messages are lost (**at most once**).
-- Process, then commit: crash in between and messages are reprocessed (**at least once**, the default). Make processing idempotent.
-- **Exactly once**: an **idempotent producer** (the broker drops duplicate retries using a producer ID and sequence numbers) plus **transactions** that write output and the consumer's offset together.
+A consumer's state is just **one offset per partition**, stored in an internal Kafka topic. That is cheap and lets a consumer **rewind** and reprocess (after fixing a bug, for instance) by resetting its offsets. If a consumer dies or a new one joins, the group **rebalances**: partitions are reassigned, and the new owner resumes from the last committed offset. Data is kept by time or size (7 days by default), independent of whether anyone has read it.
 
-%%seq At-least-once: processing before committing means a crash causes a repeat, not a loss.
-Consumer > Broker : fetch from offset 100
-Broker -> Consumer : messages 100 to 149
-Consumer > Consumer : process 100 to 149
-Consumer > Broker : commit offset 150
-Consumer > Consumer : crash before commit = reprocess 100 to 149
+### Delivery guarantees
+What happens on a crash depends on when the consumer commits its offset relative to processing.
+
+%%matrix Delivery guarantees depend on the order of processing and committing, and on what the producer does.
+Approach | Lost on crash? | Duplicated on crash? | Extra requirement
+Commit, then process | yes, at most once | no | none
+Process, then commit | no | yes, at least once (default) | idempotent processing
+Transactions, read-process-write | no | no, exactly once within Kafka | idempotent producer, transactional offsets
+%%
+
+- **Commit, then process**: crash in between and those messages are never processed (**at most once**).
+- **Process, then commit**: crash in between and the messages are processed again by whoever takes over (**at least once**, the default). Make processing idempotent: an upsert keyed by message ID, or a "processed IDs" table checked in the same database transaction.
+- **Exactly once** within Kafka: an **idempotent producer** (the broker drops duplicate retries using a producer ID and sequence numbers) plus **transactions** that write the output messages and the consumer's new offsets atomically. If the side effect is outside Kafka (sending an email, charging a card), you are back to at-least-once plus idempotency on that external system.
+
+%%seq At least once: processing before committing means a crash causes a repeat, never a loss.
+Consumer A > Broker : fetch partition 3 from offset 100
+Broker -> Consumer A : messages 100 to 149
+Consumer A > Database : process 100 to 149 (upsert by message ID)
+Consumer A > Consumer A : crash before committing offset 150
+Broker > Consumer B : rebalance: partition 3 is yours
+Consumer B > Broker : fetch from last committed offset 100
+Broker -> Consumer B : messages 100 to 149 again
+Consumer B > Database : upserts are no-ops for 100 to 149
+Consumer B > Broker : commit offset 150
 %%
 
 ## Replication
-Each partition has a **leader** and followers on other brokers (replication factor 3 is common). Producers write to the leader; followers copy from it. The **in-sync replicas (ISR)** are the followers keeping up. A message is **committed** once every ISR member has it, and only committed messages are given to consumers. With `acks=all` the producer waits for that; with `min.insync.replicas = 2` the partition refuses writes if fewer than 2 replicas are in sync, so an acknowledged write is never on just one machine. With f + 1 replicas, Kafka tolerates f failures without losing committed data. If every in-sync replica dies, Kafka by default waits for one to come back rather than electing an out-of-date replica (unclean election trades data loss for uptime).
+Each partition has a **leader** and followers on other brokers (replication factor 3 is common). Producers write to the leader; followers fetch from it, just like consumers. The **in-sync replicas (ISR)** are the replicas that are keeping up (within `replica.lag.time.max.ms`, 30 s by default). A message is **committed** once every ISR member has it, and only committed messages are given to consumers, so a consumer never sees a message that could later disappear in a failover.
 
-**Log compaction** is the alternative to deleting by age: Kafka keeps at least the latest value for each key, so a compacted topic is a complete, replayable snapshot of current state, which is Kreps' table and log duality in practice.
+With `acks=all` the producer waits for commitment; with `min.insync.replicas = 2` the partition refuses writes if fewer than 2 replicas are in sync, so an acknowledged write is never on just one machine. With f + 1 in-sync replicas, Kafka tolerates f failures without losing committed data. If the leader fails, the controller picks a new leader from the ISR. If every in-sync replica dies, Kafka by default waits for one to come back rather than electing an out-of-date replica; enabling **unclean leader election** trades possible data loss for uptime.
 
-> Takeaway: a Kafka topic is a set of partitioned, replicated, append-only logs. Order is guaranteed only within a partition, so choose the key so that messages that must stay ordered share it. Consumers pull and track one offset per partition, giving at-least-once delivery by default and exactly-once with idempotent producers and transactions.
+**Log compaction** is the alternative to deleting by age: Kafka keeps at least the latest value for each key and removes older ones, and a message with a null value (a **tombstone**) deletes the key. A compacted topic is then a complete, replayable snapshot of current state, which is the table and log duality in practice, and how Kafka stores consumer offsets themselves.
 
-?? Kafka guarantees order only within a single partition: each partition is an append-only log, every message gets the next offset, and consumers read it in offset order, with one consumer per partition in a group. There is no order across partitions. Producers choose the partition by hashing the message key, so all messages with the same key (say the same order ID) go to the same partition and stay in order. To keep related events ordered, give them the same key; keyless messages are spread across partitions and lose relative order.
+## Common mistakes
+- **Assuming global order** across a topic and building logic that breaks when events for one entity land in different partitions.
+- **Too few partitions**, capping consumer parallelism, then changing the count and breaking key order.
+- **`acks=1` for important data**, so a leader crash loses acknowledged writes.
+- **Non-idempotent consumers** with at-least-once delivery, causing double charges or double emails.
+- **Treating Kafka as a queue with per-message acknowledgement**: a slow message blocks its whole partition behind it.
+
+## In an interview
+State the guarantee precisely: "Kafka orders messages within a partition; I will key by order ID so each order's events stay in order." Then cover partitions for scale, consumer groups for parallelism, replication with `acks=all` and `min.insync.replicas=2`, and at-least-once delivery with idempotent consumers. Size partitions from throughput per consumer.
+
+> Takeaway: a Kafka topic is a set of partitioned, replicated, append-only logs. Order is guaranteed only within a partition, so choose the key so that messages that must stay ordered share it, and fix the partition count early. Consumers pull and track one offset per partition, giving at-least-once delivery by default and exactly-once within Kafka with idempotent producers and transactions.
+
+?? Kafka guarantees order only within a single partition: each partition is an append-only log, every message gets the next offset, the idempotent producer keeps retried batches in sequence, and consumers read a partition in offset order, with exactly one consumer per partition in a group. There is no order across partitions of a topic. Producers choose the partition by hashing the message key, so all messages with the same key (say the same order ID) go to the same partition and stay in order relative to each other. To keep related events ordered, give them the same key and do not change the partition count; keyless messages are spread across partitions and lose relative order.

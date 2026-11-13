@@ -1,0 +1,303 @@
+{
+ "n": "14",
+ "name": "Optimization for ML",
+ "lessons": [
+  {
+   "id": "14.01",
+   "t": "Gradient descent and convergence",
+   "n": [
+    "Gradient descent repeats $x_{k+1} = x_k - \\eta\\nabla f(x_k)$; on a quadratic each Hessian eigendirection shrinks by a factor $|1 - \\eta\\lambda_i|$ per step.",
+    "Stability needs $\\eta < 2/L$, where $L$ is the largest curvature; the safe textbook choice is $\\eta = 1/L$.",
+    "Convex smooth problems converge at $O(1/k)$; strongly convex ones converge linearly, roughly $(1 - 1/\\kappa)^k$, so iterations scale with the condition number $\\kappa = L/\\mu$.",
+    "Ill-conditioning, not dimension, is what makes plain gradient descent slow; rescaling features or preconditioning attacks $\\kappa$ directly.",
+    "Stochastic gradients add noise, so a constant step size only reaches a neighbourhood of the optimum whose size scales with $\\eta$; that is why schedules decay it (lesson 14.04)."
+   ],
+   "a": "## Where this module sits\nLesson 09.08 found optima by setting gradients to zero and 07.01 showed how the Hessian describes curvature. Real models have millions of parameters and no closed-form solution, so they are trained by iterative methods. This module explains how those methods behave: why a learning rate diverges, why momentum and Adam help, why schedules exist and when second-order information pays. The Deep Learning course applies them inside networks; here the focus is the maths that predicts their behaviour.\n\n## The update and the quadratic model\nGradient descent takes a step against the gradient:\n\n$$x_{k+1} = x_k - \\eta\\,\\nabla f(x_k).$$\n\nNear a minimum $x^\\star$, any smooth function looks like a quadratic $f(x) \\approx f(x^\\star) + \\tfrac12 (x - x^\\star)^\\top H (x - x^\\star)$. Write the error $e_k = x_k - x^\\star$ in the eigenbasis of $H$ with eigenvalues $\\lambda_1 \\ge \\dots \\ge \\lambda_d > 0$. The update becomes $e_{k+1} = (I - \\eta H)e_k$, so each eigencomponent evolves independently:\n\n$$e_{k+1}^{(i)} = (1 - \\eta\\lambda_i)\\,e_k^{(i)}.$$\n\nEverything about gradient descent on a quadratic follows from this line:\n- Component $i$ shrinks if $|1 - \\eta\\lambda_i| < 1$, that is $0 < \\eta < 2/\\lambda_i$. The tightest constraint comes from the largest eigenvalue $L = \\lambda_1$: **$\\eta < 2/L$ or the iterates diverge** along the sharpest direction.\n- Between $1/\\lambda_i$ and $2/\\lambda_i$ the component overshoots and oscillates in sign while still shrinking: the zig-zag across a narrow valley.\n- The flattest direction, $\\mu = \\lambda_d$, shrinks by $1 - \\eta\\mu$, which is close to 1 when $\\eta$ must be small to keep the sharp direction stable.\n\n%%flow One gradient step on a quadratic, seen in the Hessian's eigenbasis: each direction is a separate one-dimensional problem.\nError e_k -(rotate into eigenbasis)-> Components e_i -(multiply by 1 - eta lambda_i)-> *Contract or diverge -(rotate back)-> Error e_k+1\n%%\n\n## Condition number sets the speed\nThe **condition number** $\\kappa = L/\\mu$ measures how stretched the bowl is. With $\\eta = 1/L$, the slow direction contracts by $1 - 1/\\kappa$ per step, so reaching accuracy $\\varepsilon$ takes about $\\kappa\\log(1/\\varepsilon)$ iterations. The best fixed step, $\\eta = 2/(L+\\mu)$, balances the fastest and slowest directions and gives the rate $\\frac{\\kappa-1}{\\kappa+1}$; it changes the constant, not the scaling with $\\kappa$.\n\nThe general results, for $L$-smooth $f$ (gradient Lipschitz with constant $L$) and $\\eta = 1/L$:\n\n| Problem class | Guarantee after k steps | Steps to accuracy epsilon\n| Convex, L-smooth | $f(x_k) - f^\\star \\le \\frac{L\\lVert x_0 - x^\\star\\rVert^2}{2k}$ | $O(1/\\varepsilon)$\n| $\\mu$-strongly convex, L-smooth | $\\lVert e_k\\rVert \\le (1 - 1/\\kappa)^k\\lVert e_0\\rVert$ | $O(\\kappa\\log(1/\\varepsilon))$\n| Non-convex, L-smooth | $\\min_{j<k}\\lVert\\nabla f(x_j)\\rVert^2 = O(1/k)$ | finds a stationary point, not a minimum\n\n! Example: a stretched bowl, $f(x, y) = \\tfrac12(x^2 + 100y^2)$\n! The Hessian is $\\mathrm{diag}(1, 100)$: $L = 100$, $\\mu = 1$, $\\kappa = 100$.\n! Stability requires $\\eta < 2/100 = 0.02$. At $\\eta = 0.021$ the $y$ component is multiplied by $1 - 2.1 = -1.1$ every step and blows up.\n! At $\\eta = 0.01$ the $y$ error is wiped out in one step ($1 - 1 = 0$), but $x$ shrinks by only 0.99 per step: $\\ln(0.01)/\\ln(0.99) \\approx 458$ steps to cut it by 100x.\n! Rescaling $y$ by 10 (so both curvatures are 1) makes $\\kappa = 1$, and a single step with $\\eta = 1$ lands on the minimum.\n\n```\nimport numpy as np\nH = np.diag([1.0, 100.0])\nx = np.array([1.0, 1.0])\nfor k in range(500):\n    x = x - 0.01 * (H @ x)          # grad of 0.5 x^T H x is H x\nprint(x)                             # ~[0.0066, 0.0]: the flat direction lags\n```\n\n## Where conditioning comes from in ML\nFor least squares, $H = X^\\top X/n$, so the eigenvalues are the variances of the data along its principal axes (lesson 08.03). Features on wildly different scales (age in years next to income in dollars) or strongly correlated features give large $\\kappa$. Standardising inputs, whitening and batch normalisation are, in part, ways to shrink $\\kappa$. Preconditioning generalises this: step with $P^{-1}\\nabla f$ for a matrix $P$ that approximates $H$. Newton's method (14.05) uses $P = H$; Adam (14.03) uses a diagonal estimate.\n\n## Stochastic gradients\nTraining uses mini-batch gradients $g_k = \\nabla f(x_k) + \\xi_k$ with zero-mean noise $\\xi_k$. The noise does not vanish at the optimum, so with a constant step size SGD settles into a ball around $x^\\star$ whose size grows with $\\eta$ and the gradient variance, and shrinks with batch size. Reaching the optimum needs a decreasing step (classical conditions: $\\sum\\eta_k = \\infty$, $\\sum\\eta_k^2 < \\infty$), which motivates the schedules of lesson 14.04. In deep networks the picture has a twist: training often runs at the **edge of stability**, where the sharpest curvature rises until it sits near $2/\\eta$ and the loss decreases non-monotonically, so the quadratic analysis is a guide to the limits rather than an exact prediction.\n\n> Takeaway: on any smooth problem the largest curvature caps the learning rate at $2/L$ and the smallest curvature then sets the speed, so gradient descent needs on the order of $\\kappa$ steps per digit of accuracy; fix the conditioning (scaling, preconditioning) before tuning anything else.",
+   "q": "You train linear regression by gradient descent on two features: one in [0, 1], the other in [0, 1000]. Any learning rate above 1e-6 diverges, and at 1e-6 the weight of the first feature barely moves after 10,000 steps. Explain both symptoms with the eigenvalue picture and give the fix.",
+   "s": "The Hessian of mean squared error is $X^\\top X/n$, whose eigenvalues are roughly the second moments of the features: about 0.33 for the [0, 1] feature and about $3\\times10^5$ for the [0, 1000] feature. Stability requires $\\eta < 2/L \\approx 6.7\\times10^{-6}$, so larger rates diverge along the large-scale feature's direction. At $\\eta = 10^{-6}$ the small-scale direction contracts by $1 - 10^{-6}\\cdot0.33$ per step, so after 10,000 steps it has moved only about 0.3% of the way: the condition number is around $10^6$. Standardise both features (zero mean, unit variance) so the curvatures are comparable; $\\kappa$ drops to near 1 (or to whatever the feature correlation implies), a step size near 1 becomes stable, and convergence takes tens of steps. Centring also removes the large coupling with the intercept.",
+   "r": [
+    [
+     "Boyd and Vandenberghe: Convex Optimization",
+     "https://web.stanford.edu/~boyd/cvxbook/",
+     "Free book; chapter 9.3 analyses gradient descent and the role of the condition number."
+    ],
+    [
+     "Tibshirani: Convex Optimization lecture notes, gradient descent",
+     "https://www.stat.cmu.edu/~ryantibs/convexopt/lectures/grad-descent.pdf",
+     "Convergence proofs for smooth and strongly convex problems in a few slides."
+    ],
+    [
+     "Bottou, Curtis and Nocedal: Optimization Methods for Large-Scale Machine Learning",
+     "https://arxiv.org/abs/1606.04838",
+     "SGD convergence with constant and diminishing step sizes (section 4)."
+    ],
+    [
+     "Cohen et al.: Gradient Descent on Neural Networks Typically Occurs at the Edge of Stability",
+     "https://arxiv.org/abs/2103.00065",
+     "How real networks behave relative to the 2/L limit."
+    ]
+   ],
+   "k": [
+    "condition number",
+    "convergence"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "learning-rate-stability-and-convergence-bounds",
+    "vanilla-gradient-descent",
+    "batch-vs-stochastic-vs-mini-batch-gd",
+    "gradient-descent-on-non-convex-loss"
+   ]
+  },
+  {
+   "id": "14.02",
+   "t": "Momentum and Nesterov acceleration",
+   "n": [
+    "Heavy-ball momentum keeps a velocity, $v_{k+1} = \\beta v_k - \\eta\\nabla f(x_k)$, $x_{k+1} = x_k + v_{k+1}$: consistent gradients accumulate, oscillating ones cancel.",
+    "On a quadratic, tuned momentum contracts at $(\\sqrt\\kappa - 1)/(\\sqrt\\kappa + 1)$, so iterations scale with $\\sqrt\\kappa$ instead of $\\kappa$: 10x fewer steps at $\\kappa = 100$.",
+    "In steady state the effective step is $\\eta/(1-\\beta)$; $\\beta = 0.9$ multiplies the step by 10 and averages roughly the last 10 gradients.",
+    "Nesterov evaluates the gradient at the look-ahead point $x_k + \\beta v_k$, which corrects overshoot earlier and gives the optimal $O(1/k^2)$ rate for smooth convex problems.",
+    "Frameworks write momentum differently (PyTorch: $b \\leftarrow \\mu b + g$, $p \\leftarrow p - \\eta b$); the forms are equivalent up to a rescaling of the learning rate."
+   ],
+   "a": "## The problem momentum solves\nLesson 14.01 showed that gradient descent on a stretched bowl zig-zags across the sharp direction and crawls along the flat one, needing about $\\kappa$ steps per digit of accuracy. The gradient alone cannot fix this: it points mostly across the valley. Momentum adds memory. Gradient components that keep the same sign from step to step (along the valley floor) build up speed; components that flip sign (across the valley) cancel.\n\n## Heavy-ball dynamics\nPolyak's heavy-ball method keeps a velocity:\n\n$$v_{k+1} = \\beta v_k - \\eta\\nabla f(x_k), \\qquad x_{k+1} = x_k + v_{k+1}.$$\n\nEquivalently, $x_{k+1} = x_k - \\eta\\nabla f(x_k) + \\beta(x_k - x_{k-1})$: a gradient step plus a fraction $\\beta$ of the previous displacement. The physical picture is a ball with mass rolling on the loss surface with friction $1-\\beta$.\n\nTwo quick consequences:\n- If the gradient is constant, $g$, the velocity converges to $-\\eta g/(1-\\beta)$. The **effective learning rate is $\\eta/(1-\\beta)$**: 10x at $\\beta = 0.9$, 100x at $\\beta = 0.99$. Changing $\\beta$ without adjusting $\\eta$ changes the step size.\n- The velocity is an exponential moving average of past gradients with a horizon of about $1/(1-\\beta)$ steps, which also averages out mini-batch noise.\n\n%%flow Momentum filters the gradient sequence: persistent directions are amplified, alternating ones cancel.\nGradient g_k -(scale by eta)-> Velocity update -(add beta times v_k)-> *Velocity v_k+1 -(add to x)-> New iterate\n%%\n\n## Why it is faster: the quadratic analysis\nOn a quadratic, each eigendirection with curvature $\\lambda$ now follows a two-term linear recurrence, $e_{k+1} = (1 + \\beta - \\eta\\lambda)e_k - \\beta e_{k-1}$. Its behaviour is set by the roots of $z^2 - (1 + \\beta - \\eta\\lambda)z + \\beta = 0$. When the roots are complex, both have magnitude exactly $\\sqrt\\beta$, regardless of $\\lambda$. Choosing\n\n$$\\eta = \\frac{4}{(\\sqrt L + \\sqrt\\mu)^2}, \\qquad \\beta = \\left(\\frac{\\sqrt\\kappa - 1}{\\sqrt\\kappa + 1}\\right)^2$$\n\nputs every direction, from $\\mu$ to $L$, in that regime, giving a contraction of\n\n$$\\sqrt\\beta = \\frac{\\sqrt\\kappa - 1}{\\sqrt\\kappa + 1} \\approx 1 - \\frac{2}{\\sqrt\\kappa}\\ \\text{per step.}$$\n\nThe iteration count drops from order $\\kappa$ to order $\\sqrt\\kappa$. The price is oscillation: the error spirals rather than decaying monotonically, and the loss can rise temporarily.\n\n| Method | Rate per step (quadratic) | Steps for 1e-6 at kappa = 100 | Steps for 1e-6 at kappa = 10,000\n| Gradient descent, best fixed step | $(\\kappa-1)/(\\kappa+1)$ | about 690 | about 69,000\n| Heavy ball, tuned | $(\\sqrt\\kappa-1)/(\\sqrt\\kappa+1)$ | about 69 | about 690\n\n! Example: the bowl from lesson 14.01, $\\kappa = 100$\n! Gradient descent with the best fixed step contracts by $99/101 = 0.980$ per step: $\\ln(10^{-6})/\\ln(0.980) \\approx 690$ steps to reduce the error a millionfold.\n! Tuned momentum uses $\\sqrt\\kappa = 10$: $\\beta = (9/11)^2 = 0.669$, $\\eta = 4/(10 + 1)^2 = 0.033$, and contracts by $9/11 = 0.818$ per step: about 69 steps.\n! Note that $\\eta = 0.033$ exceeds the plain-GD stability limit of $2/L = 0.02$. Momentum's stability region is larger: $\\eta < 2(1+\\beta)/L$.\n\n## Nesterov's accelerated gradient\nNesterov's method computes the gradient where momentum is about to take you, not where you are:\n\n$$v_{k+1} = \\beta v_k - \\eta\\nabla f(x_k + \\beta v_k), \\qquad x_{k+1} = x_k + v_{k+1}.$$\n\nIf the velocity is carrying the iterate up the far wall of the valley, the look-ahead gradient already points back and brakes earlier. For general smooth convex functions (not just quadratics), with an increasing schedule $\\beta_k = (k-1)/(k+2)$, Nesterov proved $f(x_k) - f^\\star \\le 2L\\lVert x_0 - x^\\star\\rVert^2/(k+1)^2$: $O(1/k^2)$ against gradient descent's $O(1/k)$, and no first-order method can do better in the worst case. Heavy ball has no such guarantee outside quadratics and can even fail to converge on some smooth convex functions.\n\n## Momentum in deep learning frameworks\nPyTorch's `torch.optim.SGD` stores a buffer $b \\leftarrow \\mu b + g$ and steps $p \\leftarrow p - \\eta b$; with `nesterov=True` it steps with $g + \\mu b$ instead, a reparameterised Nesterov that only needs the gradient at the current point. Multiply out and this is heavy ball with the learning rate folded inside the buffer; the two are equivalent for a constant $\\eta$ but differ when a schedule changes $\\eta$ mid-run.\n\n```\ndef sgd_momentum(params, grads, bufs, lr=0.1, mu=0.9, nesterov=False):\n    for p, g, b in zip(params, grads, bufs):\n        b *= mu; b += g                       # b = mu * b + g\n        p -= lr * (g + mu * b if nesterov else b)\n```\n\nSutskever et al. (2013) showed that momentum with a well-chosen $\\beta$ (often ramped up to 0.99) is what made SGD competitive for training deep and recurrent networks. In practice $\\beta = 0.9$ is the near-universal default, and with mini-batch noise the benefit is partly acceleration and partly averaging; when the gradient noise dominates, the theoretical $\\sqrt\\kappa$ speed-up shrinks. The Distill article in the sources animates all of this.\n\n> Takeaway: momentum turns gradient descent into a damped oscillator whose tuned rate depends on $\\sqrt\\kappa$ instead of $\\kappa$; remember that it multiplies the effective step by $1/(1-\\beta)$, and prefer Nesterov's look-ahead form when you want guarantees beyond quadratics.",
+   "q": "A model trains well with plain SGD at learning rate 0.1. A colleague switches on momentum 0.9 with the same learning rate and the loss immediately diverges. Explain why, and what learning rate would be a sensible first try with momentum.",
+   "s": "With momentum the steady-state step is $\\eta/(1-\\beta)$, so at $\\beta = 0.9$ the same $\\eta = 0.1$ behaves like a plain step of about 1.0, ten times larger. If 0.1 was near the stability edge for the sharpest directions, ten times that is far past it and the iterates blow up. The larger stability region of heavy ball ($\\eta < 2(1+\\beta)/L$) only buys a factor of about 1.9, not 10. A sensible first try keeps the effective step similar: $\\eta \\approx 0.1\\cdot(1 - 0.9) = 0.01$, then tune upward. The same logic says that changing beta in any recipe should come with a learning-rate retune, since beta and eta together set the effective step.",
+   "r": [
+    [
+     "Goh: Why Momentum Really Works (Distill)",
+     "https://distill.pub/2017/momentum/",
+     "Interactive derivation of the quadratic analysis, the sqrt(kappa) rate and the oscillation regimes."
+    ],
+    [
+     "Sutskever et al.: On the importance of initialization and momentum in deep learning",
+     "https://proceedings.mlr.press/v28/sutskever13.html",
+     "Classical versus Nesterov momentum in deep networks, and momentum schedules."
+    ],
+    [
+     "PyTorch: torch.optim.SGD",
+     "https://pytorch.org/docs/stable/generated/torch.optim.SGD.html",
+     "The exact momentum, dampening and Nesterov update the framework implements."
+    ]
+   ],
+   "k": [
+    "momentum",
+    "acceleration"
+   ],
+   "x": [
+    "NumPy",
+    "PyTorch"
+   ],
+   "p": [
+    "classical-momentum",
+    "nesterov-momentum",
+    "custom-sgd-with-momentum",
+    "optimizer-showdown"
+   ]
+  },
+  {
+   "id": "14.03",
+   "t": "Adaptive methods: AdaGrad, RMSProp, Adam, AdamW",
+   "n": [
+    "Adaptive methods divide each coordinate's step by a running estimate of its gradient scale, a diagonal preconditioner learned from gradients alone.",
+    "AdaGrad sums squared gradients forever, which suits sparse features but shrinks the step towards zero; RMSProp uses an exponential average instead, so the step stays alive.",
+    "Adam combines momentum ($m$) with RMSProp ($v$), bias-corrects both, and steps $\\eta\\,\\hat m/(\\sqrt{\\hat v} + \\epsilon)$; each step is roughly bounded by $\\eta$ per coordinate.",
+    "L2 regularisation inside Adam is scaled down for parameters with large gradients; AdamW decouples weight decay as $\\theta \\leftarrow \\theta(1 - \\eta\\lambda)$, which is what modern training uses.",
+    "Costs and caveats: two extra states per parameter (8 bytes each in fp32), possible non-convergence on adversarial problems, and $\\epsilon$ and $\\beta_2$ matter more than their defaults suggest."
+   ],
+   "a": "## Per-coordinate step sizes\nMomentum (14.02) still uses one learning rate for every parameter. But the parameters of a network see gradients of very different sizes: embedding rows for rare tokens get a gradient once in a thousand steps, the final layer bias gets one every step, and layers differ by orders of magnitude in typical gradient norm. Lesson 14.01 showed that the ideal fix is preconditioning, stepping with $P^{-1}\\nabla f$. Adaptive methods build a **diagonal** $P$ from the history of squared gradients, one scale per coordinate, at $O(d)$ cost. The AI Research course walks through Adam's code; this lesson focuses on why each piece exists. Below, all operations on vectors are element-wise, and $g_t$ is the mini-batch gradient at step $t$.\n\n## AdaGrad and RMSProp\n**AdaGrad** (Duchi, Hazan and Singer, 2011) accumulates squared gradients:\n\n$$G_t = G_{t-1} + g_t^2, \\qquad \\theta_{t+1} = \\theta_t - \\frac{\\eta}{\\sqrt{G_t} + \\epsilon}\\,g_t.$$\n\nRarely active coordinates have small $G$ and so keep large steps: good for sparse features in linear models and for word embeddings. The flaw is that $G$ only grows, so for dense gradients the effective rate decays like $1/\\sqrt t$ and training can stall long before the optimum of a non-convex network.\n\n**RMSProp** (Hinton's lecture notes, 2012) replaces the sum with an exponential moving average, so old gradients are forgotten:\n\n$$v_t = \\rho v_{t-1} + (1-\\rho) g_t^2, \\qquad \\theta_{t+1} = \\theta_t - \\frac{\\eta}{\\sqrt{v_t} + \\epsilon}\\,g_t,$$\n\nwith $\\rho$ around 0.9 to 0.99. The step now tracks the recent gradient scale and does not die out.\n\n## Adam\nAdam (Kingma and Ba, 2014) adds a momentum-style average of the gradient itself:\n\n$$m_t = \\beta_1 m_{t-1} + (1-\\beta_1)g_t, \\qquad v_t = \\beta_2 v_{t-1} + (1-\\beta_2)g_t^2,$$\n$$\\hat m_t = \\frac{m_t}{1-\\beta_1^t}, \\quad \\hat v_t = \\frac{v_t}{1-\\beta_2^t}, \\quad \\theta_{t+1} = \\theta_t - \\eta\\,\\frac{\\hat m_t}{\\sqrt{\\hat v_t} + \\epsilon}.$$\n\nDefaults: $\\beta_1 = 0.9$, $\\beta_2 = 0.999$, $\\epsilon = 10^{-8}$.\n\nWhy the bias correction: both averages start at zero, so early on they underestimate. After $t$ steps of a constant gradient, $m_t = (1 - \\beta_1^t)g$; dividing by $1 - \\beta_1^t$ recovers $g$ exactly. Without the correction, $v$ (with $\\beta_2 = 0.999$) is tiny for the first thousand steps and the update would be enormous.\n\n! Example: Adam's very first step\n! At $t = 1$: $m_1 = 0.1\\,g$ and $v_1 = 0.001\\,g^2$. Bias correction gives $\\hat m_1 = g$ and $\\hat v_1 = g^2$.\n! The update is $\\eta\\,g/(|g| + \\epsilon) \\approx \\eta\\cdot\\mathrm{sign}(g)$: every coordinate moves by about $\\eta$, whatever its gradient scale.\n! Without correction it would be $\\eta\\cdot0.1g/\\sqrt{0.001g^2} \\approx 3.2\\eta$ per coordinate, over three times larger, on the step where the curvature is least known.\n\nThat example shows Adam's key property: the ratio $\\hat m/\\sqrt{\\hat v}$ is scale-free and, when gradients are consistent, close to $\\pm1$, so each coordinate moves at most about $\\eta$ per step. The learning rate becomes a step length in parameter units, which makes it far easier to transfer between layers and models than an SGD learning rate. When the gradient's sign keeps flipping, $\\hat m$ shrinks relative to $\\sqrt{\\hat v}$ and the step drops automatically.\n\n%%flow Adam's data flow for one parameter tensor: two moving averages, bias correction, then a scale-free ratio.\nGradient g -(EMA beta1)-> m -(divide by 1 - beta1^t)-> m hat -(ratio)-> *Step = lr x m hat / (sqrt(v hat) + eps)\nGradient g -(square, EMA beta2)-> v -(divide by 1 - beta2^t)-> v hat\n%%\n\n## AdamW: decoupled weight decay\nWith plain SGD, adding $\\frac\\lambda2\\lVert\\theta\\rVert^2$ to the loss and multiplying weights by $(1 - \\eta\\lambda)$ each step are the same thing. With Adam they are not. The L2 gradient $\\lambda\\theta$ goes through the adaptive scaling, so it is divided by $\\sqrt{\\hat v}$: parameters with large gradient history are barely regularised, those with small gradients are regularised heavily. Loshchilov and Hutter's **AdamW** applies the decay outside the adaptive step:\n\n$$\\theta_{t+1} = \\theta_t - \\eta\\left(\\frac{\\hat m_t}{\\sqrt{\\hat v_t} + \\epsilon} + \\lambda\\theta_t\\right).$$\n\nThis gives every weight the same relative shrinkage and makes the best $\\lambda$ largely independent of $\\eta$. AdamW is the default for transformers. PyTorch's `AdamW` uses a default `weight_decay` of 0.01 (typical LLM recipes use 0.1), and biases and normalisation gains are usually excluded from decay. Lesson 14.06 returns to weight decay as regularisation.\n\n## Caveats\n- **Memory.** Adam keeps $m$ and $v$ for every parameter: for a 7-billion-parameter model in fp32 that is $2\\times7\\times10^9\\times4$ bytes = 56 GB of optimizer state, more than the bf16 weights themselves. This drives sharded optimizers and memory-light variants (Adafactor, 8-bit Adam).\n- **$\\epsilon$ is not cosmetic.** Where $\\sqrt{\\hat v}$ is near $\\epsilon$, Adam degrades towards SGD with step $\\eta/\\epsilon$; in low precision a too-small $\\epsilon$ can cause instabilities.\n- **Convergence.** Reddi et al. built convex problems where Adam fails to converge, because $v$ can forget large rare gradients; AMSGrad keeps a running maximum of $v$. In practice a decaying learning rate usually suffices.\n- **Generalisation.** Wilson et al. found tuned SGD with momentum generalising better than adaptive methods on some vision benchmarks; for transformers, adaptive methods are clearly better, partly because gradient scales differ so much between parameter types.\n\n| Method | State per parameter | Step scale | Typical use\n| SGD + momentum | 1 (velocity) | proportional to gradient | CNNs, well-conditioned problems\n| AdaGrad | 1 (sum of squares) | shrinks like $1/\\sqrt t$ | sparse convex problems\n| RMSProp | 1 (EMA of squares) | about $\\eta$ | RL, older RNN recipes\n| Adam / AdamW | 2 (m and v) | about $\\eta$, bias-corrected | transformers, most deep learning\n\n> Takeaway: adaptive methods are cheap diagonal preconditioners that make the learning rate a per-coordinate step length; use AdamW (decoupled weight decay) rather than Adam with L2, and budget two fp32 states per parameter.",
+   "q": "You fine-tune a model with Adam plus an L2 penalty and notice that the large embedding rows for frequent tokens keep growing while rarely seen rows shrink towards zero. Explain the mechanism, and how switching to AdamW changes it.",
+   "s": "With L2 inside Adam, the penalty gradient $\\lambda\\theta$ is added to the data gradient and then divided by $\\sqrt{\\hat v}$. Frequent tokens have large, frequent gradients, so their $\\hat v$ is large and the penalty term is scaled down to almost nothing: their rows are effectively unregularised and grow. Rare tokens get few data gradients, so $\\hat v$ is small and the same penalty is amplified, pulling those rows strongly to zero on every step even though there is little data to oppose it. The regularisation strength therefore depends on gradient statistics rather than being uniform. AdamW applies decay outside the adaptive scaling, $\\theta \\leftarrow \\theta - \\eta\\lambda\\theta$, so every row shrinks by the same fraction per step regardless of its gradient history. You would then retune $\\lambda$, often excluding embeddings, biases and normalisation parameters from decay.",
+   "r": [
+    [
+     "Kingma and Ba: Adam: A Method for Stochastic Optimization",
+     "https://arxiv.org/abs/1412.6980",
+     "The algorithm, the bias-correction argument and default hyperparameters."
+    ],
+    [
+     "Loshchilov and Hutter: Decoupled Weight Decay Regularization",
+     "https://arxiv.org/abs/1711.05101",
+     "Why L2 and weight decay differ under Adam, and AdamW."
+    ],
+    [
+     "Duchi, Hazan and Singer: Adaptive Subgradient Methods (AdaGrad)",
+     "https://jmlr.org/papers/v12/duchi11a.html",
+     "The original per-coordinate method and its regret bounds."
+    ],
+    [
+     "Reddi, Kale and Kumar: On the Convergence of Adam and Beyond",
+     "https://arxiv.org/abs/1904.09237",
+     "Counterexamples to Adam's convergence and the AMSGrad fix."
+    ]
+   ],
+   "k": [
+    "Adam",
+    "weight decay",
+    "preconditioning"
+   ],
+   "x": [
+    "NumPy",
+    "PyTorch"
+   ],
+   "p": [
+    "adam-step",
+    "adamw-decoupled-weight-decay",
+    "adagrad",
+    "rmsprop",
+    "adam-optimizer"
+   ]
+  },
+  {
+   "id": "14.04",
+   "t": "Learning-rate schedules: step, cosine, warmup, one-cycle",
+   "n": [
+    "A constant learning rate trades speed against a noise floor: large $\\eta$ moves fast but stalls in a ball whose size grows with $\\eta$; decaying $\\eta$ shrinks that ball.",
+    "Step decay cuts $\\eta$ by 10x at fixed epochs; cosine decay $\\eta_t = \\eta_{min} + \\tfrac12(\\eta_{max} - \\eta_{min})(1 + \\cos(\\pi t/T))$ needs only the total length $T$.",
+    "Warmup ramps $\\eta$ up over the first hundreds to thousands of steps, because early gradients, Adam's second-moment estimates and large-batch training are least stable at the start.",
+    "One-cycle (warm up to a large peak, then anneal far below the start) and warmup-stable-decay (constant plateau, short final decay) are the two dominant modern shapes.",
+    "Find the peak with an LR range test or a sweep; a schedule cannot rescue a peak learning rate that is 10x off."
+   ],
+   "a": "## Why the learning rate should change\nLesson 14.01 ended with stochastic gradients: at a constant $\\eta$, SGD reaches a neighbourhood of the minimum whose size grows with $\\eta$ and the gradient noise, then bounces around inside it. Large steps make fast progress early, when the loss is far from optimal and the gradient signal dominates the noise; small steps are needed late to settle into the bottom. A **schedule** gets both by changing $\\eta$ over training. It also interacts with stability: the very first steps, from a random initialisation with Adam's moment estimates still empty (14.03), are where a large step most often blows up.\n\nThis lesson covers the shapes and the reasons. The Deep Learning course's training module shows how schedules combine with batch size and gradient clipping in a full training loop, and the AI Research course covers learning-rate decay in its from-scratch network.\n\n%%flow A modern schedule has three phases, each solving a different problem.\nStep 0 -(linear warmup)-> *Peak lr -(hold or decay slowly)-> Main phase -(anneal)-> Final lr ~ 1-10% of peak\n%%\n\n## The common shapes\n| Schedule | Formula or rule | Knobs | Notes\n| Step decay | multiply by $\\gamma$ (often 0.1) at fixed epochs | milestones, $\\gamma$ | classic ResNet recipe: decay at epochs 30, 60, 90\n| Exponential | $\\eta_t = \\eta_0\\gamma^t$ | $\\gamma$ | smooth, but hard to set the end point\n| Cosine | $\\eta_{min} + \\tfrac12(\\eta_{max}-\\eta_{min})(1+\\cos(\\pi t/T))$ | $T$, $\\eta_{min}$ | only needs the total length; spends long near the peak and near the end\n| Linear decay | straight line from peak to (near) zero | $T$ | common for fine-tuning and BERT-style training\n| Warmup-stable-decay | warmup, constant plateau, short decay (10-20% of steps) | plateau length | can extend training by continuing the plateau\n| One-cycle | up to a high peak, then down far below the start | peak, final ratio | super-convergence on vision tasks\n| Cosine with restarts | cosine, then jump back to the peak | cycle length | SGDR; explores several minima\n\n## Warmup\nWarmup increases $\\eta$ linearly from near zero to the peak over the first $W$ steps (commonly a few hundred to a few thousand, or 1-5% of training). Several distinct reasons point the same way:\n- **Large batches.** Goyal et al. trained ResNet-50 with batch 8,192 by scaling the learning rate linearly with batch size; the scaled rate was unstable at the start, and a 5-epoch linear warmup fixed it.\n- **Adam's early statistics.** $\\hat v$ is estimated from very few gradients early on, so the adaptive step has high variance; RAdam derives a rectification that behaves like an automatic warmup.\n- **Transformer architecture.** Post-LayerNorm transformers have large gradients near the output at initialisation and diverge without warmup; moving LayerNorm inside the residual branch (pre-LN) makes training far less sensitive to it.\n- **Sharpness.** Early in training the loss surface is sharp (large $L$), so the $2/L$ limit of 14.01 is low; a short warmup lets curvature fall before the step size rises.\n\n```\nimport math\ndef lr_at(step, peak=3e-4, warmup=500, total=10_000, floor=3e-5):\n    if step < warmup:\n        return peak * (step + 1) / warmup\n    t = (step - warmup) / max(1, total - warmup)          # 0 -> 1\n    return floor + 0.5 * (peak - floor) * (1 + math.cos(math.pi * t))\n```\n\n! Example: reading a cosine schedule\n! Peak $3\\times10^{-4}$, floor $3\\times10^{-5}$, 500 warmup steps, 10,000 total steps.\n! At step 250 (mid-warmup) the rate is about $1.5\\times10^{-4}$, half the peak.\n! At step 5,250, halfway through the decay, $\\cos(\\pi/2) = 0$, so $\\eta = 3\\times10^{-5} + 0.5\\cdot2.7\\times10^{-4} = 1.65\\times10^{-4}$.\n! At step 9,000, $t = 0.895$ and $\\cos(0.895\\pi) = -0.946$, so $\\eta \\approx 3.7\\times10^{-5}$: the last 10% of training runs within 25% of the floor, which is where much of the final loss drop happens.\n\n## One-cycle and warmup-stable-decay\nLeslie Smith's **one-cycle** policy raises the rate from a low value to a high peak over roughly the first 30-45% of training, then brings it down to far below the starting value (PyTorch's `OneCycleLR` defaults start at peak/25 and end four orders of magnitude below that), with momentum moving in the opposite direction. The high-rate middle acts as a regulariser and lets training finish in fewer epochs (\"super-convergence\"). The peak is chosen with an **LR range test**: run a short training while increasing $\\eta$ exponentially, plot loss against $\\eta$, and pick a value somewhat below where the loss starts to rise.\n\n**Warmup-stable-decay (WSD)**, popular for LLM pre-training, keeps the peak rate constant for most of training and decays only in a short final phase. Because the decay is short, checkpoints from the plateau can be decayed at any point to produce a finished model, which makes it cheap to train several model sizes or data budgets from one run, something cosine cannot do since its shape depends on $T$ fixed in advance.\n\n## Practical rules\n- Tune the peak first. A sweep over 3x steps (1e-4, 3e-4, 1e-3) matters more than the schedule's shape; between cosine, linear and WSD with good peaks, the final losses are usually close.\n- End low. Decaying to near zero, or to 1-10% of the peak, consistently beats stopping at a high rate.\n- When batch size changes, the peak usually needs to change too: roughly linearly for SGD at moderate batch sizes, closer to square-root scaling for Adam, and neither holds beyond the critical batch size.\n- Schedules interact with momentum's effective step $\\eta/(1-\\beta)$ (14.02) and with weight decay, whose per-step shrinkage $\\eta\\lambda$ (14.03) falls along with $\\eta$.\n\n> Takeaway: warm up to protect the unstable first steps, spend most of training at a well-tuned peak, and anneal to a small fraction of it at the end; the shape matters less than getting the peak right and actually decaying.",
+   "q": "Your cosine-scheduled run is configured for 100k steps, but you have to stop at 60k. A colleague suggests simply taking the 60k checkpoint. Why is that checkpoint likely worse than a run configured for 60k from the start, and how would a warmup-stable-decay schedule have avoided the problem?",
+   "s": "At 60% of a cosine schedule the learning rate is still about $\\eta_{min} + 0.5(\\eta_{max}-\\eta_{min})(1+\\cos(0.6\\pi)) \\approx 35\\%$ of the peak. The model is therefore still bouncing around in the large noise ball that a high learning rate produces; the annealing phase, where the rate falls towards the floor and the loss drops substantially as iterates settle, never happened. A run configured for 60k would have spent its final steps at a low rate and reached a lower loss. Under warmup-stable-decay the rate is constant on the plateau and decay is a short separate phase, so you can take the 60k plateau checkpoint and run a decay phase of 10-20% of the steps, getting nearly the result of a dedicated 60k run. The general lesson: with cosine, the schedule commits you to $T$ in advance; WSD decouples the stopping decision from the schedule.",
+   "r": [
+    [
+     "Goyal et al.: Accurate, Large Minibatch SGD: Training ImageNet in 1 Hour",
+     "https://arxiv.org/abs/1706.02677",
+     "The linear scaling rule and gradual warmup for large batches."
+    ],
+    [
+     "Loshchilov and Hutter: SGDR: Stochastic Gradient Descent with Warm Restarts",
+     "https://arxiv.org/abs/1608.03983",
+     "The cosine schedule and restarts."
+    ],
+    [
+     "Smith: A disciplined approach to neural network hyper-parameters, part 1",
+     "https://arxiv.org/abs/1803.09820",
+     "The LR range test, one-cycle policy and cyclical momentum."
+    ],
+    [
+     "Hu et al.: MiniCPM: Unveiling the Potential of Small Language Models",
+     "https://arxiv.org/abs/2404.06395",
+     "Warmup-stable-decay schedules and why they suit scaling experiments."
+    ]
+   ],
+   "k": [
+    "learning rate",
+    "warmup"
+   ],
+   "x": [
+    "PyTorch"
+   ],
+   "p": [
+    "linear-warmup",
+    "cosine-annealing-with-warm-restarts",
+    "lr-range-test-and-one-cycle-policy",
+    "generate-warmup-stable-decay-schedule",
+    "learning-rate-sweep"
+   ]
+  },
+  {
+   "id": "14.05",
+   "t": "Second-order and quasi-Newton methods",
+   "n": [
+    "Newton's method steps $-H^{-1}\\nabla f$, the exact minimiser of the local quadratic model; it is affine-invariant and converges quadratically near a minimum (the number of correct digits doubles each step).",
+    "Its costs are $O(d^2)$ memory and $O(d^3)$ time per step, and on non-convex functions an indefinite Hessian can send it towards saddles or maxima, so it needs damping or a trust region.",
+    "Line searches pick the step length: backtracking until the Armijo sufficient-decrease condition holds, plus the Wolfe curvature condition for quasi-Newton methods.",
+    "BFGS builds an inverse-Hessian approximation from gradient differences via the secant condition $H_{k+1}s_k = y_k$; L-BFGS keeps only the last $m$ pairs ($O(md)$ memory).",
+    "L-BFGS is the default for smooth, deterministic, moderate-size problems (logistic regression, scientific fitting); mini-batch noise breaks its curvature pairs, so deep learning mostly uses first-order methods."
+   ],
+   "a": "## Using curvature directly\nFirst-order methods (14.01 to 14.03) see only the slope and pay for curvature with iterations: order $\\kappa$ steps for gradient descent, $\\sqrt\\kappa$ with momentum. Adam uses a crude diagonal curvature estimate. Second-order methods use the Hessian, or an approximation of it, to choose both the direction and the length of each step.\n\n## Newton's method\nMinimise the second-order Taylor model at $x_k$ (lesson 09.04):\n\n$$f(x_k + p) \\approx f(x_k) + \\nabla f^\\top p + \\tfrac12 p^\\top H p \\quad\\Rightarrow\\quad p = -H^{-1}\\nabla f(x_k).$$\n\nOn an exact quadratic this lands on the minimum in one step, whatever $\\kappa$ is. More generally Newton's method is **affine-invariant**: rescaling or rotating the variables changes nothing, which is exactly the ill-conditioning that cripples gradient descent. Near a minimum with positive-definite Hessian, convergence is **quadratic**: $\\lVert e_{k+1}\\rVert \\le C\\lVert e_k\\rVert^2$.\n\n! Example: Newton on $f(x) = e^x - 2x$, minimum at $\\ln 2 = 0.693147$\n! Here $f'(x) = e^x - 2$ and $f''(x) = e^x$, so the update is $x \\leftarrow x - (e^x - 2)/e^x = x - 1 + 2e^{-x}$.\n! From $x_0 = 0$: $x_1 = 1$ (error 0.31), $x_2 = 0.7358$ (error 0.043), $x_3 = 0.69404$ (error 0.0009), $x_4 = 0.6931476$ (error $4\\times10^{-7}$).\n! Each error is roughly half the square of the previous one: the digits double, the signature of quadratic convergence.\n\nThe problems:\n- **Cost.** Storing $H$ takes $d^2$ numbers and solving with it about $d^3/3$ flops. At $d = 10^4$ that is 800 MB in fp64 and around $3\\times10^{11}$ flops per step; at $d = 10^9$ it is impossible.\n- **Non-convexity.** If $H$ has negative eigenvalues, $-H^{-1}\\nabla f$ may point uphill or towards a saddle point; Newton's method is attracted to any stationary point. Fixes: damping ($H + \\lambda I$, Levenberg-Marquardt), trust regions (minimise the model only within a radius), or the Gauss-Newton approximation, which is positive semi-definite by construction for least-squares losses.\n- **Far from the optimum**, the full step can overshoot, which is why it is combined with a line search.\n\n## Line search\nGiven a descent direction $p$ (with $\\nabla f^\\top p < 0$), a line search chooses a step length $t$. Exact minimisation along the line is wasteful; instead accept any $t$ satisfying:\n1. **Armijo (sufficient decrease)**: $f(x + tp) \\le f(x) + c_1 t\\,\\nabla f(x)^\\top p$, with $c_1$ small (typically $10^{-4}$).\n2. **Curvature (Wolfe)**: $\\nabla f(x + tp)^\\top p \\ge c_2\\,\\nabla f(x)^\\top p$, with $c_2 = 0.9$ for quasi-Newton methods; it rules out steps so short that the slope has barely changed.\n\nBacktracking starts at $t = 1$ (the natural Newton step) and multiplies by 0.5 until Armijo holds.\n\n```\ndef backtracking(f, x, fx, g, p, t=1.0, c1=1e-4, shrink=0.5):\n    slope = g @ p                       # must be negative\n    while f(x + t * p) > fx + c1 * t * slope:\n        t *= shrink\n    return t\n```\n\n## Quasi-Newton: BFGS and L-BFGS\nQuasi-Newton methods never form $H$. They learn about it from the gradients they already compute. After a step $s_k = x_{k+1} - x_k$ with gradient change $y_k = \\nabla f_{k+1} - \\nabla f_k$, the true Hessian approximately satisfies $H s_k \\approx y_k$. BFGS updates an inverse-Hessian approximation $B$ so that this **secant condition** holds exactly, with a rank-two correction that keeps $B$ symmetric positive-definite as long as $y_k^\\top s_k > 0$, which the Wolfe curvature condition guarantees. BFGS converges superlinearly but still stores a dense $d\\times d$ matrix.\n\n**L-BFGS** stores only the last $m$ pairs $(s_i, y_i)$, typically $m = 5$ to 20, and applies $B$ to the gradient with the two-loop recursion in $O(md)$ time. For $d = 10^6$ and $m = 10$ that is 20 million numbers instead of $10^{12}$.\n\n%%flow One L-BFGS iteration: curvature comes only from recent gradient differences, never from a stored Hessian.\nGradient g_k -(two-loop recursion with m pairs)-> Direction p = -B g -(Wolfe line search)-> *Step x_k+1 -(store s, y; drop oldest)-> Updated memory\n%%\n\n| Method | Memory | Cost per step | Local rate | Needs\n| Gradient descent | $O(d)$ | one gradient | linear, depends on kappa | step size\n| Newton | $O(d^2)$ | gradient + Hessian + $O(d^3)$ solve | quadratic | convexity or safeguards\n| BFGS | $O(d^2)$ | gradient + $O(d^2)$ | superlinear | line search\n| L-BFGS | $O(md)$ | gradient + $O(md)$ | linear, much better constant | deterministic gradients\n\n## Where these methods are used in ML\nL-BFGS is the default solver for scikit-learn's `LogisticRegression` and a standard choice in SciPy (`minimize(method=\"L-BFGS-B\")`, which also handles box constraints) for full-batch problems with up to millions of parameters: GLMs, CRFs, Gaussian-process hyperparameters, physics fits. It fails on mini-batch training because noisy gradient differences $y_k$ corrupt the curvature pairs, and the line search assumes $f$ can be evaluated exactly. Deep learning instead uses structured approximations of curvature: Hessian-vector products $Hv$ (computable in about two gradient evaluations with autodiff), Gauss-Newton and natural-gradient methods such as K-FAC, and Shampoo-style preconditioners, which sit between Adam's diagonal and full Newton.\n\n> Takeaway: Newton's method removes ill-conditioning by stepping with the inverse Hessian and converges quadratically, but costs $O(d^3)$ and needs safeguards on non-convex problems; L-BFGS with a Wolfe line search gets most of the benefit in $O(md)$ memory and is the tool of choice for smooth, full-batch problems.",
+   "q": "You need to fit a logistic regression with 50,000 sparse features on 2 million rows that fit in memory. Compare plain gradient descent, Newton's method and L-BFGS for this job and say which you would use.",
+   "s": "Gradient descent is cheap per iteration, one pass over the data, but logistic-regression Hessians with many correlated sparse features are badly conditioned, so it needs thousands of passes and a carefully tuned step. Newton's method would converge in perhaps 10 to 20 iterations, but each needs the 50,000 by 50,000 Hessian: 2.5 billion entries (20 GB in fp64) and a factorisation of about $4\\times10^{13}$ flops, which is impractical (an iterative solver with Hessian-vector products, truncated Newton, would be the workable form). L-BFGS uses only full gradients, which are exact because the data fit in memory, keeps about $m = 10$ curvature pairs (1 million numbers), uses a Wolfe line search, and typically converges in tens to a few hundred passes without step-size tuning. I would use L-BFGS, which is why scikit-learn makes it the default, with an L2 penalty to make the problem strongly convex; if an L1 penalty were required, a proximal or coordinate method (14.06) would replace it.",
+   "r": [
+    [
+     "Boyd and Vandenberghe: Convex Optimization",
+     "https://web.stanford.edu/~boyd/cvxbook/",
+     "Chapter 9.5: Newton's method, affine invariance and its convergence analysis; 9.2 covers backtracking."
+    ],
+    [
+     "Tibshirani: Convex Optimization lecture notes, quasi-Newton methods",
+     "https://www.stat.cmu.edu/~ryantibs/convexopt/lectures/quasi-newton.pdf",
+     "Secant condition, BFGS update and L-BFGS two-loop recursion."
+    ],
+    [
+     "SciPy: minimize(method='L-BFGS-B')",
+     "https://docs.scipy.org/doc/scipy/reference/optimize.minimize-lbfgsb.html",
+     "Parameters such as maxcor (m) and the stopping tolerances in practice."
+    ],
+    [
+     "Martens: New insights and perspectives on the natural gradient method",
+     "https://arxiv.org/abs/1412.1193",
+     "How Gauss-Newton and natural gradient relate, the basis for K-FAC-style deep-learning optimisers."
+    ]
+   ],
+   "k": [
+    "Newton's method",
+    "L-BFGS",
+    "line search"
+   ],
+   "x": [
+    "NumPy",
+    "SciPy"
+   ],
+   "p": [
+    "newton-s-method",
+    "l-bfgs",
+    "hessian-vector-product",
+    "classify-critical-point-from-hessian"
+   ]
+  },
+  {
+   "id": "14.06",
+   "t": "Regularisation as optimisation: penalties, constraints, proximal steps",
+   "n": [
+    "Penalised ($\\min f + \\lambda R$) and constrained ($\\min f$ subject to $R \\le t$) problems trace the same family of solutions; $\\lambda$ is the Lagrange multiplier of the constraint.",
+    "For SGD, an L2 penalty is exactly weight decay, a shrink by $(1 - \\eta\\lambda)$ each step; the L1 ball's corners make exact zeros likely, which is why lasso gives sparse solutions.",
+    "Proximal gradient handles non-smooth penalties: take a gradient step on $f$, then apply $\\mathrm{prox}_{\\eta\\lambda R}$; for L1 that is soft-thresholding, and the algorithm is ISTA (FISTA adds Nesterov momentum).",
+    "Projected gradient handles hard constraints by stepping and then projecting back onto the feasible set, such as rescaling onto a norm ball.",
+    "Early stopping is implicit regularisation: on a quadratic, $k$ gradient steps behave like ridge with $\\lambda \\approx 1/(\\eta k)$."
+   ],
+   "a": "## Regularisation is a change to the optimisation problem\nThe Machine Learning course explains regularisation statistically: penalties trade bias for variance, and ridge, lasso and elastic net are chosen by validation. This lesson takes the optimiser's view. Adding a penalty, imposing a constraint and stopping early all change which point an optimiser reaches, and each needs a matching algorithmic tool. It closes the module by connecting to the constrained optimisation of lesson 09.08 and the weight decay of 14.03.\n\n## Penalties and constraints are two views of one problem\nCompare\n\n$$\\min_\\theta\\ f(\\theta) + \\lambda R(\\theta) \\qquad\\text{and}\\qquad \\min_\\theta\\ f(\\theta)\\ \\text{ subject to }\\ R(\\theta) \\le t.$$\n\nFor convex $f$ and $R$, every solution of the constrained form with an active constraint solves the penalised form for some $\\lambda \\ge 0$, and vice versa. That $\\lambda$ is the Lagrange multiplier of the constraint (09.08): it measures how much the loss would improve per unit of extra budget $t$. Large $\\lambda$ corresponds to small $t$. The mapping between them depends on the data, so in practice you tune whichever is more convenient.\n\nThe constrained form gives the geometry. The solution is where the loss contours first touch the constraint set. The L2 ball is round, so it touches at a generic point with all coordinates non-zero: ridge shrinks. The L1 ball is a cross-polytope with corners on the axes, and contours tend to hit a corner or an edge first, where some coordinates are exactly zero: lasso selects.\n\n## L2: weight decay and its gradient\nWith $R = \\tfrac12\\lVert\\theta\\rVert^2$, a gradient step is\n\n$$\\theta \\leftarrow \\theta - \\eta(\\nabla f + \\lambda\\theta) = (1 - \\eta\\lambda)\\theta - \\eta\\nabla f.$$\n\nThe penalty is a multiplicative shrink every step, hence \"weight decay\". For SGD the two names describe the same update; under Adam they differ, which is the AdamW story from 14.03. L2 also improves conditioning: it adds $\\lambda$ to every Hessian eigenvalue, so $\\kappa$ becomes $(L + \\lambda)/(\\mu + \\lambda)$, and a problem with $\\mu = 0$ (more features than rows) becomes strongly convex.\n\n## L1 and the proximal gradient method\nThe L1 norm is not differentiable at zero, so plain gradient descent, or subgradient descent, oscillates around zero and never produces exact zeros. The **proximal gradient** method splits the objective into a smooth part $f$ and a simple non-smooth part $R$:\n\n$$\\theta_{k+1} = \\mathrm{prox}_{\\eta\\lambda R}\\big(\\theta_k - \\eta\\nabla f(\\theta_k)\\big), \\qquad \\mathrm{prox}_{h}(z) = \\arg\\min_u \\ h(u) + \\tfrac12\\lVert u - z\\rVert^2.$$\n\nThe prox finds the point that balances staying close to the gradient step against keeping $R$ small. For $R = \\lVert\\cdot\\rVert_1$ it separates by coordinate into **soft-thresholding**:\n\n$$\\mathrm{prox}_{\\tau\\lVert\\cdot\\rVert_1}(z)_i = \\mathrm{sign}(z_i)\\max(|z_i| - \\tau, 0).$$\n\nProximal gradient with this prox is **ISTA**. With $\\eta = 1/L$ it converges at $O(1/k)$, like gradient descent on smooth problems; **FISTA** adds Nesterov momentum (14.02) and reaches $O(1/k^2)$.\n\n%%flow One proximal-gradient (ISTA) step: a plain gradient step on the smooth loss, then the penalty's prox.\ntheta_k -(gradient step on f)-> z = theta_k - eta grad f -(soft-threshold by eta lambda)-> *theta_k+1, exact zeros\n%%\n\n! Example: one soft-thresholding step\n! Step size $\\eta = 0.1$, penalty $\\lambda = 2$, so the threshold is $\\tau = \\eta\\lambda = 0.2$.\n! After the gradient step, $z = (0.5,\\ -0.15,\\ 0.3,\\ -0.9)$.\n! Soft-thresholding gives $(0.3,\\ 0,\\ 0.1,\\ -0.7)$: every coordinate moves 0.2 towards zero, and the one already inside $[-0.2, 0.2]$ becomes exactly zero.\n! A subgradient step would instead move $-0.15$ to $+0.05$ and keep it non-zero, flipping its sign back and forth on later steps.\n\n```\nimport numpy as np\ndef ista(X, y, lam, steps=500):\n    L = np.linalg.norm(X, 2) ** 2 / len(y)        # Lipschitz constant of grad f\n    w = np.zeros(X.shape[1])\n    for _ in range(steps):\n        z = w - X.T @ (X @ w - y) / len(y) / L    # gradient step, eta = 1/L\n        w = np.sign(z) * np.maximum(np.abs(z) - lam / L, 0.0)\n    return w\n```\n\n## Hard constraints: projected gradient\nWhen the constraint matters in its own right (a probability simplex, a norm cap on embeddings, non-negative weights), take a gradient step and **project** back onto the feasible set $C$. That is the proximal method with $R$ the indicator of $C$ (zero inside, infinite outside), whose prox is the Euclidean projection. Projecting onto an L2 ball of radius $r$ is a rescale, $\\theta \\leftarrow \\theta\\cdot\\min(1, r/\\lVert\\theta\\rVert)$; max-norm constraints on network weights apply it per unit. Non-negativity is a clip at zero. Projection is cheap only for simple sets; that is the practical limit of the method.\n\n| Regulariser | Optimisation form | Algorithm | Effect\n| L2 penalty | smooth term $\\tfrac\\lambda2\\lVert\\theta\\rVert^2$ | any gradient method; weight decay | shrinks all weights, improves conditioning\n| L1 penalty | non-smooth term $\\lambda\\lVert\\theta\\rVert_1$ | proximal gradient (ISTA, FISTA), coordinate descent | exact zeros, feature selection\n| Norm constraint | $\\lVert\\theta\\rVert \\le r$ | projected gradient | hard cap, no shrinkage inside the ball\n| Early stopping | stop after $k$ steps | any iterative method | implicit ridge with $\\lambda \\approx 1/(\\eta k)$\n\n## Early stopping as implicit regularisation\nRun gradient descent from $\\theta_0 = 0$ on a least-squares loss with Hessian eigenvalues $\\lambda_i$. After $k$ steps, the component along eigenvector $i$ has reached a fraction $1 - (1 - \\eta\\lambda_i)^k$ of its least-squares value. Ridge with penalty $\\alpha$ reaches the fraction $\\lambda_i/(\\lambda_i + \\alpha)$. Both are near 1 for high-curvature directions and near 0 for low-curvature ones, and they match closely when $\\alpha \\approx 1/(\\eta k)$. Stopping early therefore suppresses the flat, poorly determined directions, just as ridge does; the number of steps plays the role of $1/\\lambda$. This is one reason the learning rate, schedule length and weight decay of a deep network interact: all three control how far the optimiser travels from its initialisation.\n\n> Takeaway: choose the optimiser to match the regulariser: weight decay for L2, proximal steps (soft-thresholding) for L1, projection for hard constraints, and treat training length itself as a regularisation knob worth roughly $\\lambda \\approx 1/(\\eta k)$.",
+   "q": "You fit a lasso model with PyTorch by adding lam * w.abs().sum() to the loss and running Adam. The validation score is fine, but none of the 2,000 weights is exactly zero, although the lasso solution should have only about 50 non-zeros. Explain why and how to get the sparse solution.",
+   "s": "The gradient of $|w_i|$ is $\\pm1$ (the framework picks a subgradient at zero), so each step pushes small weights towards zero but overshoots: a weight at 0.001 is pushed past zero and then pushed back, oscillating with an amplitude set by the step size and never landing exactly on 0. Adam makes it worse by normalising each coordinate's step to about $\\eta$, so tiny weights keep moving by $\\eta$ around zero. The optimiser approximates the lasso objective's value but not its exact zeros. To get the sparse solution, use a method that handles the non-smooth term exactly: proximal gradient (ISTA or FISTA) with soft-thresholding after each gradient step on the smooth loss, or coordinate descent as in scikit-learn's Lasso. Both produce exact zeros. A pragmatic alternative is to threshold the trained weights and refit, but the prox step is the principled fix.",
+   "r": [
+    [
+     "Parikh and Boyd: Proximal Algorithms",
+     "https://web.stanford.edu/~boyd/papers/prox_algs.html",
+     "Proximal operators, their interpretations and the proximal gradient method."
+    ],
+    [
+     "Tibshirani: Convex Optimization lecture notes, proximal gradient descent",
+     "https://www.stat.cmu.edu/~ryantibs/convexopt/lectures/prox-grad.pdf",
+     "ISTA for the lasso, convergence rates and acceleration."
+    ],
+    [
+     "Goodfellow, Bengio and Courville: Deep Learning, chapter 7",
+     "https://www.deeplearningbook.org/contents/regularization.html",
+     "Norm penalties as constrained optimisation and the early stopping and L2 equivalence (7.8)."
+    ],
+    [
+     "Hastie, Tibshirani and Friedman: The Elements of Statistical Learning",
+     "https://hastie.su.domains/ElemStatLearn/",
+     "Free book; section 3.4 compares ridge and lasso geometry."
+    ]
+   ],
+   "k": [
+    "proximal gradient",
+    "weight decay",
+    "sparsity"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "lasso-regression-using-ista",
+    "lagrange-multipliers-regularization-as-constrain",
+    "subgradients-for-non-smooth-functions",
+    "early-stopping"
+   ]
+  }
+ ]
+}
