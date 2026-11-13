@@ -1,0 +1,53 @@
+{
+ "id": "alphago",
+ "group": "Build from Scratch",
+ "title": "Build AlphaGo from Scratch",
+ "blurb": "Rebuild the AlphaGo Zero loop piece by piece in NumPy: Go rules on small boards, a residual policy-value network, PUCT tree search, and the targets and updates that turn self-play into training data. Every search exercise is fully deterministic, so you can check your tree statistics number for number.",
+ "prereq": "You should be fluent with Python and NumPy arrays and know what a convolution, a softmax and gradient descent do; no prior knowledge of Go is needed.",
+ "next": "Next, work through the reinforcement learning problems on value functions and policy gradients to see how search-based training relates to model-free methods.",
+ "sections": [
+  {
+   "name": "Go Rules",
+   "problems": [
+    "find-go-group-and-its-liberties",
+    "score-terminal-position-with-tromp-taylor-rules",
+    "build-legal-go-action-mask",
+    "apply-go-action-with-captures-and-repetition"
+   ]
+  },
+  {
+   "name": "Policy-Value Network",
+   "problems": [
+    "encode-alphago-zero-board-history",
+    "apply-alphago-residual-block",
+    "policy-and-value-heads",
+    "assemble-compact-dual-head-network"
+   ]
+  },
+  {
+   "name": "Neural-Guided MCTS",
+   "problems": [
+    "initialize-legal-mcts-edge-statistics",
+    "select-action-with-puct",
+    "back-up-mcts-simulation-path"
+   ]
+  },
+  {
+   "name": "Self-Play and Training Targets",
+   "problems": [
+    "mix-dirichlet-noise-into-root-priors",
+    "turn-root-visits-into-search-policy",
+    "alphago-policy-value-loss"
+   ]
+  },
+  {
+   "name": "Putting the Pipeline Together",
+   "problems": [
+    "sample-recent-self-play-replay-batch",
+    "apply-dihedral-go-symmetry",
+    "apply-one-policy-value-head-training-step",
+    "run-deterministic-neural-guided-mcts"
+   ]
+  }
+ ]
+}

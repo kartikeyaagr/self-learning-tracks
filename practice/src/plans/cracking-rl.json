@@ -1,0 +1,16 @@
+{
+ "id": "cracking-rl",
+ "group": "Specializations",
+ "title": "Cracking RL",
+ "blurb": "Thirty reinforcement learning interview problems, from Bellman equations and tabular TD control to bandits, DQN tricks, policy gradients, PPO and the preference losses behind RLHF. Environments are small arrays and every random draw is passed in, so each answer is exact.",
+ "prereq": "Comfortable NumPy indexing and broadcasting, plus expected values, conditional probability and the softmax function.",
+ "next": "Scale these pieces up with neural function approximation in PyTorch, or study how the RLHF losses here fit into a full language model post-training pipeline.",
+ "sections": [
+  {"name": "MDPs and dynamic programming", "problems": ["discounted-returns", "bellman-expectation-equation", "value-iteration-step", "value-iteration", "policy-iteration"]},
+  {"name": "Tabular model-free RL", "problems": ["monte-carlo-policy-evaluation", "td-0-value-update", "sarsa-update", "q-learning-update", "expected-sarsa"]},
+  {"name": "Bandits and exploration", "problems": ["epsilon-greedy-action-selection", "ucb1-for-multi-armed-bandits", "thompson-sampling-beta-bernoulli", "softmax-boltzmann-exploration", "linucb-contextual-bandit"]},
+  {"name": "Deep value-based RL", "problems": ["dqn-loss-with-target-network", "experience-replay-buffer", "prioritized-experience-replay", "double-dqn-target", "dueling-dqn-decomposition"]},
+  {"name": "Policy gradients and PPO", "problems": ["reinforce-gradient", "reinforce-with-baseline", "gae-advantages", "actor-critic-a2c-loss-with-entropy", "ppo-clipped-surrogate-objective"]},
+  {"name": "RLHF and preference optimization", "problems": ["bradley-terry-reward-model-loss", "ppo-with-reference-policy-kl", "dpo-closed-form-loss", "grpo-group-relative-advantage", "rloo-reinforce-leave-one-out"]}
+ ]
+}

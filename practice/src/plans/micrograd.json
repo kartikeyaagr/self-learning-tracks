@@ -1,0 +1,70 @@
+{
+ "id": "micrograd",
+ "group": "Build from Scratch",
+ "title": "Build Micrograd from Scratch",
+ "blurb": "Grow a tiny scalar autograd engine one piece at a time: measure slopes numerically, wrap numbers in Value nodes that remember their history, write backward rules and a topological backward pass, then stack neurons into an MLP and train it with your own gradients.",
+ "prereq": "Comfortable Python (classes, closures, operator overloading) and derivatives at school level; the chain rule is used constantly, so a quick refresher on it helps.",
+ "next": "Move from scalars to arrays: rewrite the engine on NumPy tensors with matrix-valued backward rules, or compare it with how PyTorch's autograd records and replays the same graph.",
+ "sections": [
+  {
+   "name": "Derivatives and gradient checks",
+   "problems": [
+    "estimate-scalar-derivative",
+    "measure-scalar-expression-partials",
+    "check-product-chain-gradient",
+    "apply-gradient-descent-step"
+   ]
+  },
+  {
+   "name": "Value objects and expression graphs",
+   "problems": [
+    "create-addition-value-node",
+    "create-multiplication-value-node",
+    "build-scalar-expression-graph",
+    "trace-reachable-expression-graph"
+   ]
+  },
+  {
+   "name": "Neurons and activation gradients",
+   "problems": [
+    "differentiate-tanh-activation",
+    "evaluate-scalar-neuron",
+    "backpropagate-through-scalar-neuron",
+    "gradient-check-scalar-neuron"
+   ]
+  },
+  {
+   "name": "Automatic reverse-mode autodiff",
+   "problems": [
+    "apply-local-vector-jacobian-rules",
+    "topologically-sort-computation-dag",
+    "run-reverse-mode-autodiff",
+    "gradient-check-autodiff-graph"
+   ]
+  },
+  {
+   "name": "Accumulation and the remaining operators",
+   "problems": [
+    "accumulate-shared-path-gradients",
+    "differentiate-exponentials-and-powers"
+   ]
+  },
+  {
+   "name": "Neural-network modules",
+   "problems": [
+    "build-scalar-neuron-module",
+    "evaluate-dense-layer",
+    "evaluate-multi-layer-perceptron",
+    "collect-module-parameters-recursively"
+   ]
+  },
+  {
+   "name": "Losses, training and zeroing gradients",
+   "problems": [
+    "squared-error-loss-gradients",
+    "apply-one-full-sgd-training-step",
+    "train-tiny-micrograd-mlp"
+   ]
+  }
+ ]
+}

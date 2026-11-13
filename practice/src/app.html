@@ -228,6 +228,7 @@ main{min-width:0;padding:28px 36px 90px}
 .prose{counter-reset:h fig}
 .prose ul,.prose ol{padding-left:22px;margin:0 0 18px}
 .prose li{margin:6px 0}
+.prose li>p{margin:4px 0}.prose li>ul,.prose li>ol{margin:4px 0 6px}
 .prose ul li::marker{color:var(--accent)}
 .prose ol li::marker{font:600 14px var(--mono);color:var(--accent)}
 .prose code{font:500 .86em var(--mono);background:var(--panel);border:1px solid var(--line);padding:1px 6px;border-radius:6px}
@@ -663,16 +664,21 @@ const daily = () => { const d = today(); let h = 0; for (const c of d) h = (h * 
 // ---------- markdown (the courses' renderer, plus math) ----------
 function render(src){
   const lines = String(src).split('\n'); let out = '', i = 0;
+  // Indented lines right after a list item belong to it: nested lists or continuation text, rendered recursively.
+  const sub = () => { const b = []; while (i < lines.length && /^\s{2,}\S/.test(lines[i])){ b.push(lines[i].replace(/^\s{2,4}/, '')); i++; } return b.length ? render(b.join('\n')) : ''; };
   while (i < lines.length){
     const L = lines[i];
     if (!L.trim()){ i++; continue; }
     if (L.startsWith('## ')){ out += `<h2>${inl(L.slice(3))}</h2>`; i++; continue; }
-    if (L.startsWith('- ')){ out += '<ul>'; while (i < lines.length && lines[i].startsWith('- ')){ out += `<li>${inl(lines[i].slice(2))}</li>`; i++; } out += '</ul>'; continue; }
+    if (L.startsWith('- ')){ out += '<ul>'; while (i < lines.length && lines[i].startsWith('- ')){ out += `<li>${inl(lines[i].slice(2))}`; i++; out += sub() + '</li>'; } out += '</ul>'; continue; }
     if (L.startsWith('```')){ const c = []; i++; while (i < lines.length && !lines[i].startsWith('```')){ c.push(lines[i]); i++; } i++; out += `<pre class="code">${esc(c.join('\n'))}</pre>`; continue; }
-    if (/^\d+\. /.test(L)){ out += '<ol>'; while (i < lines.length && /^\d+\. /.test(lines[i])){ out += `<li>${inl(lines[i].replace(/^\d+\. /,''))}</li>`; i++; } out += '</ol>'; continue; }
+    if (/^\d+\. /.test(L)){ out += '<ol>'; while (i < lines.length && /^\d+\. /.test(lines[i])){ out += `<li>${inl(lines[i].replace(/^\d+\. /,''))}`; i++; out += sub() + '</li>'; } out += '</ol>'; continue; }
     if (L.startsWith('> ')){ out += `<div class="take"><div class="lab">Key takeaway</div><p>${inl(L.slice(2))}</p></div>`; i++; continue; }
-    if (L.startsWith('| ')){ out += '<div class="tbl"><table>'; while (i < lines.length && lines[i].startsWith('| ')){ out += '<tr>' + lines[i].slice(2).replace(/\s*\|\s*$/,'').split(' | ').map(c => `<td>${inl(c)}</td>`).join('') + '</tr>'; i++; } out += '</table></div>'; continue; }
-    const p = []; while (i < lines.length && lines[i].trim() && !/^(## |- |> |\| |\d+\. |```)/.test(lines[i])){ p.push(lines[i]); i++; }
+    if (L.startsWith('|')){ out += '<div class="tbl"><table>';             // GFM tables; the |---| separator row is skipped
+      while (i < lines.length && lines[i].startsWith('|')){ const r = lines[i].trim(); i++; if (/^\|[\s:|-]+\|?$/.test(r)) continue;
+        out += '<tr>' + r.replace(/^\|\s*/, '').replace(/\s*\|$/, '').split(/\s+\|\s+/).map(c => `<td>${inl(c)}</td>`).join('') + '</tr>'; }
+      out += '</table></div>'; continue; }
+    const p = []; while (i < lines.length && lines[i].trim() && !/^(## |- |> |\||\d+\. |```)/.test(lines[i])){ p.push(lines[i]); i++; }
     out += `<p>${inl(p.join(' '))}</p>`;
   }
   return out;
