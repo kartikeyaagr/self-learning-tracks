@@ -12,7 +12,8 @@ Expected outputs are computed from SOLUTION here, so a problem only ships if:
   - SOLUTION passes every test after a JSON round trip, twice with the same result (deterministic);
   - STARTER fails at least one test (the problem isn't pre-solved);
   - tags, related slugs and lesson links all resolve.
-Writes site/public/practice/: index.json, data/<slug>.json, quiz/<plan>.json, nb/<slug>.ipynb (Colab), links.json, runner.
+Writes site/public/practice/: index.json, data/<slug>.json, quiz/<plan>.json, nb/<slug>.ipynb (Colab), links.json, runner,
+and routes.json (Unroll: concepts and destinations from site/src/content/, Arena sets from plan sections).
 """
 import copy, importlib.util, json, os, re, sys
 # CUDA problems are Numba kernels: verified on the CPU simulator here, run on a real GPU in Colab.
@@ -148,7 +149,8 @@ def build_one(path, lessons):
          'tests': tests, 'nex': nex,
          'shown': [{'in': harness.show_args(harness.dec(t['a']), rt), 'out': harness.short(harness.dec(t['e']), 600)}
                    for t in tests[:nex]],
-         'lessons': links, 'lesson_refs': meta.get('lessons', []), 'related': meta.get('related', [])}
+         'lessons': links, 'lesson_refs': meta.get('lessons', []), 'related': meta.get('related', []),
+         'theory': meta.get('theory', [])}
     if rt in GPU_ONLY:
         p['gpu_only'] = True                                # UI: "solution checked on a GPU only"
     if rt in NEEDS_GPU:
@@ -221,6 +223,14 @@ def main():
             if all(x['href'] != href for x in byid[slug]['lessons']):
                 byid[slug]['lessons'].append({'href': href, 't': fm['title'], 'c': ctitle})
 
+    # Problem -> theory (Unroll): META['theory'] when the author wrote one, else every lesson the problem is linked to.
+    picked_by = {}
+    for ref, slugs in curated.items():
+        for slug in slugs:
+            picked_by.setdefault(slug, []).append(ref)
+    for p in probs:
+        p['theory'] = theory_links(p, picked_by.get(p['id'], []), lessons)
+
     data_dir, nb_dir = WEB / 'data', WEB / 'nb'
     data_dir.mkdir(parents=True, exist_ok=True); nb_dir.mkdir(parents=True, exist_ok=True)
     for f in [*data_dir.glob('*.json'), *nb_dir.glob('*.ipynb')]:
@@ -247,6 +257,8 @@ def main():
     data = [m for m in data if m['lessons']]               # topics appear as soon as they have a problem
     plans = [load_plan(f, ids) for f in sorted((SRC / 'plans').glob('*.json'))]
     builds, quizzes, rounds = extras(ids, lessons)
+    rt = routes(lessons, ids, {r['id'] for r in rounds}, {pl['id']: pl for pl in plans})
+    (WEB / 'routes.json').write_text(json.dumps(rt, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
     qdir = WEB / 'quiz'; qdir.mkdir(exist_ok=True)
     for f in qdir.glob('*.json'):
         f.unlink()
@@ -274,6 +286,9 @@ def main():
     print(f'{len(probs)} problems verified · {len(data)}/{len(TAGS)} topics · {len(plans)} plans · '
           f'{sum(b["kind"] == "paper" for b in builds)} papers · {sum(b["kind"] == "project" for b in builds)} projects · '
           f'{len(quizzes)} quizzes · {len(rounds)} rounds · runtimes {by_rt}')
+    print(f"routes: {len(rt['concepts'])} concepts · {len(rt['destinations'])} destinations · {len(rt['sets'])} sets "
+          f"({sum(1 for x in rt['sets'] if x['boss'])} with a boss) · "
+          f"{sum(1 for p in probs if p['theory'])}/{len(probs)} problems link theory")
 
 
 def load_plan(path, ids):
@@ -365,6 +380,117 @@ def extras(ids, lessons):
     return builds, quizzes, rounds
 
 
+def theory_links(p, picked, lessons):
+    """[{lesson, step, label, href}]: the lessons that help solve problem p. step is a lesson step (1-based) or None."""
+    where = f"problems/{p['id']}.py:"
+    if p.get('theory'):
+        out = []
+        for t in p['theory']:
+            assert isinstance(t, dict) and t.get('lesson') in lessons, f"{where} theory link to unknown lesson {t}"
+            assert t.get('step') is None or (isinstance(t['step'], int) and t['step'] >= 1), f"{where} theory step must be null or >= 1"
+            out.append({'lesson': t['lesson'], 'step': t.get('step'), 'label': t.get('label') or lessons[t['lesson']]['t'],
+                        'href': lessons[t['lesson']]['href']})
+        return out
+    refs = list(dict.fromkeys([*p['lesson_refs'], *picked]))
+    return [{'lesson': r, 'step': None, 'label': lessons[r]['t'], 'href': lessons[r]['href']} for r in refs if r in lessons]
+
+
+def lesson_minutes():
+    """'trackkey:lessonid' -> reading minutes, the same rule as the course pages
+    (site/src/pages/courses/[course]/index.astro): frontmatter mins, else words / 180, at least 2."""
+    out = {}
+    for cj in (SITE / 'src/content/courses').glob('*/course.json'):
+        key = json.loads(cj.read_text(encoding='utf-8'))['key']
+        for f in (cj.parent / 'lessons').glob('*.md'):
+            head, body = f.read_text(encoding='utf-8')[4:].split('\n---\n', 1)
+            fm = {k: json.loads(v) for k, v in re.findall(r'^(\w+): (.*)$', head, re.M)}
+            words = len((body + ' ' + re.sub(r'<[^>]+>', ' ', fm.get('html') or '')).split())
+            out[f"{key}:{fm['id']}"] = fm.get('mins') or max(2, -(-words // 180))
+    return out
+
+
+STAGES = ['foundations', 'core', 'systems', 'serving']
+CONTENT = SITE / 'src' / 'content'
+
+
+def routes(lessons, ids, round_ids, plans):
+    """Unroll route data, validated: concepts (site/src/content/concepts.json), destinations (destinations.json) and
+    Arena sets (one per study-plan section, optional "boss" round). Concepts get derived minutes, unlocks and lessons."""
+    courses = {cj.parent.name: json.loads(cj.read_text(encoding='utf-8'))['key']
+               for cj in (CONTENT / 'courses').glob('*/course.json')}
+    mins = lesson_minutes()
+    concepts = json.loads((CONTENT / 'concepts.json').read_text(encoding='utf-8'))['concepts']
+    by, owner = {}, {}
+    for c in concepts:
+        where = f"concepts.json: {c.get('id')!r}:"
+        assert re.fullmatch(r'[a-z0-9]+(-[a-z0-9]+)*', c.get('id') or ''), f'{where} id must be kebab-case'
+        assert c['id'] not in by, f'{where} duplicate id'
+        for k in ('title', 'summary'):
+            assert isinstance(c.get(k), str) and c[k].strip(), f'{where} missing {k}'
+        assert c.get('course') in courses, f'{where} course must be a folder in site/src/content/courses/'
+        assert c.get('stage') in STAGES, f'{where} stage must be one of {STAGES}'
+        assert c.get('lessons'), f'{where} needs at least one lesson'
+        for ref in c['lessons']:
+            assert ref in lessons, f'{where} unknown lesson {ref}'
+            assert ref.split(':')[0] == courses[c['course']], f"{where} lesson {ref} is not in {c['course']}"
+            assert ref not in owner, f"{where} lesson {ref} already belongs to {owner[ref]!r}"
+            owner[ref] = c['id']
+        bad = [x for x in c.get('problems', []) if x not in ids]
+        assert not bad, f'{where} unknown problems {bad}'
+        by[c['id']] = c
+    for c in concepts:
+        bad = [x for x in c.get('needs', []) if x not in by or x == c['id']]
+        assert not bad, f"concepts.json: {c['id']!r}: unknown needs {bad}"
+    state = {}
+    def visit(cid, path=()):                                # needs must form a DAG
+        assert state.get(cid) != 1, f"concepts.json: needs cycle {' -> '.join([*path, cid])}"
+        if state.get(cid) != 2:
+            state[cid] = 1
+            for n in by[cid].get('needs', []):
+                visit(n, (*path, cid))
+            state[cid] = 2
+    for cid in by:
+        visit(cid)
+    out_c = [{**c, 'needs': c.get('needs', []), 'problems': c.get('problems', []),
+              'unlocks': [d['id'] for d in concepts if c['id'] in d.get('needs', [])],
+              'minutes': sum(mins[r] for r in c['lessons']),
+              'lesson_links': [{'lesson': r, 'href': lessons[r]['href'], 't': lessons[r]['t'], 'mins': mins[r]} for r in c['lessons']]}
+             for c in concepts]
+
+    dests = json.loads((CONTENT / 'destinations.json').read_text(encoding='utf-8'))['destinations']
+    seen = set()
+    for d in dests:
+        where = f"destinations.json: {d.get('id')!r}:"
+        assert re.fullmatch(r'[a-z0-9]+(-[a-z0-9]+)*', d.get('id') or '') and d['id'] not in seen, f'{where} id must be unique kebab-case'
+        seen.add(d['id'])
+        for k in ('name', 'description'):
+            assert isinstance(d.get(k), str) and d[k].strip(), f'{where} missing {k}'
+        route = d.get('concepts', [])
+        assert len(set(route)) == len(route), f'{where} a concept appears twice'
+        bad = [x for x in route if x not in by]
+        assert not bad, f'{where} unknown concepts {bad}'
+        assert set(d.get('optional', [])) <= set(route), f'{where} optional concepts must be on the route'
+        if not route:                                       # Free roam: no route, no final round
+            assert not d.get('finalRound'), f'{where} a destination without concepts has no final round'
+            continue
+        assert d.get('finalRound') in round_ids, f"{where} finalRound must be a round in practice/src/rounds/"
+        for i, cid in enumerate(route):
+            missing = [n for n in by[cid].get('needs', []) if n not in route[:i]]
+            assert not missing, f'{where} {cid!r} needs {missing} earlier on the route'
+            if i:
+                assert STAGES.index(by[cid]['stage']) >= STAGES.index(by[route[i - 1]]['stage']), \
+                    f"{where} {cid!r} ({by[cid]['stage']}) comes after a later-stage concept"
+
+    sets = []
+    for pid, pl in sorted(plans.items()):
+        for sec in pl['sections']:
+            boss = sec.get('boss')
+            assert boss is None or boss in round_ids, f"plans/{pid}.json: {sec['name']!r}: unknown boss round {boss}"
+            sets.append({'id': f"{pid}/{slugify(sec['name'])}", 'plan': pid, 'title': sec['name'],
+                         'problems': sec['problems'], 'boss': boss})
+    return {'stages': STAGES, 'concepts': out_c, 'destinations': dests, 'sets': sets}
+
+
 def check(paths):
     """Verify only the given problem/plan files and write nothing, so parallel authors can't clash.
     Related slugs and plan entries may point at any problem file that exists on disk."""
@@ -373,6 +499,12 @@ def check(paths):
     for raw in paths:
         f = Path(raw).resolve()
         try:
+            if f.name in ('concepts.json', 'destinations.json'):
+                plans = {g.stem: load_plan(g, ids) for g in (SRC / 'plans').glob('*.json')}
+                rids = {g.stem for g in (SRC / 'rounds').glob('*.json')}
+                rt = routes(lessons, ids, rids, plans)
+                print(f"OK    {f.name}  ({len(rt['concepts'])} concepts, {len(rt['destinations'])} destinations)")
+                continue
             if f.suffix == '.json':
                 kind = f.parent.name
                 if kind == 'builds':
