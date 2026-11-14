@@ -29,6 +29,7 @@ const lessons = defineCollection({
     topic: z.object({id: z.string(), title: z.string()}).optional(),       // ML Maths groups lessons into topics
     html: z.string().optional(), lead: z.string().optional(), mins: z.number().optional(),   // AI Research's HTML lessons
     blocks: z.array(z.any()).default([]),                                  // AI Research's notebook + quiz blocks
+    steps: z.array(z.object({kind: z.enum(['explain', 'interact', 'question']), title: z.string(), body: z.string().default(''), widget: z.string().optional(), question: z.object({q: z.string(), options: z.array(z.string()).min(2), answer: z.number().int(), why: z.string(), hint: z.string().default('')}).optional()})).optional(),   // lesson player steps (pages/learn/[concept]/[lesson].astro)
   }),
 });
 

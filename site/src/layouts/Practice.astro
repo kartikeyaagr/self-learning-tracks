@@ -1,12 +1,12 @@
 ---
-// Practice Lab pages: the site layout with the Practice sidebar, accent and styles.
+// Arena pages that stay at /practice/ (lists, plans, papers, interview rounds): the site layout with the Arena sidebar and styles.
 import Site from './Site.astro';
 import PracticeSide from '../components/PracticeSide.astro';
 import { u } from '../lib/url.mjs';
 import '../styles/practice.css';
 const { title, crumbs = [], cur, topic, description } = Astro.props;
 ---
-<Site title={`${title} · Practice Lab`} description={description} side crumbs={[['Arena', u('/arena/')], ...crumbs]}>
+<Site title={`${title} · Arena`} description={description} side crumbs={[['Arena', u('/arena/')], ...crumbs]}>
   <PracticeSide slot="side" cur={cur} topic={topic} />
   <slot name="head" slot="head" />
   <div data-ns="practice"><slot /></div>

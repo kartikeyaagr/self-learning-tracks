@@ -13,6 +13,7 @@
     --btn-a: var(--accent); --btn-b: var(--accent); --btn-ink: var(--accent-ink); --btn-edge: var(--accent-edge);
     --body: var(--font-sans); --num: var(--font-sans); --mono: var(--font-mono); --pix: var(--font-sans);
     --shadow: none; --lift: none; --dot: transparent;   /* no decorative shadows or dotted grounds */
+    --paper: var(--surface-2); --paper-line: var(--line-3); --kraft: var(--ink-3);   /* lesson callouts (worked examples, notes) */
     color-scheme: dark;
   }
 }
@@ -30,6 +31,8 @@
 .u-due{margin-left:4px;padding:1px 6px;border-radius:var(--radius-full);background:var(--accent);color:var(--accent-ink);font-size:11px}
 .u-route{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;border-radius:var(--radius-full);border:1px solid var(--line-3);font-size:13px}
 .u-route .mono{font-size:11px;color:var(--muted)}
+.u-route[aria-current]{border-color:var(--accent);background:var(--accent-soft)}
+.u-route[aria-current] .mono{color:var(--accent)}
 .u-streak{display:flex;align-items:center;gap:6px;font-weight:700;font-size:14px;color:var(--streak)}
 .u-streak.off{color:var(--faint)}
 .u-xp{font-weight:600;font-size:13px;color:var(--xp)}
@@ -41,3 +44,11 @@
 @media (max-width:959px){.u-top .ibtn{display:flex}}
 /* phones: the header wraps to three rows, so it scrolls away (Phase 4 replaces it with the mobile top bar + bottom tabs) */
 @media (max-width:640px){.u-top{position:static;padding:12px 16px;gap:12px}}
+
+/* XP toasts on every page (#toasts in Site.astro) */
+#toasts { position: fixed; left: 50%; bottom: 24px; translate: -50% 0; z-index: 90; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
+#toasts .toast { padding: 11px 18px; border-radius: var(--radius-full); background: var(--surface-3); border: 1px solid var(--line-3); color: var(--ink);
+  font-weight: 600; font-size: 14px; display: flex; gap: 10px; align-items: center; animation: m-rise var(--t3) var(--e-out) both; }
+#toasts .toast b { font-family: var(--font-mono); font-weight: 600; color: var(--xp); }
+#toasts .toast.big { background: var(--go); border-color: var(--go-edge); color: var(--bg); }
+#toasts .toast.big b { color: var(--bg); }

@@ -22,7 +22,7 @@ const plans = course.plans?.[m.n] || [];
     <h1>{m.name}</h1>
     <div class="meta"><span class="pill">{m.lessons.length} lessons</span><span class="pill k">+{m.lessons.length * 10} XP</span></div>
     <div style="margin-top:20px"><a class="btn" href={lessonUrl(courseId, m, m.lessons[0])}>Start module →</a></div>
-  </div><div class="big" aria-hidden="true" style="font:500 110px/.8 var(--mono);color:var(--line2)">{m.n}</div></section>
+  </div><div class="big" aria-hidden="true">{m.n}</div></section>
   <div class="path">{m.lessons.map((l, j) => <>
     {/* ML Maths groups lessons into topics: a heading wherever the topic changes */}
     {l.data.topic && (j === 0 || m.lessons[j - 1].data.topic?.id !== l.data.topic.id) && m.lessons.some(q => q.data.topic?.id !== l.data.topic.id) &&

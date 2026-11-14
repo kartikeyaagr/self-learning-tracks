@@ -1,20 +1,44 @@
 ---
-// One problem: statement, examples, hints, solution, explanation (rendered at build time), editor + Pyodide runner or a Colab card.
-import Practice from '../../../layouts/Practice.astro';
-import { IDX, ALL, BY, RT, problem, pHref } from '../../../lib/practice.mjs';
+// Arena problem (mockups/desktop/Problem.dc.html): sub-bar with the set's dots, par and a timer; statement, theory and the
+// last run's shape trace on the left; editor + tests (Pyodide Web Worker) or a Colab card in the centre; stars, hints and
+// what solving unlocks on the right. Everything that depends on progress is filled in by the script below.
+import Unroll from '../../../layouts/Unroll.astro';
+import { IDX, ALL, BY, RT, problem } from '../../../lib/practice.mjs';
 import { md } from '../../../lib/md.mjs';
 import { inl } from '../../../lib/inline.mjs';
+import { XP, PAR } from '../../../lib/game.js';
 import { u } from '../../../lib/url.mjs';
+import fs from 'node:fs';
+import D from '../../../content/destinations.json';
+import '../../../styles/screens/problem.css';
+const R = JSON.parse(fs.readFileSync('public/practice/routes.json', 'utf8'));   // cwd = site/, as in practice.mjs
 export const getStaticPaths = () => ALL.map(l => ({params: {slug: l.id}, props: {l}}));
 const { l } = Astro.props;
 const p = problem(l.id), m = IDX.topics.find(x => x.n === l.mod);
-const gi = ALL.indexOf(l), prev = ALL[gi - 1], next = ALL[gi + 1];
 const [st, ex] = await Promise.all([md(p.st), md(p.ex_md)]);
-const plans = IDX.plans.filter(pl => pl.sections.some(s => s.problems.includes(l.id)));
-const related = p.related.map(r => BY[r]).filter(Boolean);
 const CM = 'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/';
+const file = p.rt === 'sql' ? 'query.sql' : 'solution.py';
+
+// Theory that helps: course title (routes.json courses, by progress key) and minutes (concept lesson links).
+const byKey = Object.fromEntries(Object.values(R.courses).map((c: any) => [c.key, c.title]));
+const mins = Object.fromEntries(R.concepts.flatMap((c: any) => c.lesson_links).map((x: any) => [x.lesson, x.mins]));
+const theory = (p.theory || []).map((t: any) => ({...t, course: byKey[t.lesson.split(':')[0]] || '', mins: mins[t.lesson] || null}));
+const cite = theory[0];   // hints and failing tests cite the first theory link (no hint names its own lesson yet)
+
+// Set context: every set holding this problem (the script picks one), its problems' titles and its boss round.
+const ROUNDS = Object.fromEntries(IDX.rounds.map((r: any) => [r.id, r.title]));
+const sets = R.sets.filter((s: any) => s.problems.includes(p.id)).map((s: any) => ({id: s.id, title: s.title,
+  problems: s.problems.map((id: string) => ({id, t: BY[id]?.t || id})), boss: s.boss && {id: s.boss, t: ROUNDS[s.boss] || 'Boss round'}}));
+// The concept this problem counts toward, per destination (the script shows the chosen route's).
+const owner = R.concepts.filter((c: any) => (c.problems || []).includes(p.id));
+const routeConcept = Object.fromEntries(D.destinations.map(d => [d.id, owner.find((c: any) => d.concepts.includes(c.id))?.title]).filter(x => x[1]));
+
+// tests.py tab: the example tests, read-only (hidden tests never reach the page until Run/Submit fetches them).
+const testsPy = `# Run checks your code on ${p.nex} example${p.nex === 1 ? '' : 's'}. Submit runs all ${p.ntests} tests (the rest are hidden).\n` +
+  p.shown.map((e: any, i: number) => `\n# Example ${i + 1} · input\n${e.in}\n# expected\n${e.out}\n`).join('');
+const diff = {Easy: 'easy', Medium: 'med', Hard: 'hard'}[p.d as string];
 ---
-<Practice title={p.t} topic={m.slug} description={`${p.d} ${RT[p.rt] || p.rt} problem: ${p.t}.`} crumbs={[[m.name, u(`/practice/topics/${m.slug}/`)], [p.t, Astro.url.pathname]]}>
+<Unroll title={p.t} description={`${p.d} ${RT[p.rt] || p.rt} problem: ${p.t}.`}>
   {!p.colab && <Fragment slot="head">
     <link rel="stylesheet" href={`${CM}codemirror.min.css`}>
     <script is:inline src={`${CM}codemirror.min.js`}></script>
@@ -22,85 +46,230 @@ const CM = 'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/';
     <script is:inline src={`${CM}mode/sql/sql.min.js`}></script>
     <script is:inline src={`${CM}addon/edit/matchbrackets.min.js`}></script>
   </Fragment>}
-  <div class="pgrid">
-    <article>
-      <header class="panel lhead">
-        <a class="back" href={u(`/practice/topics/${m.slug}/`)}>← {m.name}</a>
-        <div class="idrow"><span class="lab">Problem {l.idx + 1} of {m.lessons.length}</span><span class="pill ok" id="okpill" hidden>✓ Solved</span><span class="pill ip" id="duepill" hidden>Due for review</span></div>
-        <h1>{p.t}</h1>
-        <div class="meta"><span class={`pill ${p.d}`}>{p.d}</span><span class="pill">{RT[p.rt] || p.rt}</span>{p.tags.map(t => <a class="pill k" href={u(`/practice/problems/?tag=${encodeURIComponent(t)}`)}>{t}</a>)}</div>
-      </header>
-      <div class="prose" id="prose" data-pagefind-body><Fragment set:html={st} /></div>
-      {p.shown.length > 0 && <><div class="lab" style="margin:26px 0 10px">Examples</div><div class="exs">{p.shown.map((e, i) =>
-        <div class="e"><div class="k">Example {i + 1} · input</div><div class="v">{e.in}</div><div class="k">Expected output</div><div class="v" style="margin:2px 0 0">{e.out}</div></div>)}</div></>}
-      <section class="reveal" id="help" data-pagefind-ignore>
-        <div class="lab">Stuck?</div>
-        {p.hints.map((h, i) => <div class="hint" hidden><b>Hint {i + 1}</b><span set:html={inl(h)} /></div>)}
-        <div class="rbtns" style="margin-top:12px">
-          {p.hints.length > 0 && <button type="button" class="btn ghost" id="hint">Show hint 1 of {p.hints.length} · −5 XP</button>}
-          <button type="button" class="btn ghost" id="solb">Show solution</button>
-          <button type="button" class="btn ghost" id="exb">Show explanation</button>
+
+  <div class="pb-sub" data-pagefind-ignore>
+    <a class="pb-back" id="pbBack" href={u('/arena/')}>← Arena</a>
+    <ol class="pb-dots" aria-label="Set progress" id="pbDots"></ol>
+    <span style="flex:1"></span>
+    <span class="mono pb-clock">par {PAR[p.d]}:00 · <span id="pbClock" role="timer" aria-label="Time on this problem">00:00</span></span>
+  </div>
+
+  <div class="pb-grid">
+    <section class="pb-prob" aria-label="Problem">
+      <div class="pb-chips">
+        <span class={`mono pb-chip ${diff}`}>{p.d}</span>
+        <span class="mono pb-chip">{p.colab ? RT[p.rt] : `${RT[p.rt] || p.rt} · runs in browser`}</span>
+        <span class="mono pb-chip xp">+{XP.solve[p.d]} XP</span>
+        <span class="mono pb-chip ok" id="okpill" hidden>✓ Solved</span>
+        <span class="mono pb-chip due" id="duepill" hidden>Due for review</span>
+      </div>
+      <h1>{p.t}</h1>
+      <div class="pb-st" data-pagefind-body><Fragment set:html={st} /></div>
+
+      {theory.length > 0 && <div class="pb-theory" data-pagefind-ignore>
+        <div class="hd"><span class="lab">THEORY THAT HELPS</span><span class="mono" id="thN">+{XP.theory} XP · read one first</span></div>
+        {theory.map((t: any) => <a href={t.href} data-ref={t.lesson}>
+          <span class="ic">→</span>
+          <span class="tx"><span class="t">{t.label}</span><span class="s">{t.course}{t.step ? ` · step ${t.step}` : ''}</span></span>
+          <span class="mono mn" data-mins={t.mins ? `${t.mins} min` : 'open'}>{t.mins ? `${t.mins} min` : 'open'}</span></a>)}
+        <span class="ft">Your code is saved while you read.</span>
+      </div>}
+
+      {!p.colab && <div class="pb-trace" data-pagefind-ignore>
+        <div class="lab" id="trT">{p.rt === 'sql' ? 'LAST RUN' : 'SHAPE TRACE · LAST RUN'}</div>
+        <div class="mono pb-tgrid" id="trace"><span class="nil">Run your code to see what the first failing test passed in and what came back.</span></div>
+      </div>}
+    </section>
+
+    <section class="pb-mid" aria-label="Editor and tests" data-pagefind-ignore>
+      <div class="pb-ed">
+        <div class="pb-bar">
+          <div role="tablist" aria-label="Files" class="pb-tabs">
+            <button type="button" role="tab" class="mono" aria-selected="true" aria-controls="pane-code" data-tab="code">{file}</button>
+            <button type="button" role="tab" class="mono" aria-selected="false" aria-controls="pane-tests" data-tab="tests">tests.py</button>
+          </div>
+          <span style="flex:1"></span>
+          {p.colab ? <>
+            <a class="pb-run" href={p.colab} target="_blank" rel="noopener">Open in Colab ↗</a>
+            <button type="button" class="pb-submit" id="mark">All tests passed · mark solved</button>
+          </> : <>
+            <button type="button" class="pb-reset" id="reset" title="Restore the starter code">Reset</button>
+            <button type="button" class="pb-run" id="run" title="Run the examples"><span class="lbl">Run <span class="mono k" id="runKey">⌘↵</span></span></button>
+            <button type="button" class="pb-submit" id="submit" title="Run all tests (add Shift to the Run shortcut)">Submit</button>
+          </>}
         </div>
-        <div class="card" id="sol" hidden><div class="lab">Solution</div><pre class="code solcode">{p.sol}</pre>
-          <p id="solnote" style="color:var(--muted);font-size:13.5px;margin:0">You opened the solution, so solving this now earns the solve XP but not the no-hints star.</p></div>
-        <div class="card prose" id="expl" hidden><Fragment set:html={ex} /></div>
+        <div id="pane-code" role="tabpanel" aria-label={file}>
+          {p.colab ? <pre class="mono pb-code">{p.starter}</pre> : <textarea id="code" aria-label="Code editor">{p.starter}</textarea>}
+        </div>
+        <div id="pane-tests" role="tabpanel" aria-label="tests.py" hidden><pre class="mono pb-code">{testsPy}</pre></div>
+      </div>
+
+      {p.colab ? <div class="pb-panel pb-colab">
+        <div class="lab">RUNS IN COLAB</div>
+        <h3>{RT[p.rt]}</h3>
+        <p>This runtime can't run in a browser. The notebook has the statement, the starter code and the same {p.ntests} tests. Run it in Colab, then mark the problem solved here.</p>
+        {p.gpu && <p>Needs a GPU: in Colab choose <b>Runtime → Change runtime type → GPU</b>.</p>}
+        {p.gpu_only && <p>The tests were generated from a CPU reference implementation of the same spec. The reference solution kernel itself only runs on a GPU, so it has not been executed by the site build.</p>}
+      </div> : <div class="pb-panel" id="tests">
+        <div class="hd"><strong>Tests</strong><span class="mono" id="tsum"><span class="mu">{p.nex} example{p.nex === 1 ? '' : 's'} · {p.ntests} tests in all</span></span><span style="flex:1"></span><span class="mono mu" id="truns"></span></div>
+        <div id="tbody" aria-live="polite"><p class="pb-idle">Run checks your code on the {p.nex} example{p.nex === 1 ? '' : 's'}. Submit checks all {p.ntests} tests. Python starts the first time you run.</p></div>
+        <div id="tmsg"></div>
+      </div>}
+
+      <div class="pb-reveal">
+        <button type="button" class="pb-ghost" id="solb" aria-pressed="false">Show solution</button>
+        <button type="button" class="pb-ghost" id="exb" aria-pressed="false">Show explanation</button>
+      </div>
+      <div class="pb-panel" id="sol" hidden><div class="lab">SOLUTION</div><pre class="mono pb-code">{p.sol}</pre>
+        <p class="pb-note" id="solnote">You opened the solution, so solving this now earns the solve XP but not the no-hints star.</p></div>
+      <div class="pb-panel pb-st" id="expl" hidden><Fragment set:html={ex} /></div>
+    </section>
+
+    <aside class="pb-side" aria-label="Help and rewards" data-pagefind-ignore>
+      <section class="pb-card" id="stars"><div class="u-h2">Stars on this problem</div></section>
+      <section class="pb-card pb-hints">
+        <div class="hd"><span class="u-h2">Hints</span><span class="mono mu" id="hN"></span></div>
+        {p.hints.length === 0 && <p class="pb-hint-tx">No hints for this one.</p>}
+        {p.hints.map((h: string, i: number) => <div class="pb-hint" hidden>
+          <p class="pb-hint-tx">{i + 1}. <span set:html={inl(h)} /></p>
+          {cite && <a href={cite.href}>From: {cite.label}{cite.step ? ` · step ${cite.step}` : ''} →</a>}
+        </div>)}
+        {p.hints.length > 0 && <button type="button" class="pb-open" id="hint"></button>}
       </section>
-      {p.lessons.length > 0 && <section class="card blk"><div class="lab">Learn the idea</div><h3>Course lessons on this</h3><div class="links">{p.lessons.map(x => <a href={x.href}>{x.t}<span>{x.c}</span></a>)}</div></section>}
-      {plans.length > 0 && <section class="card blk"><div class="lab">In study plans</div><div class="links">{plans.map(pl => <a href={u(`/practice/plans/${pl.id}/`)}>{pl.title}<span>{pl.group}</span></a>)}</div></section>}
-      {related.length > 0 && <section class="card blk"><div class="lab">Try similar problems</div><div class="links">{related.map(x => <a href={pHref(x.id)}>{x.t}<span>{x.d}</span></a>)}</div></section>}
-      <nav class="pn" aria-label="Problem navigation">
-        {prev && <a class="card" href={pHref(prev.id)}><span class="lab">← Previous</span><b>{prev.t}</b></a>}
-        {next && <a class="card nx" href={pHref(next.id)}><span class="lab">Next →</span><b>{next.t}</b></a>}
-      </nav>
-    </article>
-    <aside class="ide">
-      {p.colab ? <>
-        <div class="card colab"><div class="lab">Runs in Colab</div><h3 style="margin:8px 0 0;font-size:20px;letter-spacing:-.02em">{RT[p.rt]}</h3>
-          <p>This runtime can't run in a browser. The notebook has the statement, the starter code and the same tests. Run it in Colab, then mark the problem solved here.</p>
-          {p.gpu && <p style="margin-top:-8px">Needs a GPU: in Colab choose <b>Runtime → Change runtime type → GPU</b>.</p>}
-          {p.gpu_only && <p style="margin-top:-8px">The tests were generated from a CPU reference implementation of the same spec. The reference solution kernel itself only runs on a GPU, so it has not been executed by the site build.</p>}
-          <div style="display:flex;gap:10px;flex-wrap:wrap"><a class="btn" href={p.colab} target="_blank" rel="noopener">Open in Colab ↗</a>
-          <button type="button" class="btn ghost" id="mark">All tests passed · mark solved</button></div></div>
-        <div class="card"><div class="bar2"><span class="lab">Starter code</span></div><pre class="code" style="margin:0;border-radius:0">{p.starter}</pre></div>
-      </> : <>
-        <div class="card"><div class="bar2"><span class="lab">{p.rt === 'sql' ? 'query.sql' : 'solution.py'}</span>
-          <button type="button" class="btn ghost" id="reset" title="Restore the starter code">Reset</button>
-          <button type="button" class="btn ghost" id="run" title="Run the examples (⌘↵)">Run</button>
-          <button type="button" class="btn" id="submit" title="Run all tests (⌘⇧↵)">Submit</button></div>
-          <textarea id="code" aria-label="Code editor">{p.starter}</textarea></div>
-        <div class="card"><div class="bar2"><span class="lab">Results</span></div><div class="res" id="res"><span class="st">Run checks your code on the {p.nex} example{p.nex === 1 ? '' : 's'}. Submit checks all {p.ntests} tests. Python starts the first time you run.</span></div></div>
-      </>}
+      <section class="pb-card"><div class="u-h2">After you solve it</div><div class="pb-after" id="after">It joins your review deck.</div></section>
     </aside>
   </div>
-  <script is:inline define:vars={{ P: {id: p.id, d: p.d, rt: p.rt, fn: p.fn, pkgs: p.pkgs, tol: p.tol, nex: p.nex, starter: p.starter, colab: !!p.colab, nhints: p.hints.length, topic: m.lessons.map(x => x.id), topicName: m.name, gi, n: ALL.length, theory: (p.theory || []).map(t => t.lesson)} }}>window.__prob = P;</script>
+
+  <script is:inline define:vars={{ P: {id: p.id, d: p.d, rt: p.rt, fn: p.fn, pkgs: p.pkgs, tol: p.tol, nex: p.nex, ntests: p.ntests, starter: p.starter,
+    colab: !!p.colab, nhints: p.hints.length, topic: m.lessons.map(x => x.id), topicName: m.name, gi: ALL.indexOf(l), n: ALL.length,
+    theory: theory.map((t: any) => t.lesson), cite: cite ? {label: cite.label, href: cite.href} : null, rtName: RT[p.rt] || p.rt, sets, routeConcept} }}>window.__prob = P;</script>
   <script>
     import { st, toast } from '../../../lib/practice-client.js';
     import { save, now, today } from '../../../lib/progress.js';
     import { rate } from '../../../lib/review.js';
-    import { all } from '../../../lib/store.js';
-    import { dailyIndex, lessonDone, solveAwards, XP } from '../../../lib/game.js';
-    const P = window.__prob, k = P.id, $ = s => document.querySelector(s), esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
-    const T0 = Date.now();                // par timer: page open → first solve (in-browser problems; Colab solves are self-reported)
-    const CHECK = '<svg width="16" height="16" viewBox="0 0 20 20"><path d="M4.5 10.5l3.6 3.6 7.6-8.2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    const paint = () => {
-      const d = !!st.done[k]; $('#okpill').hidden = !d; $('#duepill').hidden = !(d && st.rev[k]?.due && st.rev[k].due <= today());
-      const hn = st.hints[k] || 0; document.querySelectorAll('.hint').forEach((h, i) => h.hidden = i >= hn);
-      const hb = $('#hint'); if (hb) { hb.hidden = hn >= P.nhints; hb.textContent = `Show hint ${hn + 1} of ${P.nhints} · −${-XP.hint} XP`; }
-      $('#sol').hidden = !st.sol[k]; $('#solb').textContent = st.sol[k] ? 'Hide solution' : 'Show solution'; $('#solnote').hidden = d;
-      $('#expl').hidden = !st.expl[k]; $('#exb').textContent = st.expl[k] ? 'Hide explanation' : 'Show explanation';
-      const mk = $('#mark'); if (mk) mk.hidden = d;
-    };
-    $('#hint')?.addEventListener('click', () => { st.hints[k] = (st.hints[k] || 0) + 1; (st.hintAt[k] ||= []).push(now()); save(); paint(); });
+    import { all, ns } from '../../../lib/store.js';
+    import { dailyIndex, lessonDone, solveAwards, bossOpen, XP, PAR } from '../../../lib/game.js';
+    import { esc, href, problemHref, getRoute, shakeLocked } from '../../../lib/unroll.js';
+
+    const P = window.__prob, k = P.id, $ = s => document.querySelector(s);
+    const T0 = Date.now();                 // par timer: page open → first solve (in-browser problems; Colab solves are self-reported)
+    const PAR_MS = PAR[P.d] * 60000;
+    const mmss = ms => { const s = Math.floor(ms / 1000); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
+    const restart = (el, cls) => { el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); };
+    let stopAt = null;                     // the timer freezes at the solve
+
+    // ---- set context: ?set=<id>, else the Arena's current set if it holds this problem, else the first set holding it
+    const want = new URLSearchParams(location.search).get('set'), cur = ns('game').set;
+    const set = P.sets.find(s => s.id === want) || P.sets.find(s => s.id === cur) || P.sets[0] || null;
+    const qs = set ? `?set=${encodeURIComponent(set.id)}` : '';
+    function paintSet() {
+      if (!set) { $('#pbDots').hidden = true; return; }
+      const back = $('#pbBack'); back.href = href(`/arena/${qs}`); back.textContent = `← ${set.title}`;
+      const A = all(), done = id => !!A.practice?.done?.[id];
+      let html = set.problems.map((x, i) => {
+        const lab = `Problem ${i + 1}: ${esc(x.t)}`;
+        if (x.id === k) return `<li style="--i:${i}"><span class="dot cur" role="img" aria-current="step" aria-label="${lab}, this problem">${done(x.id) ? '✓' : i + 1}</span></li>`;
+        return `<li style="--i:${i}"><a href="${problemHref(x.id)}${qs}" class="dot${done(x.id) ? ' done' : ''}" aria-label="${lab}${done(x.id) ? ', solved' : ''}" title="${esc(x.t)}">${done(x.id) ? '✓' : i + 1}</a></li>`;
+      }).join('');
+      if (set.boss) html += bossOpen(A, set.problems.map(x => x.id))
+        ? `<li style="--i:${set.problems.length}"><a href="${href(`/practice/interview/${set.boss.id}/`)}" class="dot boss open" aria-label="Boss round: ${esc(set.boss.t)}, open" title="${esc(set.boss.t)}"></a></li>`
+        : `<li style="--i:${set.problems.length}"><span class="dot boss" role="img" data-locked aria-label="Boss round, locked: opens at ${set.problems.length - 1} of ${set.problems.length} solved"></span></li>`;
+      $('#pbDots').innerHTML = html;
+    }
+    shakeLocked($('#pbDots'));
+
+    // ---- what solving unlocks: the set's next problem, the boss when this solve opens it, the route concept
+    function paintAfter() {
+      const A = all(), out = [], route = getRoute();
+      if (set) {
+        const ids = set.problems.map(x => x.id), i = ids.indexOf(k), nx = set.problems[i + 1];
+        if (nx) out.push(`${st.done[k] ? 'Next' : 'Unlocks'} <a href="${problemHref(nx.id)}${qs}">#${i + 2} ${esc(nx.t)} →</a>`);
+        const after = {...A, practice: {...A.practice, done: {...A.practice?.done, [k]: true}}};
+        if (set.boss && bossOpen(after, ids)) out.push(`${bossOpen(A, ids) ? 'The' : 'Opens the'} boss round, <a href="${href(`/practice/interview/${set.boss.id}/`)}">${esc(set.boss.t)} →</a>`);
+      }
+      if (route && P.routeConcept[route]) out.push(`counts toward the ${esc(P.routeConcept[route])} concept on your route`);
+      const s = out.length ? out.join(', and ').replace(/^./, c => c.toUpperCase()) + '.' : '';
+      $('#after').innerHTML = `${s}${s ? ' ' : ''}${st.done[k] ? 'It is in your review deck.' : 'It joins your review deck.'}`;
+    }
+
+    // ---- theory read state
+    const theoryRead = () => P.theory.some(ref => lessonDone(all(), ref));
+    function paintTheory() {
+      const links = document.querySelectorAll('.pb-theory a[data-ref]'); if (!links.length) return;
+      let n = 0;
+      links.forEach(a => { const r = lessonDone(all(), a.dataset.ref); n += r;
+        a.classList.toggle('read', r); a.querySelector('.ic').textContent = r ? '✓' : '→';
+        const mn = a.querySelector('.mn'); mn.textContent = r ? 'read' : mn.dataset.mins; });
+      $('#thN').textContent = `+${XP.theory} XP · ${n} of ${links.length} read`;
+    }
+
+    // ---- stars
+    function paintStars() {
+      const d = !!st.done[k], r = st.solve[k], elapsed = (stopAt ?? Date.now()) - T0;
+      const row = (state, label, xp) => `<div class="pb-star ${state}"><span>${state === 'won' ? '★' : state === 'lost' ? '✕' : '☆'} ${label}</span><span class="mono">${xp}</span></div>`;
+      const nh = d ? (r?.d ? r.nohints : !(st.hints[k] > 0) && !st.sol[k]) : !(st.hints[k] > 0) && !st.sol[k];
+      const hn = st.hints[k] || 0, lostWhy = hn ? `used ${hn}` : 'solution opened';
+      const th = d ? !!r?.theory : theoryRead();
+      let par;
+      if (d) par = r?.ms != null && r.ms <= PAR_MS ? row('won', `Under par · ${mmss(r.ms)}`, `+${XP.par}`)
+        : row('lost', r?.ms == null ? 'Under par · not timed' : `Under par · ${mmss(r.ms)}`, `+${XP.par}`);
+      else par = P.colab ? row('lost', 'Under par · not timed in Colab', `+${XP.par}`)
+        : elapsed > PAR_MS ? row('lost', 'Under par · over par', `+${XP.par}`) : row('open', 'Under par', `+${XP.par}`);
+      $('#stars').innerHTML = `<div class="u-h2">Stars on this problem</div>` +
+        row(d ? 'won' : 'open', 'Solve it', `+${XP.solve[P.d]}`) +
+        (P.theory.length ? row(th ? 'won' : d ? 'lost' : 'open', 'Read the theory first', `+${XP.theory}`) : '') +
+        `<div id="starNH">${nh ? row(d ? 'won' : 'open', 'No hints', `+${XP.nohints}`) : row('lost', `No hints · ${lostWhy}`, hn ? `−${hn * -XP.hint}` : `+${XP.nohints}`)}</div>` +
+        `<div id="starPar">${par}</div>`;
+    }
+
+    // ---- hints, solution, explanation, pills
+    function paint() {
+      const d = !!st.done[k], due = d && st.rev[k]?.due && st.rev[k].due <= today();
+      $('#okpill').hidden = !d; $('#duepill').hidden = !due;
+      const hn = st.hints[k] || 0;
+      document.querySelectorAll('.pb-hint').forEach((h, i) => h.hidden = i >= hn);
+      if (P.nhints) $('#hN').textContent = `${Math.min(hn, P.nhints)} of ${P.nhints} open`;
+      const hb = $('#hint'); if (hb) { hb.hidden = hn >= P.nhints; hb.textContent = `Open hint ${hn + 1} · −${-XP.hint} XP`; }
+      $('#sol').hidden = !st.sol[k]; $('#solb').textContent = st.sol[k] ? 'Hide solution' : 'Show solution'; $('#solb').setAttribute('aria-pressed', String(!!st.sol[k]));
+      $('#solnote').hidden = d;
+      $('#expl').hidden = !st.expl[k]; $('#exb').textContent = st.expl[k] ? 'Hide explanation' : 'Show explanation'; $('#exb').setAttribute('aria-pressed', String(!!st.expl[k]));
+      const mk = $('#mark'); if (mk) { mk.hidden = d && !due; mk.textContent = due ? 'Solved it again · review' : 'All tests passed · mark solved'; }
+      paintSet(); paintAfter(); paintTheory(); paintStars();
+    }
+    $('#hint')?.addEventListener('click', e => {
+      const had = !(st.hints[k] > 0) && !st.sol[k] && !st.done[k];
+      st.hints[k] = (st.hints[k] || 0) + 1; (st.hintAt[k] ||= []).push(now()); save(); paint();
+      const shown = document.querySelectorAll('.pb-hint')[st.hints[k] - 1]; shown?.classList.add('m-rise');
+      const box = e.currentTarget.closest('.pb-card'), f = document.createElement('span');
+      f.className = 'm-xp mono pb-pen'; f.setAttribute('aria-hidden', 'true'); f.textContent = `−${-XP.hint} XP`;
+      box.appendChild(f); setTimeout(() => f.remove(), 1300);
+      if (had) restart($('#starNH'), 'm-shake');                    // the no-hints star is lost with the first hint
+    });
     $('#solb').addEventListener('click', () => { st.sol[k] = !st.sol[k]; save(); paint(); });
     $('#exb').addEventListener('click', () => { st.expl[k] = !st.expl[k]; save(); paint(); });
-    paint();
+    // store.js takes progress saved in other tabs (or before a back/forward restore); repaint when it changes.
+    addEventListener('tracks:sync', () => paint());
+
+    // ---- timer
+    const clock = $('#pbClock');
+    const tick = () => { const ms = (stopAt ?? Date.now()) - T0; clock.textContent = mmss(ms); clock.classList.toggle('over', ms > PAR_MS);
+      if (!st.done[k] && Math.abs(ms - PAR_MS) < 1000) paintStars(); };
+    tick(); setInterval(tick, 1000);
+
+    // ---- tabs
+    document.querySelectorAll('[role=tab]').forEach(b => b.addEventListener('click', () => {
+      document.querySelectorAll('[role=tab]').forEach(x => x.setAttribute('aria-selected', String(x === b)));
+      $('#pane-code').hidden = b.dataset.tab !== 'code'; $('#pane-tests').hidden = b.dataset.tab !== 'tests';
+      if (b.dataset.tab === 'code') window.__ed?.refresh();
+    }));
 
     function solved() {
       if (!st.done[k]) {
+        stopAt = Date.now();
         st.done[k] = true; st.at[k] = now();
         // what the first solve earns (game.js): difficulty, theory read first, no hints/solution, under par, problem of the day
-        const r = st.solve[k] = {d: P.d, theory: P.theory.some(ref => lessonDone(all(), ref)), nohints: !(st.hints[k] > 0) && !st.sol[k],
-          ms: P.colab ? null : Date.now() - T0, potd: dailyIndex(today(), P.n) === P.gi};
+        const r = st.solve[k] = {d: P.d, theory: theoryRead(), nohints: !(st.hints[k] > 0) && !st.sol[k],
+          ms: P.colab ? null : stopAt - T0, potd: dailyIndex(today(), P.n) === P.gi};
         const aw = solveAwards(P.d, r);
         rate('practice', k, 3);                                   // first review in a day; also saves and counts today's activity
         st.rev[k].n = 0;                                          // the first solve is not a review
@@ -112,6 +281,7 @@ const CM = 'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/';
       paint();
     }
     $('#mark')?.addEventListener('click', solved);
+    paint();
 
     if (!P.colab) {
       // runner: one Web Worker, killed and respawned on timeout
@@ -127,43 +297,108 @@ const CM = 'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/';
       };
       let tests = null;                                          // full test data, fetched on the first run
       const getTests = () => tests || (tests = fetch(`${window.__base}/practice/data/${k}.json`).then(r => r.json()));
-      const say = s => { $('#res').innerHTML = `<span class="st">${esc(s)}</span>`; };
+      const tbody = $('#tbody'), tsum = $('#tsum'), panel = $('#tests');
+      const say = s => { const el = $('#tstat'); if (el) el.textContent = s; };
       const exec = (code, tj) => new Promise(async res => {
-        say(RUN.w ? 'Running…' : 'Starting Python (first run downloads ~10 MB)…');
+        say(RUN.w ? `Running in your browser with ${P.rtName}` : 'Starting Python (the first run downloads ~10 MB)…');
         try { await boot(); } catch (e) { return res({error: String(e.message)}); }
         let timer;
         const arm = ms => { clearTimeout(timer); timer = setTimeout(() => { RUN.w.terminate(); RUN.w = null; RUN.cb = null; res({error: `Time limit: still running after ${ms / 1000} s. Look for an infinite loop or a very slow step.`}); }, ms); };
         RUN.cb = {status: s => { say(s); arm(90000); }, done: m => { clearTimeout(timer); RUN.cb = null; res(m); }};
-        say('Running…'); arm(10000);
+        say(`Running in your browser with ${P.rtName}`); arm(10000);
         RUN.w.postMessage({id: k, code, fn: P.fn, tests: tj, runtime: P.rt, pkgs: P.pkgs, tol: P.tol});
       });
-      const ed = window.CodeMirror.fromTextArea($('#code'), {mode: P.rt === 'sql' ? 'text/x-sqlite' : 'python', lineNumbers: true, indentUnit: 4, matchBrackets: true,
+      const ed = window.__ed = window.CodeMirror.fromTextArea($('#code'), {mode: P.rt === 'sql' ? 'text/x-sqlite' : 'python', lineNumbers: true, indentUnit: 4, matchBrackets: true,
         extraKeys: {Tab: c => c.somethingSelected() ? c.indentSelection('add') : c.replaceSelection('    '), 'Cmd-Enter': () => go(false), 'Ctrl-Enter': () => go(false),
           'Shift-Cmd-Enter': () => go(true), 'Shift-Ctrl-Enter': () => go(true)}});
       if (st.code[k] != null) ed.setValue(st.code[k]);
       let t; ed.on('change', () => { clearTimeout(t); t = setTimeout(() => { st.code[k] = ed.getValue(); save(); }, 400); });
+      addEventListener('pagehide', () => { if (st.code[k] !== ed.getValue() && ed.getValue() !== P.starter) { st.code[k] = ed.getValue(); save(); } });   // leaving for a theory link
       $('#reset').addEventListener('click', () => { ed.setValue(P.starter); delete st.code[k]; save(); });
-      let busy = false;
+      const mac = /Mac|iP(hone|ad|od)/.test(navigator.platform || navigator.userAgent);
+      $('#runKey').textContent = mac ? '⌘↵' : 'Ctrl↵';
+      document.addEventListener('keydown', e => {                // the shortcut outside the editor too (CodeMirror handles its own)
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.target.closest?.('.CodeMirror')) { e.preventDefault(); go(e.shiftKey); }
+      });
+
+      // ---- shape trace: what the runner can honestly tell. Inputs and expected output come from the test data
+      // (their encoded shapes and dtypes); what came back is only what harness.py's `why` says about it.
+      const params = (P.starter.match(new RegExp(`def\\s+${P.fn}\\s*\\(([^)]*)\\)`)) || [, ''])[1]
+        .split(',').map(s => s.split(/[:=]/)[0].trim()).filter(s => s && s !== 'self');
+      const shp = v => {
+        if (v === null) return 'None';
+        if (Array.isArray(v)) return `list[${v.length}]`;
+        if (typeof v !== 'object') return typeof v === 'number' ? 'number' : typeof v === 'string' ? 'str' : typeof v;
+        if ('__nd__' in v) { const d = []; let x = v.__nd__; while (Array.isArray(x)) { d.push(x.length); x = x[0]; } return `(${d.join(', ')}${d.length === 1 ? ',' : ''}) ${v.dtype}`; }
+        if ('__tup__' in v) return `(${v.__tup__.map(shp).join(', ')})`;
+        if ('__f__' in v) return 'float';
+        if ('__dict__' in v) return `dict[${v.__dict__.length}]`;
+        if ('__df__' in v) return `DataFrame (${v.__df__.data.length}, ${v.__df__.columns.length})`;
+        if ('__sr__' in v) return `Series (${v.__sr__.length},)`;
+        return 'object';
+      };
+      function trace(r, T, all) {
+        const box = $('#trace'), row = (a, b, bad) => `<span class="${bad ? 'bad' : 'k'}">${esc(a)}</span><span${bad ? ' class="bad"' : ''}>${esc(b)}</span>`;
+        if (r.error) { box.innerHTML = row('error', r.error.trim().split('\n').pop(), true); return; }
+        const i = Math.max(0, r.results.findIndex(x => !x.ok)), x = r.results[i], cases = JSON.parse(all ? T.tj : T.tj_ex), c = cases[i];
+        const name = `${i < P.nex ? 'Example' : 'Hidden test'} ${i + 1}`;
+        let html = row('test', x.ok ? `${name} · all ${r.results.length} passed` : `${name} · failed`);
+        if (P.rt !== 'sql' && c) c.a.forEach((a, j) => html += row(params[j] || `arg ${j + 1}`, shp(a)));
+        if (P.rt !== 'sql' && c) html += row('expected', shp(c.e));
+        if (!x.ok) { const m = x.why.match(/^(\S+): shape (\(.*?\)) != expected (\(.*?\))$/);
+          html += m ? row(m[1], `${m[2]} · want ${m[3]}`, true) : row('got', x.why, true); }
+        box.innerHTML = html;
+      }
+
+      let busy = false, runs = 0, errMark = null;
+      const btns = () => ['#run', '#submit', '#reset'].map(s => $(s));
       async function go(all) {
         if (busy) return; busy = true;
         const code = ed.getValue(); st.code[k] = code; save();
-        ['#run', '#submit'].forEach(s => $(s).disabled = true);
-        let r; try { const T = await getTests(); r = await exec(code, all ? T.tj : T.tj_ex); }   // JSON text keeps 3.0 a float
+        btns().forEach(b => b.disabled = true);
+        $('#run').innerHTML = '<span class="m-spin pb-spin" aria-hidden="true"></span>Running';
+        $('#tmsg').innerHTML = '';
+        tsum.innerHTML = `<span class="mu">running ${all ? P.ntests : P.nex} test${(all ? P.ntests : P.nex) === 1 ? '' : 's'}…</span>`;
+        tbody.innerHTML = `<div class="pb-prog"><div class="pb-track"><i class="m-indet"></i></div><span class="mono mu" id="tstat"></span></div>`;
+        if (errMark) { ed.removeLineClass(errMark, 'background', 'pb-errline'); errMark = null; }
+        let r, T; try { T = await getTests(); r = await exec(code, all ? T.tj : T.tj_ex); }   // JSON text keeps 3.0 a float
         catch (e) { r = {error: `Couldn't load the tests: ${e.message}`}; tests = null; }
-        busy = false; ['#run', '#submit'].forEach(s => $(s).disabled = false);
-        const box = $('#res'), out = r.stdout ? `<div class="lab" style="margin-top:12px">Printed output</div><pre>${esc(r.stdout.slice(0, 4000))}</pre>` : '';
-        if (r.error) { box.innerHTML = `<div class="sum no">Error</div><pre>${esc(r.error)}</pre>${out}`; return; }
-        const ok = r.results.filter(x => x.ok).length, n = r.results.length, pass = ok === n;
-        const rows = r.results.map((x, i) => x.ok ? (all ? '' : `<div class="t good"><span class="k">✓</span><span class="v">Example ${i + 1} passed</span></div>`)
-          : `<div class="t bad"><span class="k">✗</span><span class="v">${all && i >= P.nex ? 'Hidden test' : 'Example'} ${i + 1}</span>
-            ${x.inp ? `<span class="k">input</span><span class="v">${esc(x.inp)}</span>` : ''}
-            <span class="k">why</span><span class="v">${esc(x.why)}</span>${x.got ? `<span class="k">got</span><span class="v">${esc(x.got)}</span>` : ''}</div>`).join('');
-        box.innerHTML = `<div class="sum ${pass ? 'ok' : 'no'}">${pass ? CHECK : ''}${all ? (pass ? `All ${n} tests passed` : `${ok} / ${n} tests passed`) : (pass ? `Examples pass (${n}/${n}). Now Submit.` : `${ok} / ${n} examples pass`)}</div>${rows}${out}`;
-        if (all && pass) solved();
+        busy = false; btns().forEach(b => b.disabled = false);
+        $('#run').innerHTML = `<span class="lbl">Run <span class="mono k">${mac ? '⌘↵' : 'Ctrl↵'}</span></span>`;
+        $('#truns').textContent = `run ${++runs}`;
+        const out = r.stdout ? `<div class="pb-out"><div class="lab">PRINTED OUTPUT</div><pre class="mono">${esc(r.stdout.slice(0, 4000))}</pre></div>` : '';
+        const theoryLink = P.cite ? `<a class="rel" href="${P.cite.href}">Related theory: ${esc(P.cite.label)} →</a>` : '';
+        if (r.error) {
+          tsum.innerHTML = `<span class="bad">error</span><span class="mu">${all ? P.ntests : P.nex} not run</span>`;
+          tbody.innerHTML = `<ul class="pb-tests"><li class="bad shk" style="--i:0"><div class="mono ln"><span class="bad">✗ error</span><span>Your code didn't run</span></div>
+            <pre class="mono why">${esc(r.error)}</pre>${theoryLink}</li></ul>${out}`;
+          const ln = r.error.match(/File "solution\.py", line (\d+)/) || r.error.match(/\(solution\.py, line (\d+)\)/);
+          if (ln && +ln[1] <= ed.lineCount()) { errMark = ed.addLineClass(+ln[1] - 1, 'background', 'pb-errline'); }
+          trace(r, T, all); if (all) blocked(null); return;
+        }
+        const ok = r.results.filter(x => x.ok).length, n = r.results.length, pass = ok === n, skip = all ? 0 : P.ntests - n;
+        tsum.innerHTML = `<span class="go">${ok} passed</span>${n - ok ? `<span class="bad">${n - ok} failed</span>` : ''}${skip ? `<span class="mu">${skip} not run</span>` : ''}`;
+        let first = true;
+        const rows = r.results.map((x, i) => {
+          const name = `${i < P.nex ? 'Example' : 'Hidden test'} ${i + 1}`;
+          if (x.ok) return `<li class="mono ln" style="--i:${i}"><span class="go">✓ pass</span><span>${name}</span></li>`;
+          const cls = first ? 'bad shk' : 'bad'; first = false;
+          return `<li class="${cls}" style="--i:${i}"><div class="mono ln"><span class="bad">✗ fail</span><span>${name}</span></div>
+            <div class="mono why">${esc(x.why)}</div>${x.got ? `<div class="mono det">got ${esc(x.got)}</div>` : ''}
+            ${x.inp ? `<details class="det"><summary class="mono">input</summary><pre class="mono">${esc(x.inp)}</pre></details>` : ''}${theoryLink}</li>`;
+        }).join('');
+        const skipRow = skip ? `<li class="mono ln skip" style="--i:${n}"><span>· skip</span><span>${skip} hidden test${skip === 1 ? '' : 's'} run on Submit</span></li>` : '';
+        tbody.innerHTML = `${pass ? `<div class="pb-pass" style="--i:0">${all ? `All ${n} tests passed` : `Examples pass (${n}/${n}). Now Submit.`}</div>` : ''}<ul class="pb-tests">${rows}${skipRow}</ul>${out}`;
+        trace(r, T, all);
+        if (all && pass) solved(); else if (all) blocked(n - ok);
+      }
+      function blocked(nf) {                                     // Submit with failures: the panel shakes and says why
+        restart(panel, 'm-shake');
+        $('#tmsg').innerHTML = `<div role="status" class="pb-msg">${nf == null ? 'Your code has to run before it can pass.' : `${nf} test${nf === 1 ? '' : 's'} still fail${nf === 1 ? 's' : ''}.`} Fix ${nf === 1 ? 'it' : 'them'} to submit; nothing is recorded until every test passes.</div>`;
       }
       $('#run').addEventListener('click', () => go(false));
       $('#submit').addEventListener('click', () => go(true));
       boot().catch(() => {});                                    // warm Python up while the learner reads; Run reports any failure
     }
   </script>
-</Practice>
+</Unroll>

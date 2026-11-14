@@ -257,7 +257,8 @@ def main():
     data = [m for m in data if m['lessons']]               # topics appear as soon as they have a problem
     plans = [load_plan(f, ids) for f in sorted((SRC / 'plans').glob('*.json'))]
     builds, quizzes, rounds = extras(ids, lessons)
-    rt = routes(lessons, ids, {r['id'] for r in rounds}, {pl['id']: pl for pl in plans}, probs)
+    rt = routes(lessons, ids, {r['id']: {'title': r['title'], 'minutes': r['minutes'], 'role': r['role']} for r in rounds},
+                {pl['id']: pl for pl in plans}, probs)
     (WEB / 'routes.json').write_text(json.dumps(rt, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
     qdir = WEB / 'quiz'; qdir.mkdir(exist_ok=True)
     for f in qdir.glob('*.json'):
@@ -492,7 +493,8 @@ def routes(lessons, ids, round_ids, plans, probs=None):
             sets.append({'id': f"{pid}/{slugify(sec['name'])}", 'plan': pid, 'title': sec['name'],
                          'problems': sec['problems'], 'boss': boss})
     info = {k: {'key': c['key'], 'title': c['title'], 'layer': c.get('layer')} for k, c in cfgs.items()}
-    return {'stages': STAGES, 'courses': info, 'concepts': out_c, 'destinations': dests, 'sets': sets}
+    rounds = {k: v for k, v in round_ids.items()} if isinstance(round_ids, dict) else {}   # titles for final rounds and bosses
+    return {'stages': STAGES, 'courses': info, 'rounds': rounds, 'concepts': out_c, 'destinations': dests, 'sets': sets}
 
 
 def check(paths):

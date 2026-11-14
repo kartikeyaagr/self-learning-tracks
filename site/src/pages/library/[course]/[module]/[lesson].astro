@@ -75,7 +75,7 @@ const linkMap = Object.fromEntries([...lessons.map(x => [x.data.id, url(x)]), ..
     </article>
     <aside class="rail">
       <div class="card"><div class="lab" style="margin-bottom:10px">On this page</div><div class="toc" id="toc">{toc.map(h => <a href={`#${h.slug}`}>{h.text}</a>)}{L.question && <a href="#check">Check yourself</a>}</div></div>
-      {L.keyIdeas.length > 0 && <div class="card"><div class="lab" style="margin-bottom:10px">Key ideas</div><ul style="margin:0;padding-left:18px;font-size:13.5px;color:var(--muted)">{L.keyIdeas.map(x => <li style="margin:4px 0" set:html={I(x)} />)}</ul></div>}
+      {L.keyIdeas.length > 0 && <div class="card"><div class="lab" style="margin-bottom:10px">Key ideas</div><ul class="keyideas">{L.keyIdeas.map(x => <li set:html={I(x)} />)}</ul></div>}
     </aside>
   </div>
   <script define:vars={{ courseKey: course.key, courseDir: courseId, own, k, linkMap, nextUrl: next ? url(next) : null, prevUrl: prev ? url(prev) : null }}>

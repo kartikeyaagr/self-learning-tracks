@@ -1,0 +1,171 @@
+---
+// Arena route (mockups/desktop/ArenaRoute.dc.html): rank / problem of the day / this week, the current set as a
+// serpentine path ending in its boss round, more sets, and a right rail (XP rules, solve calendar, interview rounds).
+// Rendered in the browser: it depends on progress (store.js, game.js) and the chosen destination.
+import '../styles/screens/arena.css';
+---
+<div class="ar" id="arena">
+  <div class="ar-top" id="aTop"></div>
+  <div class="ar-cols">
+    <div class="ar-main" id="aMain" aria-live="polite"></div>
+    <aside class="ar-rail" aria-label="Arena guide" id="aRail"></aside>
+  </div>
+</div>
+<script>
+  import { routes, getRoute, state, problemHref, href, esc, shakeLocked } from '../lib/unroll.js';
+  import { events, summary, bossOpen, dailyIndex, weekOf, addDays, XP } from '../lib/game.js';
+  import { today } from '../lib/progress.js';
+  import { ns, save } from '../lib/store.js';
+
+  const $ = id => document.getElementById(id), root = $('arena');
+  const cache = {};
+  const json = p => (cache[p] ||= fetch(href(`/${p}`)).then(r => r.ok ? r.json() : null).catch(() => null));
+  const theory = id => json(`practice/data/${id}.json`).then(d => d?.theory?.[0] || null);   // a problem's first theory link
+  const roundHref = id => href(`/practice/interview/${id}/`);
+  const fmt = n => n.toLocaleString('en');
+  const SHORT = {Easy: 'EASY', Medium: 'MED', Hard: 'HARD'}, DCOL = {Easy: 'var(--go)', Medium: 'var(--medium)', Hard: 'var(--bad)'};
+  const RT = {numpy: 'NumPy', python: 'Python', torch: 'PyTorch', jax: 'JAX', pandas: 'pandas', cuda: 'CUDA', triton: 'Triton', sql: 'SQL'};
+  const WORD = ['No', 'One', 'Two', 'Three', 'Four', 'Five'];
+  const ICON = {
+    check: '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--bg)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>',
+    play: c => `<svg width="24" height="24" viewBox="0 0 24 24" fill="${c}" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>`,
+    lock: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--bad)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
+  };
+  const narrow = matchMedia('(max-width: 700px)');
+
+  Promise.all([routes(), json('practice/index.json')]).then(([R, I]) => {
+    const A = state(), evs = events(A), day = today(), s = summary(evs, day);
+    const done = id => !!A.practice?.done?.[id];
+    const P = Object.fromEntries(I.topics.flatMap(m => m.lessons).map(p => [p.id, p]));
+    const plans = Object.fromEntries(I.plans.map(p => [p.id, p])), rounds = Object.fromEntries(I.rounds.map(r => [r.id, r]));
+    const stars = {};                                                   // stars earned per problem (game.js star:* awards)
+    for (const e of evs) if (e.kind.startsWith('star:')) stars[e.ref] = (stars[e.ref] || 0) + 1;
+    // route order: the destination's concepts' problems, in order; sets sort by their first problem on it
+    const D = R.dest[getRoute()], pos = {};
+    (D?.concepts || []).flatMap(c => R.byId[c]?.problems || []).forEach((p, i) => pos[p] ??= i);
+    const first = st => Math.min(...st.problems.map(p => pos[p] ?? Infinity));
+    const onRoute = st => first(st) < Infinity;
+    const byRoute = R.sets.filter(onRoute).sort((a, b) => first(a) - first(b));
+    const todo = st => st.problems.some(p => p in pos && !done(p));     // has an unsolved problem of the route's concepts
+    const q = new URLSearchParams(location.search).get('set');           // ?set=<id> (the problem page's back link) picks it
+    if (q && R.sets.some(x => x.id === q)) { ns('game').set = q; save(); }
+    const pick = () => R.sets.find(x => x.id === ns('game').set) ?? byRoute.find(todo) ?? R.sets[0];
+
+    renderTop(I, A, s, P, evs);
+    renderRail(R, I, D, s, evs, day, rounds, pick());
+    const renderMain = () => renderSets(pick(), {R, A, P, plans, rounds, stars, done, onRoute, byRoute, todo});
+    renderMain();
+    narrow.addEventListener('change', renderMain);
+    $('aMain').addEventListener('click', e => {                         // picking a set makes it the current one
+      const b = e.target.closest('[data-set]'); if (!b) return;
+      ns('game').set = b.dataset.set; save(); renderMain();
+      $('aCur').scrollIntoView({behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start'});
+    });
+    shakeLocked(root);
+  });
+
+  function renderTop(I, A, s, P, evs) {
+    const r = s.rank, solved = Object.values(A.practice?.done || {}).filter(Boolean).length;
+    const pct = Math.round((s.arenaXp - r.at) / (r.next - r.at) * 100);
+    const all = I.topics.flatMap(m => m.lessons), p = all[dailyIndex(today(), all.length)];
+    const n = Math.min(s.week.solves, s.week.target), left = s.week.target - n;
+    $('aTop').innerHTML = `
+      <section class="ar-card ar-rank m-rise"><div class="hd"><span class="lab">ARENA RANK</span><span class="mono k">${fmt(solved)} solved</span></div>
+        <div class="big"><span class="r">Rank ${r.n}</span><span class="mono x">${fmt(s.arenaXp)} XP</span></div>
+        <div class="ar-xbar" role="progressbar" aria-label="Arena XP toward rank ${r.n + 1}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i class="m-fill" style="width:${pct}%"></i></div>
+        <div class="ft">${fmt(r.next - s.arenaXp)} XP to rank ${r.n + 1}</div></section>
+      <a class="ar-potd m-rise" style="--i:1" href="${problemHref(p.id)}">
+        <span class="lab">PROBLEM OF THE DAY · +${XP.potd} BONUS</span><span class="t">${esc(p.t)}</span>
+        <span class="m" id="aPotdM">${p.d} · ${RT[p.rt] || esc(p.rt)}</span>
+        <span class="go">${A.practice?.done?.[p.id] ? 'Solved ✓ · open again →' : 'Solve →'}</span></a>
+      <section class="ar-card ar-week m-rise" style="--i:2"><div class="hd"><span class="lab">THIS WEEK</span><span class="mono">${n} / ${s.week.target}</span></div>
+        <div class="sq" role="img" aria-label="${n} of ${s.week.target} Arena solves this week">${Array.from({length: s.week.target}, (_, i) => `<span class="${i < n ? 'on ' : ''}m-pop" style="animation-delay:${260 + i * 60}ms"></span>`).join('')}</div>
+        <div class="ft">${left ? `${WORD[left]} more for the weekly bonus: +${XP.weekly} XP` : `Weekly bonus earned: +${XP.weekly} XP`}</div></section>`;
+    theory(p.id).then(th => th && $('aPotdM').append(` · theory: ${th.label}`));   // text node: no escaping needed
+  }
+
+  // The current set: nodes in serpentine order (row 1 left→right, row 2 right→left, …), boss last.
+  async function renderSets(set, {R, A, P, plans, rounds, stars, done, onRoute, byRoute, todo}) {
+    const ths = await Promise.all(set.problems.map(theory));
+    const cols = narrow.matches ? 3 : 5, boss = set.boss && rounds[set.boss];
+    const n = set.problems.length, got = set.problems.filter(done).length, open = bossOpen(A, set.problems);
+    const cur = set.problems.findIndex(p => !done(p));
+    const cells = set.problems.map((id, k) => ({id, k})).concat(boss ? [{boss: true, k: n}] : []);
+    const at = k => { const r = Math.floor(k / cols), p = k % cols; return {r: r + 1, c: r % 2 ? cols - p : p + 1}; };
+    const t0 = 280, dt = 100;                                           // node k pops at t0 + k·dt; segment k→k+1 draws just before k+1
+    let segs = '', html = '';
+    for (let k = 0; k + 1 < cells.length; k++) {
+      const a = at(k), b = at(k + 1), green = done(set.problems[k]) && (k + 1 < n ? done(set.problems[k + 1]) : open);
+      const cls = `ar-seg${green ? ' on' : ''}${a.r === b.r ? (a.c > b.c ? ' rtl' : '') : ' v'}`;
+      segs += `<li aria-hidden="true" class="${cls}" style="grid-row:${a.r};grid-column:${a.r === b.r ? Math.min(a.c, b.c) : a.c};animation-delay:${t0 + k * dt + 20}ms"></li>`;
+    }
+    for (const x of cells) {
+      const {r, c} = at(x.k), pos = `grid-row:${r};grid-column:${c};animation-delay:${t0 + x.k * dt}ms`;
+      if (x.boss) {
+        const lab = `Boss · ${esc(boss.title)}`, meta = `<span class="pm" style="color:var(--bad)">TIMED · ${boss.minutes} MIN · NO HINTS</span>`;
+        html += `<li class="ar-cell m-pop" style="${pos}">${open
+          ? `<a class="ar-boss open" href="${roundHref(boss.id)}" aria-label="Boss round: ${esc(boss.title)}, open">${ICON.play('var(--bad)')}</a><span class="pt">${lab}</span>${meta}<a class="th" href="${roundHref(boss.id)}">Start the round →</a>`
+          : `<span class="ar-boss" role="img" data-locked aria-label="Boss round, locked until ${n - 1} solved">${ICON.lock}</span><span class="pt">${lab}</span>${meta}<span class="ar-unl">Unlocks at ${n - 1} / ${n}</span>`}</li>`;
+        continue;
+      }
+      const p = P[x.id] || {t: x.id, d: 'Easy'}, t = esc(p.t), th = ths[x.k], ok = done(x.id), url = problemHref(x.id);
+      const st = stars[x.id] || 0, num = x.k + 1;
+      const node = ok ? `<a href="${url}" class="node done" aria-label="${num}. ${t}, solved">${ICON.check}</a>`
+        : x.k === cur ? `<span class="ar-ring m-here"><a href="${url}" class="node ar-now" aria-label="${num}. ${t}, current">${ICON.play('var(--arena-ink)')}</a></span>`
+        : `<a href="${url}" class="node ar-open" aria-label="${num}. ${t}, open"><span class="mono">${num}</span></a>`;
+      const meta = ok ? `${SHORT[p.d]} · ${st ? `${st} STAR${st > 1 ? 'S' : ''}` : 'SOLVED'}`
+        : x.k === cur ? `<span style="color:${DCOL[p.d]}">${SHORT[p.d]} · +${XP.solve[p.d]} XP</span>` : SHORT[p.d];
+      html += `<li class="ar-cell m-pop" style="${pos}">${node}<span class="pt">${t}</span><span class="pm">${meta}</span>${th ? `<a class="th" href="${esc(th.href)}">Theory: ${esc(th.label)}</a>` : ''}</li>`;
+    }
+    const plan = plans[set.plan];
+    const label = onRoute(set) ? 'ON YOUR ROUTE' : esc((plan?.title || set.plan).toUpperCase());
+
+    // More sets: route sets first (route order), then ones you've started, then the rest; the current one is above.
+    const prog = st => st.problems.filter(done).length;
+    const rest = R.sets.filter(st => !onRoute(st));
+    const others = [...byRoute, ...rest.filter(prog), ...rest.filter(st => !prog(st))].filter(st => st.id !== set.id);
+    const next = byRoute.slice(byRoute.indexOf(set) + 1).find(todo);   // the set after this one on the route
+    const card = (st, i) => {
+      const g = prog(st), m = st.problems.length, all = g === m, pl = plans[st.plan];
+      const lab = all ? 'DONE' : onRoute(st) ? `ON ROUTE${st === next ? ' · NEXT' : ''}` : esc((pl?.group || 'Set').toUpperCase());
+      return `<button type="button" class="ar-set" data-set="${esc(st.id)}"${i >= 8 ? ' hidden' : ''} aria-label="${esc(st.title)}: ${g} of ${m} solved. Make it the current set">
+        <span class="lab">${lab}</span><strong>${esc(st.title)}</strong><span class="s">From ${esc(pl?.title || st.plan)}</span>
+        <span class="u-bar${all ? ' all' : ''}">${g && !all ? `<i class="m-fill" style="width:${Math.round(g / m * 100)}%"></i>` : ''}</span>
+        <span class="mono c${all ? ' ok' : ''}">${all ? '✓ All solved' : `${g} / ${m}`}</span></button>`;
+    };
+    $('aMain').innerHTML = `
+      <section class="ar-cur m-rise" id="aCur" aria-label="Current set">
+        <div class="hd"><div><div class="lab">CURRENT SET · ${label}</div><h1>${esc(set.title)}</h1></div>
+          <div class="st"><span><span class="mono">${got}</span> / ${n} solved</span>${boss ? `<span>${open ? 'Boss round open' : `Boss round unlocks at ${n - 1}`}</span>` : ''}</div></div>
+        <ol class="ar-path" style="--cols:${cols}">${segs}${html}</ol></section>
+      <section class="ar-more m-rise" aria-label="Other sets">
+        <div class="hd"><h2>More sets</h2><a href="${href('/practice/problems/')}">All ${fmt(Object.keys(P).length)} problems</a></div>
+        <div class="grid">${others.map(card).join('')}</div>
+        ${others.length > 8 ? `<button type="button" class="ar-all" id="aAll">Show all ${others.length} sets</button>` : ''}</section>`;
+    $('aAll')?.addEventListener('click', e => { $('aMain').querySelectorAll('.ar-set[hidden]').forEach(b => b.hidden = false); e.currentTarget.remove(); });
+  }
+
+  function renderRail(R, I, D, s, evs, day, rounds, set) {
+    const row = (t, v, bad) => `<div class="row"><span>${t}</span><span class="mono${bad ? ' bad' : ''}">${v}</span></div>`;
+    const per = {};                                                     // solves per day
+    for (const e of evs) if (e.kind === 'solve' && e.d) per[e.d] = (per[e.d] || 0) + 1;
+    const start = addDays(weekOf(day), -77);                            // 12 weeks, Monday-first columns
+    let cal = '', total = 0;
+    for (let i = 0; i < 84; i++) {
+      const d = addDays(start, i), n = per[d] || 0, lv = d > day ? 'f' : Math.min(n, 3);
+      total += n;
+      cal += `<span class="m-pop l${lv}" style="animation-delay:${500 + Math.floor(i / 7) * 40}ms" title="${d}: ${n} solved"></span>`;
+    }
+    const rd = rounds[set.boss] || rounds[D?.finalRound] || I.rounds[0];
+    $('aRail').innerHTML = `
+      <section class="ar-card ar-xp m-slide" style="animation-delay:300ms"><div class="u-h">How Arena XP works</div>
+        ${row('First solve', `+${XP.solve.Easy} to +${XP.solve.Hard}`)}${row('No hints used (star)', `+${XP.nohints}`)}
+        ${row('Theory read first (star)', `+${XP.theory}`)}${row('Under par time (star)', `+${XP.par}`)}${row('Each hint opened', `−${-XP.hint}`, true)}</section>
+      <section class="ar-card ar-cal m-slide" style="animation-delay:380ms"><div class="hd"><span class="u-h">Solve calendar</span><span class="mono">12 weeks</span></div>
+        <div class="g" role="img" aria-label="Problems solved per day, last 12 weeks: ${total} in all">${cal}</div></section>
+      <a class="ar-round m-slide" style="animation-delay:460ms" href="${roundHref(rd.id)}">
+        <span class="lab">INTERVIEW ROUNDS</span><span class="t">${esc(rd.title)}</span>
+        <span class="s">${rd.minutes} min, timed. ${esc(rd.blurb)}</span></a>
+      <a class="ar-rlink m-slide" style="animation-delay:520ms" href="${href('/practice/interview/')}">All ${I.rounds.length} interview rounds →</a>`;
+  }
+</script>

@@ -1,0 +1,41 @@
+---
+// Lesson player: one page per lesson of a concept (concepts.json lessons = "<course key>:<lesson id>").
+// Steps from the lesson's frontmatter, or read + check until it has some (lib/steps.js).
+import Unroll from '../../../layouts/Unroll.astro';
+import LessonPlayer from '../../../components/LessonPlayer.astro';
+import concepts from '../../../content/concepts.json';
+import { getCollection, render } from 'astro:content';
+import { courseData, lessonUrl, key, inlM } from '../../../lib/course.mjs';
+import { routes, buildSteps } from '../../../lib/steps.js';
+import { u } from '../../../lib/url.mjs';
+export async function getStaticPaths() {
+  const dirOf = Object.fromEntries((await getCollection('courses')).map(c => [c.data.key, c.id])), out = [];
+  for (const c of concepts.concepts) for (const ref of c.lessons) {
+    const [ck, id] = ref.split(':'), dir = dirOf[ck], l = dir && (await courseData(dir)).lessons.find(x => x.data.id === id);
+    if (l) out.push({params: {concept: c.id, lesson: l.data.slug}, props: {ref, dir}});   // build.py validates concept lessons
+  }
+  return out;
+}
+const { concept: cid } = Astro.params;
+const { ref, dir } = Astro.props;
+const { course, lessons, modules, math } = await courseData(dir);
+const l = lessons.find(x => x.data.id === ref.split(':')[1]), L = l.data, I = (s: string) => inlM(s, math);
+const C = routes().concepts.find(c => c.id === cid), idx = C.lesson_links.findIndex(x => x.lesson === ref), nx = C.lesson_links[idx + 1];
+const steps = await buildSteps(L, I);
+const read = steps[0].kind === 'read';
+const { Content } = read ? await render(l) : { Content: null };
+const byN = Object.fromEntries(modules.map(m => [m.n, m]));
+// read step only: old in-page links (#l03-02, #m03) and AI Research's block links resolve through this map (as the library page)
+const linkMap = read ? Object.fromEntries([...lessons.map(x => [x.data.id, lessonUrl(dir, byN[x.data.module], x)]), ...modules.map(m => ['m' + m.n, u(`/library/${dir}/${m.slug}/`)])]) : null;
+const data = {
+  ns: course.key, k: key(L.id), n: steps.length, title: L.title, card: !!(L.question && L.answer), courseDir: dir, own: course.css !== 'house', linkMap,
+  concept: {id: cid, title: C.title, lessons: C.lessons}, problems: C.problem_links,
+  next: nx ? u(`/learn/${cid}/${nx.slug}/`) : u(`/learn/${cid}/`), nextT: nx?.t ?? null,
+};
+---
+<Unroll title={`${L.title} · ${C.title}`} description={(L.keyIdeas[0] || L.lead || L.title).replace(/<[^>]+>|[*`$⟦⟧\d]/g, '').slice(0, 200)}>
+  {read && <style slot="head" is:inline set:html={`@layer house, unroll;\n@import url("${u(`/css/${course.css}.css`)}") layer(house);`} />}
+  <LessonPlayer data={data} steps={steps} L={L} I={I} concept={C} idx={idx}>
+    {read && (L.html ? <Fragment set:html={L.html} /> : Content && <Content />)}
+  </LessonPlayer>
+</Unroll>

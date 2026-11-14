@@ -18,11 +18,11 @@ export function due(cards = null) {
   }
   return out;
 }
-// v: 1 again (back tomorrow), 2 hard (same interval), 3 got it (next interval). miss counts "again" grades;
+// v: 1 again (back tomorrow), 2 hard (same interval), 3 got it (next interval), 4 easy (skips an interval). miss counts "again" grades;
 // two make the card a refresher on the Learn path (game.js refreshers), and doing the refresher resets it.
 export function rate(ns, k, v) {
   const st = all()[ns]; st.rev = st.rev || {};
-  const r = st.rev[k] || {box: 0, n: 0}, b = v === 1 ? 0 : v === 2 ? Math.max(1, r.box || 0) : Math.min((r.box || 0) + 1, BOX.length - 1);
+  const r = st.rev[k] || {box: 0, n: 0}, b = v === 1 ? 0 : v === 2 ? Math.max(1, r.box || 0) : Math.min((r.box || 0) + (v === 4 ? 2 : 1), BOX.length - 1);
   st.rev[k] = {box: b, due: addDays(today(), Math.max(1, BOX[b])), n: (r.n || 0) + 1, at: now(), miss: (r.miss || 0) + (v === 1)};
   bump(st); save();
 }

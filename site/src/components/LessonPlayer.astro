@@ -1,0 +1,242 @@
+---
+// Lesson player (mockups/desktop/LessonStep.dc.html) and its completion state (mockups/mobile/MobileComplete.dc.html,
+// desktop and dark). Steps render here at build time, all hidden but the current one; the script below runs them and
+// records progress: ns(<course key>).steps[k] = [iso, …] (+5 XP each, game.js), then done[k]/at[k] (+15 XP).
+// Default slot: the full lesson body for the "read" step.
+import '../styles/screens/lesson.css';
+import { u } from '../lib/url.mjs';
+import { XP } from '../lib/game.js';
+const { data, steps, L, I, concept, idx } = Astro.props;
+const DIFF = {Easy: ['EASY', 'var(--go)'], Medium: ['MED', 'var(--medium)'], Hard: ['HARD', 'var(--bad)']};
+const n = steps.length;
+---
+<div id="lp" class="lp" data-lp={JSON.stringify(data)}>
+  <header class="lp-top">
+    <a href={u(`/learn/${concept.id}/`)} class="lp-x" aria-label="Leave lesson"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></a>
+    <div class="lp-prog" role="progressbar" aria-label={`Step 1 of ${n}`} aria-valuemin="1" aria-valuemax={n} aria-valuenow="1">{steps.map(() => <span />)}</div>
+    <span class="mono lp-xp" id="lpXp" title="XP from this lesson">+0 XP</span>
+    <span class="mono lp-streak" id="lpStreak" title="Day streak">0 DAYS</span>
+  </header>
+
+  <div class="lp-page" id="lpPage">
+    <nav class="lp-nav" aria-label="Lesson steps">
+      <div class="lab">{concept.title.toUpperCase()} · LESSON {idx + 1}</div>
+      <div class="nm" style="--i:1">{L.title}</div>
+      {steps.map((s, i) => <a data-i={i} style={`--i:${i + 2}`}><span class="g" aria-hidden="true">○</span>{s.title}</a>)}
+    </nav>
+
+    <div class="lp-main">
+      {steps.map((s, i) => <section class="lp-step" data-i={i} data-kind={s.kind} data-answer={s.q?.answer} hidden aria-labelledby={`lpH${i}`}>
+        <div class="lp-head">
+          <div class="lab acc">STEP {i + 1} OF {n}</div>
+          <h1 id={`lpH${i}`}>{s.kind === 'read' ? L.title : s.title}</h1>
+          {s.html && <div class="lp-body" set:html={s.html} />}
+          {s.kind === 'check' && <div class="lp-body"><p set:html={I(L.question)} /></div>}
+        </div>
+        {s.kind === 'read' && <div class="lp-read"><div class="prose" id="prose"><slot /></div>
+          {L.blocks.length > 0 && <div id="air-blocks" data-blocks={JSON.stringify(L.blocks)}></div>}</div>}
+        {s.widget && <div class="lp-widget" data-widget={s.widget}></div>}
+        {s.q && <div class="lp-q">
+          <div class="qq" set:html={s.q.q} />
+          <div role="radiogroup" aria-label="Answer" class:list={['lp-opts', {long: s.q.long}]}>
+            {s.q.options.map((o, j) => <button type="button" role="radio" aria-checked="false" class="lp-opt" data-j={j} set:html={o} />)}
+          </div>
+        </div>}
+        {s.q && <div role="status" class="lp-fb right" hidden><strong set:html={s.q.right ? `Right: ${s.q.right}` : 'Right'} /><span set:html={s.q.why} /></div>}
+        {s.q && <div role="status" class="lp-fb wrong" hidden><strong>Not quite</strong><span set:html={s.q.hint || 'Look again and try another answer.'} /></div>}
+        {s.kind === 'check' && <div class="lp-check">
+          <textarea class="lp-ans" aria-label="Your answer" placeholder="Write your answer first. It saves automatically."></textarea>
+          <div class="lp-row"><span class="lp-saved mono" aria-live="polite"></span><button type="button" class="lp-reveal">Show model answer</button></div>
+          <div class="lp-modelbox" hidden>
+            <div class="lp-model"><div class="lab">MODEL ANSWER</div><p set:html={I(L.answer)} />
+              {L.rubric.length > 0 && <><div class="lab">A STRONG ANSWER COVERS</div><ul>{L.rubric.map(x => <li set:html={I(x)} />)}</ul></>}</div>
+            <div class="qq">How did your answer compare?</div>
+            <div role="radiogroup" aria-label="Self-grade" class="lp-opts">
+              {['Missed it', 'Partly', 'Nailed it'].map((t, j) => <button type="button" role="radio" aria-checked="false" class="lp-opt" data-g={j + 1}>{t}</button>)}
+            </div>
+          </div>
+        </div>}
+      </section>)}
+      <div class="lp-act">
+        <button type="button" class="lp-skip" id="lpSkip">Skip step</button>
+        <span class="sp"></span>
+        <button type="button" class="lp-btn check" id="lpCheck" disabled>Check</button>
+        <span class="lp-contw" id="lpContW" hidden><button type="button" class="lp-btn go" id="lpCont">Continue</button></span>
+        <button type="button" class="lp-btn bad" id="lpAgain" hidden>Try again</button>
+      </div>
+    </div>
+
+    <aside class="lp-side">
+      {data.problems.length > 0 && <div class="lp-arena">
+        <div class="lab">USE IT IN THE ARENA</div>
+        {data.problems.map(p => <a href={u(`/arena/p/${p.id}/`)}><span>{p.t}</span>{DIFF[p.d] && <span class="mono d" style={`color:${DIFF[p.d][1]}`}>{DIFF[p.d][0]}</span>}</a>)}
+      </div>}
+      <div class="lp-adds">
+        <div class="lab">WHAT THIS LESSON ADDS</div>
+        <div class="tx">{data.card
+          ? `1 review card joins your deck when you finish: this lesson’s self-check question, back after 1, 3, 7, 14 and 30 days.`
+          : 'No review card: this lesson has no self-check question.'} Every step you finish is +{XP.step} XP, the lesson +{XP.lesson}.</div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="lp-done" id="lpDone" hidden></div>
+</div>
+
+<script>
+  import { load, save, now, stats } from '../lib/progress.js';
+  import { all } from '../lib/store.js';
+  import { lessonDone, XP, GOAL } from '../lib/game.js';
+  import { esc, plural, problemHref } from '../lib/unroll.js';
+
+  const root = document.getElementById('lp'), D = JSON.parse(root.dataset.lp), N = D.n, k = D.k;
+  const st = load(D.ns); st.steps ||= {};
+  const $ = (s, el = root) => el.querySelector(s), $$ = (s, el = root) => [...el.querySelectorAll(s)];
+  const secs = $$('.lp-step'), rows = $$('.lp-nav a'), segs = $$('.lp-prog > span'), bar = $('.lp-prog');
+  const btn = {skip: $('#lpSkip'), check: $('#lpCheck'), cont: $('#lpCont'), contW: $('#lpContW'), again: $('#lpAgain')};
+  // Progress = how many steps are finished (steps[k].length); reopening resumes at the first unfinished one.
+  // ponytail: a count, not a set of indexes, so a skipped step is only "unfinished" until a later step is finished.
+  const doneN = () => Math.min(N, (st.steps[k] || []).length);
+  const t0 = Date.now(), s0 = stats();
+  const tally = {xp: 0, right: 0, asked: 0, seen: new Set()};
+  let cur = doneN() < N ? doneN() : 0, pick = null;
+
+  // finished step i → +5 XP once (never for a step already counted)
+  function finish(i) {
+    const ts = (st.steps[k] ||= []);
+    if (i < ts.length) return false;
+    ts.push(now()); tally.xp += XP.step; save(); paintTop(); return true;
+  }
+  const lessonXp = () => doneN() * XP.step + (st.done[k] ? XP.lesson : 0);
+  function paintTop() {
+    $('#lpXp').textContent = `+${lessonXp()} XP`;
+    const s = stats(); $('#lpStreak').textContent = `${s.streak} ${s.streak === 1 ? 'DAY' : 'DAYS'}`;
+    const d = doneN(), fin = !$('#lpDone').hidden;
+    segs.forEach((g, i) => g.className = fin || i < d && i !== cur ? 'done' : i === cur ? 'cur' : '');
+    bar.setAttribute('aria-valuenow', fin ? N : cur + 1); bar.setAttribute('aria-label', fin ? 'Lesson complete' : `Step ${cur + 1} of ${N}`);
+    rows.forEach((a, i) => {
+      const s = i === cur ? 'cur' : i < d ? 'done' : 'todo';
+      a.dataset.s = s; a.querySelector('.g').textContent = s === 'done' ? '✓' : s === 'cur' ? '●' : '○';
+      if (s === 'cur') a.setAttribute('aria-current', 'step'); else a.removeAttribute('aria-current');
+      if (i <= d && s !== 'cur') a.href = `#step-${i + 1}`; else a.removeAttribute('href');   // done steps and the next one open
+    });
+  }
+
+  // action bar: 'check' | 'cont' | 'again' | 'none' (showing a button replays its pop)
+  function act(mode, float = false) {
+    btn.check.hidden = mode !== 'check'; btn.contW.hidden = mode !== 'cont'; btn.again.hidden = mode !== 'again';
+    btn.skip.hidden = mode === 'cont' || cur >= N - 1;
+    const owed = cur >= doneN();
+    btn.cont.textContent = owed || float ? `Continue · +${XP.step} XP` : 'Continue';
+    $('.m-xp', btn.contW)?.remove();
+    if (mode === 'cont' && float) btn.contW.insertAdjacentHTML('beforeend', `<span class="m-xp mono" aria-hidden="true">+${XP.step} XP</span>`);
+  }
+  const W = import.meta.glob(['../lib/widgets/*.js', '!../lib/widgets/*.test.js']);
+  function show(i) {
+    cur = i; pick = null;
+    secs.forEach((s, j) => s.hidden = j !== i);
+    const sec = secs[i];
+    $$('.lp-opt', sec).forEach(b => { b.dataset.state = 'idle'; b.setAttribute('aria-checked', 'false'); });
+    $$('.lp-fb', sec).forEach(f => f.hidden = true);
+    btn.check.disabled = true;
+    if (sec.dataset.kind === 'check') paintCheck(sec);
+    else act($('.lp-q', sec) ? 'check' : 'cont');
+    $$('[data-widget]:not([data-on])', sec).forEach(el => { el.dataset.on = '1';
+      W[`../lib/widgets/${el.dataset.widget}.js`]?.().then(m => m.mount(el)).catch(e => console.error('widget', e)); });
+    if (sec.dataset.kind === 'read') mountRead();
+    paintTop();
+    if (scrollY > 0) scrollTo({top: 0});
+  }
+
+  // answers: pick → Check → right (finish, Continue) or wrong (shake, Try again)
+  root.addEventListener('click', e => {
+    const o = e.target.closest('.lp-opt'), sec = secs[cur];
+    if (o && o.dataset.j != null && btn.check.hidden === false) {
+      pick = +o.dataset.j; btn.check.disabled = false;
+      $$('.lp-opt', sec).forEach(b => { const on = b === o; b.setAttribute('aria-checked', String(on)); b.dataset.state = on ? 'sel' : 'idle'; });
+    }
+    if (o && o.dataset.g) grade(sec, +o.dataset.g);
+    const a = e.target.closest('.lp-nav a[href]');
+    if (a) { e.preventDefault(); show(+a.dataset.i); }
+  });
+  btn.check.addEventListener('click', () => {
+    const sec = secs[cur], ok = pick === +sec.dataset.answer, o = $(`.lp-opt[data-j="${pick}"]`, sec);
+    if (!tally.seen.has(cur)) { tally.seen.add(cur); tally.asked++; if (ok) tally.right++; }
+    o.dataset.state = ok ? 'right' : 'wrong';
+    $('.lp-fb.right', sec).hidden = !ok; $('.lp-fb.wrong', sec).hidden = ok;
+    act(ok ? 'cont' : 'again', ok && finish(cur));
+  });
+  btn.again.addEventListener('click', () => show(cur));
+  btn.skip.addEventListener('click', () => show(cur + 1));
+  btn.cont.addEventListener('click', () => { finish(cur); cur < N - 1 ? show(cur + 1) : complete(); });
+
+  // check step (lessons without steps): answer box autosaves to notes[k]; the self-grade (grades[k], as the library) finishes it
+  function paintCheck(sec) {
+    const ta = $('.lp-ans', sec), g = st.grades[k]?.g;
+    if (!ta.dataset.on) { ta.dataset.on = '1'; ta.value = st.notes[k] || ''; let t;
+      ta.addEventListener('input', () => { clearTimeout(t); $('.lp-saved', sec).textContent = 'Saving…';
+        t = setTimeout(() => { st.notes[k] = ta.value; save(); $('.lp-saved', sec).textContent = 'Saved'; }, 400); });
+      $('.lp-reveal', sec).addEventListener('click', () => reveal(sec, $('.lp-modelbox', sec).hidden)); }
+    reveal(sec, !!g);
+    $$('[data-g]', sec).forEach(b => { const on = +b.dataset.g === g; b.setAttribute('aria-checked', String(on)); b.dataset.state = on ? 'sel' : 'idle'; });
+    act(g ? 'cont' : 'none');
+  }
+  const reveal = (sec, on) => { $('.lp-modelbox', sec).hidden = !on; $('.lp-reveal', sec).textContent = on ? 'Hide model answer' : 'Show model answer'; };
+  function grade(sec, g) {
+    st.grades[k] = {g, at: now()}; save();
+    if (!tally.seen.has(cur)) { tally.seen.add(cur); tally.asked++; if (g === 3) tally.right++; }
+    $$('[data-g]', sec).forEach(b => { const on = +b.dataset.g === g; b.setAttribute('aria-checked', String(on)); b.dataset.state = on ? 'sel' : 'idle'; });
+    act('cont', finish(cur));
+  }
+
+  // read step: the lesson body with its figures, mounted the first time it shows (as the library lesson page does)
+  let mounted = false;
+  function mountRead() {
+    if (mounted) return; mounted = true;
+    const prose = $('#prose'), map = D.linkMap || {};
+    window.__lessonUrl = map;
+    prose.querySelectorAll('a[href^="#l"], a[href^="#m"]').forEach(a => { const h = a.getAttribute('href').slice(1);
+      const t = h[0] === 'l' ? map[h.slice(1).replace('-', '.')] : map[h]; if (t) a.href = t; });
+    const figs = import.meta.glob('../lib/figs/*.gen.js');
+    if (D.own) figs[`../lib/figs/${D.courseDir}.gen.js`]?.().then(m => m.mount(prose)).catch(e => console.error('figures', e));
+    else Promise.all([import('../lib/figs.gen.js'), import('../lib/scenes.js')]).then(([f, s]) => { f.initFigs(prose); s.initScenes(prose); });
+  }
+
+  // last step → lesson done (+15 XP, as the library's Mark complete), then the completion screen
+  function complete() {
+    const fresh = !st.done[k];
+    if (fresh) { st.done[k] = true; st.at[k] = now(); tally.xp += XP.lesson; save(); }
+    const A = all(), s = stats(), L = D.concept.lessons, nd = L.filter(r => lessonDone(A, r)).length;
+    const p = D.problems.find(x => !A.practice?.done?.[x.id]), sec = Math.round((Date.now() - t0) / 1000);
+    const arc = Math.round(352 * nd / L.length), bumped = s.streak > s0.streak;
+    $('#lpPage').hidden = true;
+    const done = $('#lpDone'); done.hidden = false;
+    done.innerHTML = `<div class="hero">
+        <svg width="132" height="132" viewBox="0 0 132 132" role="img" aria-label="${esc(D.concept.title)}: ${nd} of ${L.length} lessons done">
+          <circle cx="66" cy="66" r="56" fill="none" stroke="var(--line-2)" stroke-width="14"/>
+          ${arc ? `<circle class="arc" cx="66" cy="66" r="56" fill="none" stroke="var(--go)" stroke-width="14" stroke-linecap="round" stroke-dasharray="${arc} 352" transform="rotate(-90 66 66)"/>` : ''}
+          <text x="66" y="62" text-anchor="middle" font-size="32" font-weight="800" fill="var(--ink)">${nd}/${L.length}</text>
+          <text x="66" y="86" text-anchor="middle" font-family="var(--font-mono)" font-size="11" fill="var(--muted)">${esc(D.concept.title.toUpperCase().slice(0, 18))}</text></svg>
+        <h1>Lesson complete</h1><p>${esc(D.title)}</p></div>
+      <div class="tiles">
+        <div class="t xp"><span class="mono">XP</span><strong id="lpXpN">+0</strong></div>
+        <div class="t ok"><span class="mono">CORRECT</span><strong>${tally.asked ? `${tally.right}/${tally.asked}` : '–'}</strong></div>
+        <div class="t tm"><span class="mono">TIME</span><strong>${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}</strong></div></div>
+      <div class="streak"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c1 4 5 5.5 5 10a5 5 0 0 1-10 0c0-2 1-3.5 2.5-4.5C9.5 11 11 12 12 12c-1-3 0-6 0-9z"/></svg>
+        <div><strong><span id="lpSn">${bumped ? s0.streak : s.streak}</span> day streak</strong>
+        <div class="sub">${s.goalMet ? `Daily goal reached · ${GOAL} / ${GOAL} XP` : `${s.today} / ${GOAL} XP today · ${GOAL - s.today} to the daily goal`}</div></div></div>
+      ${p ? `<a class="practise" href="${problemHref(p.id)}"><span class="mono">PRACTISE IT NOW · ARENA</span><strong>${esc(p.t)}</strong>
+        <span class="sub">${p.d ? esc(p.d) + ' · ' : ''}uses what you just learned${XP.solve[p.d] ? ` · +${XP.solve[p.d]} XP` : ''}</span></a>` : ''}
+      <div class="sp"></div>
+      ${fresh && D.card ? `<div class="note">1 new review card added to your deck</div>` : ''}
+      <a class="cta" href="${D.next}">${D.nextT ? `Continue · ${esc(D.nextT)}` : 'Continue'}</a>`;
+    paintTop(); scrollTo({top: 0});
+    // XP counts up, the streak number bumps (MobileComplete timings); instant under reduced motion
+    const xpN = $('#lpXpN'), still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (still || !tally.xp) xpN.textContent = `+${tally.xp}`;
+    else setTimeout(() => { let x = 0; const iv = setInterval(() => { x = Math.min(tally.xp, x + 1); xpN.textContent = `+${x}`; if (x >= tally.xp) clearInterval(iv); }, 30); }, 760);
+    if (bumped) setTimeout(() => { const sn = $('#lpSn'); sn.textContent = s.streak; sn.className = 'm-pop'; }, still ? 0 : 1300);
+  }
+
+  show(cur);
+</script>

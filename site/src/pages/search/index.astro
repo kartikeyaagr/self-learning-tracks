@@ -5,7 +5,7 @@ import { u } from '../../lib/url.mjs';
 ---
 <Site title="Search">
   <link slot="head" rel="stylesheet" href={u('/pagefind/pagefind-ui.css')}>
-  <h1 style="font-size:40px;letter-spacing:-.045em;margin:4px 0 18px">Search</h1>
+  <header class="pagehead"><div class="lab">Search</div><h1>Find a lesson or problem</h1><p>Full-text search across every course and the Arena.</p></header>
   <div id="search"></div>
   <script is:inline define:vars={{ src: u('/pagefind/pagefind-ui.js') }}>
     const s = document.createElement('script'); s.src = src;
@@ -13,5 +13,16 @@ import { u } from '../../lib/url.mjs';
     s.onerror = () => document.getElementById('search').textContent = 'The search index is built with the production build (npm run build).';
     document.head.appendChild(s);
   </script>
-  <style is:global>#search{--pagefind-ui-primary:var(--accent);--pagefind-ui-text:var(--ink);--pagefind-ui-background:var(--card);--pagefind-ui-border:var(--line);--pagefind-ui-font:var(--body)}</style>
+  {/* Pagefind UI in Unroll terms: inset field, 1px line-3 border, radius 10, mono meta, accent links */}
+  <style is:global>
+    #search{max-width:760px;--pagefind-ui-scale:.85;--pagefind-ui-primary:var(--accent);--pagefind-ui-text:var(--ink);--pagefind-ui-background:var(--inset);
+      --pagefind-ui-border:var(--line-3);--pagefind-ui-tag:var(--surface-3);--pagefind-ui-border-width:1px;--pagefind-ui-border-radius:10px;--pagefind-ui-font:var(--font-sans)}
+    #search .pagefind-ui__search-input{font-weight:500}
+    #search .pagefind-ui__message{font:500 12px var(--font-mono);letter-spacing:.06em;color:var(--muted)}
+    #search .pagefind-ui__result{padding:16px 0;border-top:1px solid var(--line)}
+    #search .pagefind-ui__result-link{color:var(--ink)} #search .pagefind-ui__result-link:hover{color:var(--accent)}
+    #search .pagefind-ui__result-excerpt{color:var(--ink-3)}
+    #search mark{background:var(--accent-soft);color:var(--accent);border-radius:3px;padding:0 2px}
+    #search .pagefind-ui__button{border-radius:10px;border:0;border-bottom:3px solid var(--accent-edge);background:var(--accent);color:var(--accent-ink);font-weight:700}
+  </style>
 </Site>

@@ -7,7 +7,8 @@ const tags = [...names, ...[...new Set(ALL.flatMap(l => l.tags))].filter(t => !n
 const tagN = t => ALL.filter(l => l.tags.includes(t)).length;
 ---
 <Practice title="All problems" cur="all">
-  <h1 style="font-size:40px;letter-spacing:-.045em;margin:4px 0 18px">All problems</h1>
+  <header class="pagehead"><div class="lab">Arena · {ALL.length} problems</div><h1>All problems</h1>
+    <p>Every problem in the Arena. Filter by topic, difficulty, runtime or what you have solved.</p></header>
   <div class="card filters">
     <div class="row"><input type="search" id="fq" placeholder="Search titles and tags" aria-label="Search">
       <select id="fd" aria-label="Difficulty"><option value="">Any difficulty</option>{['Easy', 'Medium', 'Hard'].map(d => <option>{d}</option>)}</select>

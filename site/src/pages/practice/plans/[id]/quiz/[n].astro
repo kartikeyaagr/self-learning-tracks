@@ -13,13 +13,13 @@ const { pl, sec, si, qs } = Astro.props;
 ---
 <Practice title={`${sec.name} quiz`} cur="plans" crumbs={[['Study plans', u('/arena/')], [pl.title, u(`/practice/plans/${pl.id}/`)], ['Quiz', Astro.url.pathname]]}>
   <div class="rv" style="max-width:760px">
-    <div class="lab">{pl.title} · Section {si + 1}</div>
-    <h1 style="font-size:34px;letter-spacing:-.045em;margin:6px 0 4px">{sec.name} quiz</h1>
-    <p style="color:var(--muted);margin:0 0 20px">{qs.length} questions<span id="best"></span>. Answer them all, then check.</p>
+    <header class="pagehead"><div class="lab">{pl.title} · Section {si + 1} quiz</div>
+    <h1>{sec.name}</h1>
+    <p>{qs.length} questions<span id="best"></span>. Answer them all, then check.</p></header>
     <form id="qz" data-k={`${pl.id}:${si}`} data-ans={JSON.stringify(qs.map(x => x.answer))}>
-      {qs.map((x, i) => <fieldset class="card blk qq" style="margin-top:14px;border:1px solid var(--line)"><legend class="lab" style="padding:0 6px">Question {i + 1}</legend>
+      {qs.map((x, i) => <fieldset class="card blk qq" style="margin-top:12px"><legend class="lab">Question {i + 1}</legend>
         <p class="q" style="font-size:17px" set:html={inl(x.q)} />
-        {x.options.map((o, j) => <label style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:10px;cursor:pointer"><input type="radio" name={`q${i}`} value={j} style="margin-top:5px"><span set:html={inl(o)} /></label>)}
+        {x.options.map((o, j) => <label><input type="radio" name={`q${i}`} value={j}><span set:html={inl(o)} /></label>)}
         <div class="sample why" style="margin-top:10px" hidden><div class="lab">Why</div><p set:html={inl(x.why)} /></div></fieldset>)}
       <div class="done-zone" style="margin-top:24px"><button type="submit" class="btn" id="chk">Check answers</button><p><a href={u(`/practice/plans/${pl.id}/`)}>← Back to the plan</a></p></div>
     </form>
