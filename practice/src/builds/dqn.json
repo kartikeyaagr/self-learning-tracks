@@ -1,0 +1,16 @@
+{"id": "dqn", "kind": "paper", "group": "Reinforcement learning and alignment",
+ "title": "Human-level control through deep reinforcement learning", "authors": "Mnih et al.", "year": 2015,
+ "url": "https://www.nature.com/articles/nature14236",
+ "blurb": "Learned to play dozens of Atari games from pixels with a single Q-learning agent, stabilised by experience replay and a periodically updated target network.",
+ "intro": "DQN is Q-learning with a convolutional network as the Q-function. Two additions make the combination stable: transitions are stored in a replay buffer and sampled at random, and the bootstrapped targets come from a frozen copy of the network that is refreshed only occasionally. The steps build tabular Q-learning, $\\epsilon$-greedy exploration, the replay buffer, the target-network loss and the later Double, Dueling and prioritised-replay improvements; the capstone runs the whole training loop on a chain environment.",
+ "steps": [
+  {"name": "Tabular Q-learning", "problem": "q-learning-update"},
+  {"name": "$\\epsilon$-greedy action selection", "problem": "epsilon-greedy-action-selection"},
+  {"name": "Experience replay buffer", "problem": "experience-replay-buffer"},
+  {"name": "Huber loss against a target network", "problem": "dqn-loss-with-target-network"},
+  {"name": "Double DQN targets", "problem": "double-dqn-target", "note": "Later work that reduces overestimation."},
+  {"name": "Dueling architecture", "problem": "dueling-dqn-decomposition"},
+  {"name": "Prioritised replay", "problem": "prioritized-experience-replay"}
+ ],
+ "capstone": "dqn-chain-training-loop",
+ "lessons": ["air-fanout-v1:07.03", "dlcore:08.04"]}

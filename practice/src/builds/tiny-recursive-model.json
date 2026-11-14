@@ -1,0 +1,13 @@
+{"id": "tiny-recursive-model", "kind": "paper", "group": "Sequence models and embeddings",
+ "title": "Less is More: Recursive Reasoning with Tiny Networks", "authors": "Jolicoeur-Martineau", "year": 2025,
+ "url": "https://arxiv.org/abs/2510.04871",
+ "blurb": "A two-layer network applied recursively to a latent scratchpad and an answer, trained with deep supervision, beats much larger models on Sudoku, mazes and ARC-AGI puzzles.",
+ "intro": "TRM simplifies the earlier Hierarchical Reasoning Model to one tiny network and three nested loops: latent recursion (update the scratchpad $z$ several times, then the answer $y$), deep recursion (repeat that, backpropagating only through the last pass), and deep supervision (repeat the whole thing with a loss each time and a learned halting signal). The steps review the small pieces it reuses; the capstone runs the full supervision loop.",
+ "steps": [
+  {"name": "MLP forward pass", "problem": "multi-layer-perceptron-forward-pass"},
+  {"name": "RMSNorm and a gated MLP", "problem": "norm-gated-linear-transform", "note": "The block TRM's tiny network is made of."},
+  {"name": "Cross-entropy from logits", "problem": "cross-entropy-logits"},
+  {"name": "Binary cross-entropy for the halting head", "problem": "log-loss-binary-cross-entropy"},
+  {"name": "Early stopping logic", "problem": "early-stopping"}
+ ],
+ "capstone": "tiny-recursive-model-supervision"}

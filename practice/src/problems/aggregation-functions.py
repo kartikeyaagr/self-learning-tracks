@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Benchmark summary statistics', tags=['Probability and Statistics', 'Data Processing'], diff='Easy',
-            runtime='numpy', lessons=['ieng:04.05', 'mlmaths:10.04'], related=['random-array-generation', 'row-extremes', 'winsorize'])
+            runtime='numpy', lessons=['ieng:04.05', 'mlmaths:10.15'], related=['random-array-generation', 'row-extremes', 'winsorize'])
 
 STATEMENT = r"""
 You timed several model configurations, running each one repeatedly. The timings form a matrix `times` of shape `(runs, configs)`: row `r` is run number `r`, column `c` is configuration `c`.

@@ -1,0 +1,14 @@
+{"id": "densenet", "kind": "paper", "group": "Convolutional networks",
+ "title": "Densely Connected Convolutional Networks", "authors": "Huang et al.", "year": 2017,
+ "url": "https://arxiv.org/abs/1608.06993",
+ "blurb": "Connects every layer in a block to all earlier layers by concatenation, so features are reused and each layer can be very narrow.",
+ "intro": "A dense block keeps a growing stack of feature maps: each layer reads the whole stack and appends $k$ new channels. Bottleneck 1×1 convolutions keep the 3×3 layers cheap, and transition layers compress channels and halve the resolution between blocks. The steps cover the convolution, normalisation and pooling pieces; the capstone builds a DenseNet-BC from blocks and transitions.",
+ "steps": [
+  {"name": "Multi-channel convolution", "problem": "multichannel-2d-convolution"},
+  {"name": "Batch normalisation", "problem": "batch-normalization"},
+  {"name": "1×1 bottlenecks and their savings", "problem": "depthwise-separable-convolution", "note": "Counting how cheap convolutions reduce cost, the motivation for the BC variant."},
+  {"name": "Average pooling for transitions", "problem": "average-pool-2d"},
+  {"name": "Global average pooling", "problem": "adaptive-average-pool-2d"}
+ ],
+ "capstone": "densenet-tiny-forward",
+ "lessons": ["dlcore:03.05", "dlcore:03.04"]}

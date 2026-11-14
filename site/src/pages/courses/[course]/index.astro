@@ -1,0 +1,46 @@
+---
+import Site from '../../../layouts/Site.astro';
+import CourseSide from '../../../components/CourseSide.astro';
+import { getCollection } from 'astro:content';
+import { courseData, lessonUrl, key } from '../../../lib/course.mjs';
+export async function getStaticPaths() { return (await getCollection('courses')).map(c => ({params: {course: c.id}})); }
+const { course: courseId } = Astro.params;
+const { course, lessons, modules } = await courseData(courseId);
+const first = modules[0], firstL = first.lessons[0];
+const mins = l => l.data.mins || Math.max(2, Math.ceil(((l.body || '') + (l.data.html || '').replace(/<[^>]+>/g, ' ')).split(/\s+/).length / 180));
+const byN = Object.fromEntries(modules.map(m => [m.n, m]));
+---
+<Site title={course.title} description={course.description} course={course} courseId={courseId} side>
+  <CourseSide slot="side" course={course} courseId={courseId} modules={modules} />
+  <section class="hero panel" style="min-height:0">
+    <div class="lab">{modules.length} modules · {lessons.length} lessons</div>
+    <h1 set:html={course.hero} />
+    <div class="hrow">
+      <a class="note" id="cont" href={lessonUrl(courseId, first, firstL)} style="text-decoration:none">
+        <div class="lab">Start here · {firstL.data.id} · {mins(firstL)} min</div>
+        <h3>{firstL.data.title}</h3>
+        <span class="btn">Start learning <span class="xp">+10 XP</span></span>
+      </a>
+      <div><p class="hbody">{course.description}</p></div>
+    </div>
+  </section>
+  <div class="sh"><h2>Course map</h2><span class="lab" id="cnt">0 / {lessons.length} lessons</span></div>
+  {course.parts.map((P, pi) => <>
+    <div class="parth"><span class="lab">Part {pi + 1}</span><h3>{P.t}</h3></div>
+    <div class="mods">{P.m.map(n => byN[n]).filter(Boolean).map(m => (
+      <a class="card mcard" href={`/courses/${courseId}/${m.slug}/`}>
+        <div class="tp"><span class="no" style="font:500 26px/1 var(--mono);color:var(--faint)">{m.n}</span></div>
+        <h4>{m.name}</h4>
+        <div class="seg" aria-hidden="true">{m.lessons.map(l => <i data-lk={key(l.data.id)}></i>)}</div>
+        <div class="ft"><span>{m.lessons.length} lessons</span><span>~{m.lessons.reduce((a, l) => a + mins(l), 0)} min</span></div>
+      </a>))}</div>
+  </>)}
+  {course.footnote && <p class="foot-note">{course.footnote}</p>}
+  <script define:vars={{ courseKey: course.key, order: lessons.map(l => [key(l.data.id), l.data.title, lessonUrl(courseId, byN[l.data.module], l)]) }}>
+    const st = (() => { try { return JSON.parse(localStorage.getItem(courseKey) || '{}'); } catch { return {}; } })(), done = st.done || {};
+    const n = order.filter(([k]) => done[k]).length, nx = order.find(([k]) => !done[k]);
+    document.getElementById('cnt').textContent = `${n} / ${order.length} lessons`;
+    if (n && nx) { const c = document.getElementById('cont'); c.href = nx[2]; c.querySelector('h3').textContent = nx[1]; c.querySelector('.lab').textContent = 'Continue'; c.querySelector('.btn').firstChild.textContent = 'Continue '; }
+    document.querySelectorAll('.seg i[data-lk]').forEach(i => { if (done[i.dataset.lk]) i.classList.add('on'); });
+  </script>
+</Site>

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Project vectors onto a direction', tags=['Linear Algebra'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:06.03', 'mlmaths:06.01'], related=['dot-product', 'gram-schmidt-orthogonalization', 'orthogonal-projection-matrix'])
+            lessons=['mlmaths:06.13', 'mlmaths:06.01'], related=['dot-product', 'gram-schmidt-orthogonalization', 'orthogonal-projection-matrix'])
 
 STATEMENT = r"""
 The projection of $x$ onto the line spanned by a non-zero vector $u$ is the closest point to $x$ on that line:

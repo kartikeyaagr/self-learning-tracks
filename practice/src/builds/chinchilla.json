@@ -1,0 +1,16 @@
+{"id": "chinchilla", "kind": "paper", "group": "Training and optimization",
+ "title": "Training Compute-Optimal Large Language Models", "authors": "Hoffmann et al.", "year": 2022,
+ "url": "https://arxiv.org/abs/2203.15556",
+ "blurb": "Found that model size and training tokens should scale roughly equally with compute, about 20 tokens per parameter, and showed a smaller model trained on more data beats a larger undertrained one.",
+ "intro": "The paper trains hundreds of models across sizes and token counts and estimates the compute-optimal split three ways: from the lower envelope of training curves, from IsoFLOP profiles, and from a parametric fit $L = E + A/N^\\alpha + B/D^\\beta$. The steps build FLOP counting, compute budgets, power-law fits with and without a loss floor, the IsoFLOP exponent and allocation rules; the capstone fits the parametric loss and derives the optimal model and data size for several budgets.",
+ "steps": [
+  {"name": "Counting transformer training FLOPs", "problem": "transformer-training-flop-estimator"},
+  {"name": "Compute budgets and wall-clock", "problem": "training-compute-budget"},
+  {"name": "Power-law fit in log space", "problem": "power-law-log-fit"},
+  {"name": "Power law with a loss floor", "problem": "saturating-power-law-fit"},
+  {"name": "Exponent from an IsoFLOP sweep", "problem": "isoflop-sweep-exponent", "note": "The paper's second approach."},
+  {"name": "Compute-optimal size from a fitted loss", "problem": "chinchilla-compute-optimal"},
+  {"name": "Fixed tokens-per-parameter split", "problem": "fixed-ratio-budget-split"}
+ ],
+ "capstone": "chinchilla-parametric-fit",
+ "lessons": ["air-fanout-v1:13.05"]}

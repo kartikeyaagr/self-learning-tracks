@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Batched outer products', tags=['Linear Algebra'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:04.04', 'air-fanout-v1:01.03'], related=['dot-product', 'matrix-rank', 'svd-components'])
+            lessons=['mlmaths:04.17', 'air-fanout-v1:01.03'], related=['dot-product', 'matrix-rank', 'svd-components'])
 
 STATEMENT = r"""
 The outer product of $u \in \mathbb{R}^m$ and $v \in \mathbb{R}^n$ is the $m \times n$ matrix

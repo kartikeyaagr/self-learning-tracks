@@ -1,0 +1,13 @@
+{"id": "ppo", "kind": "paper", "group": "Reinforcement learning and alignment",
+ "title": "Proximal Policy Optimization Algorithms", "authors": "Schulman et al.", "year": 2017,
+ "url": "https://arxiv.org/abs/1707.06347",
+ "blurb": "Got most of the stability of trust-region policy optimisation with a simple clipped objective that allows several epochs of minibatch updates per rollout.",
+ "intro": "PPO alternates between collecting a rollout and optimising a surrogate objective on it for several epochs. Clipping the probability ratio between the new and old policies stops each update from moving the policy too far from the one that collected the data. Advantages come from generalised advantage estimation with a learned value function, trained jointly with an entropy bonus. The steps build discounted returns, GAE, the actor-critic loss and the clipped surrogate; the capstone is the full multi-epoch update.",
+ "steps": [
+  {"name": "Discounted returns", "problem": "discounted-returns"},
+  {"name": "Generalised advantage estimation", "problem": "gae-advantages"},
+  {"name": "Actor-critic loss with entropy", "problem": "actor-critic-a2c-loss-with-entropy"},
+  {"name": "Clipped surrogate objective", "problem": "ppo-clipped-surrogate-objective"}
+ ],
+ "capstone": "ppo-update-epochs",
+ "lessons": ["air-fanout-v1:07.04", "dlcore:08.06"]}

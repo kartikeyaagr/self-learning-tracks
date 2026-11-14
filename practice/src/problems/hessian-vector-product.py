@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Hessian-vector products, forward over reverse', tags=['JAX', 'Optimization', 'Calculus'], diff='Medium',
-            runtime='jax', lessons=['mlmaths:09.04'], related=['value-and-grad-of-loss', 'convexity-certificate-via-hessian'],
+            runtime='jax', lessons=['mlmaths:09.28'], related=['value-and-grad-of-loss', 'convexity-certificate-via-hessian'],
             tol=[1e-4, 1e-5])
 
 STATEMENT = r"""

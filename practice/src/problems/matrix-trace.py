@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Trace of a product without the product', tags=['Linear Algebra'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:05.02'], related=['matrix-multiply', 'hadamard-product', 'eigendecomposition'])
+            lessons=['mlmaths:05.07'], related=['matrix-multiply', 'hadamard-product', 'eigendecomposition'])
 
 STATEMENT = r"""
 The trace of a square matrix is the sum of its diagonal, $\operatorname{tr}(M) = \sum_i M_{ii}$. It shows up in Frobenius norms ($\lVert A\rVert_F^2 = \operatorname{tr}(A^\top A)$), in matrix calculus, and it equals the sum of the eigenvalues.

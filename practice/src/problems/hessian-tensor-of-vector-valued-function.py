@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Hessian tensor of a gated linear unit', tags=['Calculus', 'Neural Networks'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:09.04', 'mlmaths:09.03'],
+            lessons=['mlmaths:09.28', 'mlmaths:09.21'],
             related=['jacobian-of-neural-network-layer', 'second-order-partial-derivatives', 'taylor-approximation-of-loss-landscape'])
 
 STATEMENT = r"""

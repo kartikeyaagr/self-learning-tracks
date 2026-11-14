@@ -1,0 +1,16 @@
+{"id": "gpt-2", "kind": "paper", "group": "Transformers and LLMs",
+ "title": "Language Models are Unsupervised Multitask Learners", "authors": "Radford et al.", "year": 2019,
+ "url": "https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf",
+ "blurb": "Trained a 1.5B-parameter decoder-only Transformer on a large web corpus and showed it could perform many tasks zero-shot from a prompt.",
+ "intro": "GPT-2 is the template for modern decoder-only models: byte-level BPE, learned token and position embeddings, pre-LN blocks with causal multi-head attention and a GELU MLP, a final LayerNorm, and an output layer tied to the token embeddings. The steps go from the tokenizer to sampling; the capstone runs the forward pass and generates text greedily, including the context-window crop.",
+ "steps": [
+  {"name": "Train a byte-level BPE vocabulary", "problem": "train-deterministic-bpe-vocabulary"},
+  {"name": "Encode with ranked merges", "problem": "apply-ranked-bpe-merges"},
+  {"name": "Causal multi-head self-attention", "problem": "scaled-dot-product-attention-2"},
+  {"name": "GELU and other activations", "problem": "activation-functions"},
+  {"name": "Layer normalization", "problem": "layer-norm"},
+  {"name": "Language-model loss and perplexity", "problem": "perplexity-computation"},
+  {"name": "Temperature, top-k and top-p sampling", "problem": "text-generation-sampling"}
+ ],
+ "capstone": "gpt2-greedy-generate",
+ "lessons": ["air-fanout-v1:06.03", "aieng:05.01", "aieng:05.03"]}

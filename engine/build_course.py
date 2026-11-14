@@ -30,6 +30,7 @@ def check_lesson(L, where):
     for r in L['r']:
         assert isinstance(r, list) and len(r) == 3 and r[1].startswith('https://'), f'{where}: bad source {r}'
     L.setdefault('k', []); L.setdefault('x', []); L.setdefault('ak', '')
+    assert isinstance(L.get('rubric', []), list) and all(isinstance(x, str) and x for x in L.get('rubric', [])), f'{where}: rubric is a list of strings'
     return L
 
 

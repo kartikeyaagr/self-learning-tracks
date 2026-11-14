@@ -1,0 +1,16 @@
+{"id": "llama", "kind": "paper", "group": "Transformers and LLMs",
+ "title": "LLaMA: Open and Efficient Foundation Language Models", "authors": "Touvron et al.", "year": 2023,
+ "url": "https://arxiv.org/abs/2302.13971",
+ "blurb": "Showed that smaller decoder-only models trained on more tokens can match much larger ones, using a block design (RMSNorm, RoPE, SwiGLU) that most open models now share.",
+ "intro": "The LLaMA block is a pre-norm decoder block with three substitutions: RMSNorm for LayerNorm, rotary position embeddings applied to queries and keys, and a SwiGLU feed-forward network. LLaMA 2 added grouped-query attention for its larger models. Each step builds one of these parts in isolation; the capstone stacks them into a full forward pass, and the last step shows how the model is decoded with a KV cache.",
+ "steps": [
+  {"name": "RMSNorm", "problem": "rmsnorm-forward-pass"},
+  {"name": "Rotary position embeddings", "problem": "rotary-position-embedding-rope", "note": "Both the interleaved and the rotate-half layouts."},
+  {"name": "SwiGLU feed-forward", "problem": "parameter-matched-swiglu-block", "note": "Why the hidden width is about $\\tfrac{8}{3}D$."},
+  {"name": "RMSNorm plus gated MLP", "problem": "norm-gated-linear-transform"},
+  {"name": "Grouped-query attention", "problem": "causal-grouped-query-attention"},
+  {"name": "From MHA to GQA weights", "problem": "grouped-query-attention-gqa"},
+  {"name": "Decoding with a KV cache", "problem": "autoregressive-decoding-with-kv-cache"}
+ ],
+ "capstone": "llama-decoder-forward",
+ "lessons": ["air-fanout-v1:08.01", "aieng:04.01", "aieng:04.03"]}

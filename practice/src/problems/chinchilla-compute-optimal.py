@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Compute-optimal model and data size from a fitted loss', tags=['Scaling Laws', 'Optimization'], diff='Medium',
-            runtime='numpy', lessons=['mlmaths:09.08'], related=['fixed-ratio-budget-split', 'training-compute-budget', 'isoflop-sweep-exponent'])
+            runtime='numpy', lessons=['mlmaths:09.52'], related=['fixed-ratio-budget-split', 'training-compute-budget', 'isoflop-sweep-exponent'])
 
 STATEMENT = r"""
 A widely used scaling-law form models the final pretraining loss of a model with $N$ parameters trained on $D$ tokens as

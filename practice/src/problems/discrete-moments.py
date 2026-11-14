@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Moments of a discrete distribution', tags=['Probability'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:10.04', 'mlmaths:10.05'], related=['skewness-and-kurtosis', 'binomial-distribution'])
+            lessons=['mlmaths:10.15', 'mlmaths:10.25'], related=['skewness-and-kurtosis', 'binomial-distribution'])
 
 STATEMENT = r"""
 A discrete random variable takes value $v_i$ with probability $p_i$. Its moments are expectations:

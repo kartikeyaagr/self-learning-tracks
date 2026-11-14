@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Linear SVM with Pegasos-style SGD', tags=['Classification', 'Optimization'], diff='Hard', runtime='numpy',
-            lessons=['mlmaths:09.08'], related=['averaged-perceptron', 'logistic-regression'])
+            lessons=['mlmaths:09.52'], related=['averaged-perceptron', 'logistic-regression'])
 
 STATEMENT = r"""
 A soft-margin linear SVM minimises the regularised hinge loss

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Gaussian mixture model fitted with EM', tags=['Clustering', 'Probability'], diff='Hard', runtime='numpy',
-            lessons=['mlmaths:12.02', 'mlmaths:11.05'], related=['k-means-clustering', 'gaussian-naive-bayes'])
+            lessons=['mlmaths:12.10', 'mlmaths:11.25'], related=['k-means-clustering', 'gaussian-naive-bayes'])
 
 STATEMENT = r"""
 A Gaussian mixture models data as coming from $K$ Gaussians with mixing weights $\pi_k$, means $\mu_k$ and full covariances $\Sigma_k$:

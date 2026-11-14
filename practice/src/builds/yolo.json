@@ -1,0 +1,13 @@
+{"id": "yolo", "kind": "paper", "group": "Vision and detection",
+ "title": "You Only Look Once: Unified, Real-Time Object Detection", "authors": "Redmon et al.", "year": 2015,
+ "url": "https://arxiv.org/abs/1506.02640",
+ "blurb": "Framed detection as one regression from the image to a grid of boxes and class probabilities, running in real time with a single network pass.",
+ "intro": "YOLO divides the image into a grid; each cell predicts a few boxes with confidences and one class distribution, and everything is trained with a weighted sum-squared loss. At test time, class-specific scores are thresholded and duplicates removed with non-maximum suppression. The steps build IoU, box encodings, NMS and a modern box-regression loss; the capstone is the YOLO v1 training loss.",
+ "steps": [
+  {"name": "IoU between box sets", "problem": "iou-matrix"},
+  {"name": "Box encoding and decoding", "problem": "box-encode-and-decode"},
+  {"name": "Non-maximum suppression", "problem": "non-maximum-suppression"},
+  {"name": "Generalised IoU loss", "problem": "generalized-iou-loss", "note": "What later YOLO versions use instead of squared error on coordinates."}
+ ],
+ "capstone": "yolo-v1-loss",
+ "lessons": ["dlcore:04.02", "dlcore:04.03"]}

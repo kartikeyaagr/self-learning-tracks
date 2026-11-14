@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Fitting an exponential lifetime with censoring', tags=['Probability', 'Probability and Statistics'], diff='Medium',
-            runtime='numpy', lessons=['mlmaths:10.06', 'mlmaths:12.02'], related=['poisson-distribution', 'maximum-likelihood-estimation'])
+            runtime='numpy', lessons=['mlmaths:10.35', 'mlmaths:12.10'], related=['poisson-distribution', 'maximum-likelihood-estimation'])
 
 STATEMENT = r"""
 Exponential waiting times with rate $\lambda$ have density $f(t) = \lambda e^{-\lambda t}$ and survival function $S(t) = P(T > t) = e^{-\lambda t}$, so the mean is $1/\lambda$ and the median is $\ln 2 / \lambda$.

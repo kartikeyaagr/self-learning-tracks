@@ -1,0 +1,14 @@
+{"id": "lstm", "kind": "paper", "group": "Sequence models and embeddings",
+ "title": "Long Short-Term Memory", "authors": "Hochreiter & Schmidhuber", "year": 1997,
+ "url": "https://doi.org/10.1162/neco.1997.9.8.1735",
+ "blurb": "Adds a gated, additively updated memory cell to recurrent networks so error signals can flow across long time lags.",
+ "intro": "The LSTM keeps a cell state that is updated additively and protected by multiplicative gates: input and output gates in the original paper, and the forget gate added by Gers et al. in 2000, which every modern LSTM includes. The steps build the gates, a single cell forward and backward, and a bidirectional LSTM; the capstone evaluates an LSTM language model over a padded batch.",
+ "steps": [
+  {"name": "Stable sigmoid (the gate nonlinearity)", "problem": "sigmoid-stable"},
+  {"name": "LSTM cell: forward and backward", "problem": "lstm-cell"},
+  {"name": "Bidirectional LSTM over a padded batch", "problem": "lstm-cell-2"},
+  {"name": "Perplexity with a padding mask", "problem": "perplexity-computation"},
+  {"name": "Gradient clipping", "problem": "gradient-clipping"}
+ ],
+ "capstone": "lstm-language-model-loss",
+ "lessons": ["dlcore:05.02"]}

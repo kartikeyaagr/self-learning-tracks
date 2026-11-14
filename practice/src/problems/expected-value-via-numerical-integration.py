@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title="Moments of a density with Simpson's rule", tags=['Calculus', 'Probability'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:10.04', 'mlmaths:09.06'],
+            lessons=['mlmaths:10.15', 'mlmaths:09.39'],
             related=['kl-divergence-discrete-and-continuous', 'area-under-roc-curve-via-trapezoidal-rule'])
 
 STATEMENT = r"""

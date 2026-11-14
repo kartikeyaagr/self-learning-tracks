@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='A/B test: two-proportion z-test', tags=['Probability and Statistics', 'Metrics & Evaluation'], diff='Medium',
-            runtime='numpy', lessons=['mlmaths:12.03'], related=['z-test-one-sample', 'p-values-and-significance', 'binomial-distribution'])
+            runtime='numpy', lessons=['mlmaths:12.17'], related=['z-test-one-sample', 'p-values-and-significance', 'binomial-distribution'])
 
 STATEMENT = r"""
 Variant A converted $x_A$ of $n_A$ users and variant B converted $x_B$ of $n_B$. With $\hat p_A = x_A / n_A$ and $\hat p_B = x_B / n_B$, the difference is $d = \hat p_B - \hat p_A$.

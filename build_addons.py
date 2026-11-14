@@ -62,7 +62,7 @@ def inject(dirname, cfg):
         assert m['n'] not in have, f'{dirname}: add-on module {m["n"]} clashes with an existing module'
         mm = {'n': m['n'], 'name': m['name'], 'addon': True, 'lessons': [lesson_for(dirname, L) for L in m['lessons']]}
         if cfg['desc']:
-            mm[cfg['desc']] = cfg['descs'][m['n']]
+            mm[cfg['desc']] = cfg.get('descs', {}).get(m['n']) or m.get('desc', '')
         if dirname == 'ml-maths-course':
             mm['diag'] = ''
         modules.append(mm)
@@ -90,11 +90,12 @@ def inject(dirname, cfg):
         parts = [[t, int(a), int(b)] for t, a, b in parts]
         for m in mods:
             n = int(m['n'])
-            if m['n'] in cfg.get('new_parts', {}):
-                if not any(p[0] == cfg['new_parts'][m['n']] for p in parts):
-                    parts.append([cfg['new_parts'][m['n']], n, n])
+            title = cfg.get('new_parts', {}).get(m['n']) or m.get('part')   # a module file may name its part
+            if title:
+                if not any(p[0] == title for p in parts):
+                    parts.append([title, n, n])
                 else:
-                    next(p for p in parts if p[0] == cfg['new_parts'][m['n']])[2] = n
+                    next(p for p in parts if p[0] == title)[2] = n
             elif not any(p[1] <= n <= p[2] for p in parts):
                 parts[-1][2] = max(parts[-1][2], n)     # extend the last part
         lit = '[' + ', '.join(f"{{t:'{t}', a:{a}, b:{b}}}" for t, a, b in parts) + ']'

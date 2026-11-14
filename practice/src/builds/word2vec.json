@@ -1,0 +1,14 @@
+{"id": "word2vec", "kind": "paper", "group": "Sequence models and embeddings",
+ "title": "Distributed Representations of Words and Phrases and their Compositionality", "authors": "Mikolov et al.", "year": 2013,
+ "url": "https://arxiv.org/abs/1310.4546",
+ "blurb": "Learns word vectors by predicting context words, made fast with negative sampling and subsampling of frequent words.",
+ "intro": "The skip-gram model learns one input vector and one output vector per word so that a word's input vector predicts the output vectors of its neighbours. A full softmax over the vocabulary is too slow, so the paper replaces it with negative sampling: a logistic loss that separates the true context from a few words drawn from a flattened unigram distribution. The steps build the vocabulary, the training data, the loss and the evaluation; the capstone runs a full SGD epoch.",
+ "steps": [
+  {"name": "Build a vocabulary", "problem": "vocabulary-building"},
+  {"name": "Subsampling, dynamic windows and the noise distribution", "problem": "word2vec-training-pairs"},
+  {"name": "One negative-sampling update", "problem": "word2vec", "note": "The gradient of the SGNS loss for a single pair."},
+  {"name": "Repeated ids in embedding gradients", "problem": "fancy-indexing"},
+  {"name": "Nearest neighbours in the learned space", "problem": "embedding-similarity"}
+ ],
+ "capstone": "word2vec-sgns-epoch",
+ "lessons": ["dlcore:06.04"]}

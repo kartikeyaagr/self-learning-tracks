@@ -1,5 +1,5 @@
 META = dict(title='Determinant by cofactor expansion', tags=['Linear Algebra'], diff='Easy', runtime='python',
-            lessons=['mlmaths:03.02'], related=['matrix-rank', 'lu-decomposition', 'solve-linear-system'])
+            lessons=['mlmaths:03.10'], related=['matrix-rank', 'lu-decomposition', 'solve-linear-system'])
 
 STATEMENT = r"""
 The determinant of a square matrix measures how the linear map scales volume (and whether it flips orientation). It is zero exactly when the matrix is singular.

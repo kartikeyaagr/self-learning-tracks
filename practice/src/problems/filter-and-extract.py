@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Rows inside a bounding box', tags=['Data Processing'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:02.03'], related=['boolean-masking', 'row-extremes'])
+            lessons=['mlmaths:02.18'], related=['boolean-masking', 'row-extremes'])
 
 STATEMENT = r"""
 Write `rows_in_box(X, lo, hi)` that keeps the rows of a data matrix whose every feature lies inside a per-feature range, and reports where those rows came from.

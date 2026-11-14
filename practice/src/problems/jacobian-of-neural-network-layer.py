@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Every Jacobian of a tanh layer', tags=['Calculus', 'Neural Networks'], diff='Hard', runtime='numpy',
-            lessons=['mlmaths:09.04', 'air-fanout-v1:01.09'],
+            lessons=['mlmaths:09.28', 'air-fanout-v1:01.09'],
             related=['softmax-jacobian', 'jvp-and-vjp-for-2-layer-network', 'hessian-tensor-of-vector-valued-function'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Linear discriminant analysis scores', tags=['Classification', 'Probability and Statistics'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:11.04', 'mlmaths:11.05'], related=['gaussian-naive-bayes', 'pca-projection'])
+            lessons=['mlmaths:11.21', 'mlmaths:11.25'], related=['gaussian-naive-bayes', 'pca-projection'])
 
 STATEMENT = r"""
 LDA models every class as a Gaussian with its own mean $\mu_c$ but one **shared** covariance $\Sigma$. Taking logs of $\pi_c\,\mathcal N(x; \mu_c, \Sigma)$ and dropping terms that are the same for every class leaves a score that is linear in $x$:

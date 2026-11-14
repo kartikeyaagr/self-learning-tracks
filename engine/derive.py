@@ -105,6 +105,11 @@ function mathify(el){ if (el && window.renderMathInElement) renderMathInElement(
     rep("  const hs = [...document.querySelectorAll('#prose h2')]; hs.forEach((h, i) => h.id = 's' + (i + 1));",
         "  mathify($('#view'));\n  const hs = [...document.querySelectorAll('#prose h2')]; hs.forEach((h, i) => h.id = 's' + (i + 1));")
     rep("</script>\n</body>", "addEventListener('load', () => mathify($('#view')));\n</script>\n</body>")
+    # Design lessons can carry a rubric: shown with the model answer as the points a strong answer covers.
+    rep('<div class="sample"><div class="lab">Model answer</div><p>${inl(l.s)}</p></div>',
+        '<div class="sample"><div class="lab">Model answer</div><p>${inl(l.s)}</p></div>'
+        '${(l.rubric || []).length ? `<div class="sample" style="background:var(--card);border-color:var(--line)"><div class="lab">A strong answer covers</div>'
+        '<ul style="margin:6px 0 0;padding-left:20px">${l.rubric.map(x => `<li>${inl(x)}</li>`).join(\'\')}</ul></div>` : \'\'}')
     assert 'sdsd' not in s and 'System Design' not in s.split('<script>')[0], 'System Design specifics left in the head'
     return s
 

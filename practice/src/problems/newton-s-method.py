@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title="Newton's method for logistic regression", tags=['Optimization', 'Classification'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:12.02', 'mlmaths:07.01'],
+            lessons=['mlmaths:12.10', 'mlmaths:07.01'],
             related=['adam-optimizer', 'l-bfgs', 'classify-critical-point-from-hessian'])
 
 STATEMENT = r"""

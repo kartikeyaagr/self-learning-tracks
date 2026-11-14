@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Symmetric eigendecomposition and matrix powers', tags=['Linear Algebra'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:05.01', 'mlmaths:05.02'], related=['whitening-transform', 'pca', 'matrix-trace'])
+            lessons=['mlmaths:05.01', 'mlmaths:05.07'], related=['whitening-transform', 'pca', 'matrix-trace'])
 
 STATEMENT = r"""
 A real symmetric matrix has real eigenvalues and an orthonormal basis of eigenvectors:

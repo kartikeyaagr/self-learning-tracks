@@ -1,0 +1,66 @@
+---
+// One layout for every page: house stylesheet, fonts, KaTeX, top bar with site nav and progress chips.
+import 'katex/dist/katex.min.css';
+import '../styles/site.css';
+interface Props { title: string; description?: string; course?: any; courseId?: string; crumbs?: [string, string][]; side?: boolean }
+const { title, description = 'Courses and practice for machine learning, AI and the systems behind them.', course, courseId, crumbs = [], side = false } = Astro.props;
+const a = course?.accent;
+const path = Astro.url.pathname;
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content={description}>
+  <title>{title}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  {/* each course keeps its own stylesheet (its figures depend on it); everything else uses the house one */}
+  <link rel="stylesheet" href={`/css/${course?.css ?? 'house'}.css`}>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;450;500;600;650;700&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&family=Pixelify+Sans:wght@400;500&display=swap" rel="stylesheet">
+  {/* html:root outranks the house stylesheet's :root rules, whatever order the bundler puts the CSS in */}
+  {a && <style set:html={`html:root{--accent:${a.l};--accent-soft:${a.soft_l};--accent-line:${a.line_l}}
+@media (prefers-color-scheme: dark){html:root:not([data-theme="light"]){--accent:${a.d};--accent-ink:${a.ink_d};--accent-soft:${a.soft_d};--accent-line:${a.line_d}}}
+html:root[data-theme="dark"]{--accent:${a.d};--accent-ink:${a.ink_d};--accent-soft:${a.soft_d};--accent-line:${a.line_d}}`} />}
+</head>
+<body data-course={course?.key} data-lv={course ? JSON.stringify(course.LV) : undefined} data-lvn={course ? JSON.stringify(course.LVN) : undefined}>
+  <div id="readbar"></div>
+  <header class="top">
+    {side && <button type="button" class="ibtn" id="menu" aria-label="Open course menu"><svg width="18" height="18" viewBox="0 0 18 18"><path d="M3 5h12M3 9h12M3 13h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>}
+    {course
+      ? <a class="brand" href={`/courses/${courseId}/`}><Fragment set:html={course.logo} /><span class="wd" set:html={course.brand} /></a>
+      : <a class="brand" href="/"><svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><rect width="26" height="26" rx="7" fill="var(--ink)"/><rect x="6" y="6" width="6" height="6" rx="1.6" fill="var(--bg)"/><rect x="14" y="6" width="6" height="6" rx="1.6" fill="var(--accent)"/><rect x="6" y="14" width="6" height="6" rx="1.6" fill="var(--bg)"/><rect x="14" y="14" width="6" height="6" rx="1.6" fill="var(--bg)"/></svg><span class="wd">Tracks</span></a>}
+    <nav class="sitenav" aria-label="Site">
+      <a href="/" aria-current={path === '/' ? 'page' : undefined}>Roadmap</a>
+      <a href="/courses/" aria-current={path.startsWith('/courses/') ? 'page' : undefined}>Courses</a>
+      <a href={import.meta.env.PUBLIC_PRACTICE_BASE ?? '/practice/index.html'}>Practice</a>
+    </nav>
+    <nav id="crumbs" aria-label="Breadcrumb">{crumbs.map(([t, h], i) => <>{i > 0 && <span class="sep">/</span>}<a href={h}>{t}</a></>)}</nav>
+    <span class="grow"></span>
+    {course && <><span class="chip st off" id="chipS" title="Day streak"></span><a class="chip" id="chipX" href={`/courses/${courseId}/`} title="Level and XP"></a></>}
+  </header>
+  {side
+    ? <div class="shell"><aside class="side" id="side" aria-label="Course navigation"><slot name="side" /></aside><main id="view"><slot /></main></div>
+    : <main id="view" style="max-width:1100px;margin:0 auto"><slot /></main>}
+  <div id="scrim"></div>
+  <div id="toasts" aria-live="polite"></div>
+  <script>
+    import { load, stats } from '../lib/progress.js';
+    const b = document.body, k = b.dataset.course;
+    if (k) {
+      const s = stats(load(k), JSON.parse(b.dataset.lv), JSON.parse(b.dataset.lvn));
+      const cs = document.getElementById('chipS'), cx = document.getElementById('chipX');
+      cs.className = 'chip st' + (s.streak ? '' : ' off');
+      cs.innerHTML = `<svg width="14" height="16" viewBox="0 0 14 16" aria-hidden="true"><path d="M7 1c.5 2.6 4.5 4.4 4.5 8.5A4.5 4.5 0 0 1 2.5 9.5C2.5 7.6 3.6 6.4 4.4 5.6c.2 1.5.9 2.3 1.6 2.6C5.9 5.6 6.3 3 7 1z" fill="currentColor"/></svg>${s.streak}<span class="xl">&nbsp;day${s.streak === 1 ? '' : 's'}</span>`;
+      cx.innerHTML = `<span class="lv">Lv${s.level}</span><span class="xl">${s.xp} XP</span>`;
+      // sidebar and module lists: mark finished lessons
+      const done = load(k).done || {};
+      document.querySelectorAll('[data-lk]').forEach(el => { if (done[el.dataset.lk]) el.classList.add('on'); });
+    }
+    const side = document.getElementById('side'), scrim = document.getElementById('scrim');
+    document.getElementById('menu')?.addEventListener('click', () => { side.classList.add('open'); scrim.classList.add('on'); });
+    scrim?.addEventListener('click', () => { side.classList.remove('open'); scrim.classList.remove('on'); });
+  </script>
+</body>
+</html>

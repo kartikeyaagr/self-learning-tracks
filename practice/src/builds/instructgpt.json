@@ -1,0 +1,14 @@
+{"id": "instructgpt", "kind": "paper", "group": "Reinforcement learning and alignment",
+ "title": "Training language models to follow instructions with human feedback", "authors": "Ouyang et al.", "year": 2022,
+ "url": "https://arxiv.org/abs/2203.02155",
+ "blurb": "Aligned GPT-3 with user intent through supervised fine-tuning, a reward model trained on human rankings, and PPO against that reward with a KL penalty.",
+ "intro": "The recipe has three stages. Supervised fine-tuning on demonstrations gives a starting policy; a reward model learns from human comparisons of sampled responses; and reinforcement learning maximises the learned reward while a KL penalty keeps the policy near the SFT model and a pretraining term limits regressions. The steps build the SFT loss mask, preference-data cleaning, the Bradley-Terry reward loss, KL-regularised rewards and an RLHF PPO step; the capstone runs the reward-model and RL stages end to end on a toy problem with exact expectations.",
+ "steps": [
+  {"name": "Assistant-only SFT loss mask", "problem": "build-assistant-only-sft-loss-mask"},
+  {"name": "Canonical preference pairs", "problem": "canonicalize-pairwise-preference-data"},
+  {"name": "Bradley-Terry reward model loss", "problem": "bradley-terry-reward-model-loss"},
+  {"name": "KL-regularised rewards", "problem": "score-kl-regularized-policy-batch"},
+  {"name": "PPO step with a reference-policy KL", "problem": "ppo-with-reference-policy-kl"}
+ ],
+ "capstone": "instructgpt-rm-and-ppo-ptx",
+ "lessons": ["dlcore:08.07"]}

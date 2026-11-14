@@ -1,0 +1,13 @@
+{"id": "gated-deltanet", "kind": "paper", "group": "Sequence models and embeddings",
+ "title": "Gated Delta Networks: Improving Mamba2 with Delta Rule", "authors": "Yang, Kautz & Hatamizadeh", "year": 2024,
+ "url": "https://arxiv.org/abs/2412.06464",
+ "blurb": "Combines Mamba-2's decay gate with DeltaNet's error-correcting state update, giving a linear-time recurrent layer that both forgets and overwrites precisely.",
+ "intro": "Linear attention keeps a matrix state that only accumulates. The delta rule turns it into a key-value memory that corrects the value stored under each key; a scalar decay gate lets the memory forget quickly. The steps go from linear attention through the gated recurrence to the chunkwise (WY/UT) form used for training; the capstone wraps the recurrence in the full layer with projections, short convolutions and a gated output norm.",
+ "steps": [
+  {"name": "Linear attention: parallel and recurrent", "problem": "parallel-and-recurrent-linear-attention"},
+  {"name": "Mamba-2 scalar-gated scan", "problem": "mamba-2-gated-state-scan", "note": "Where the decay gate comes from."},
+  {"name": "Gated delta rule, token by token", "problem": "gated-deltanet-state-update"},
+  {"name": "Chunkwise form with the WY/UT transform", "problem": "chunkwise-gated-delta-rule"}
+ ],
+ "capstone": "gated-deltanet-layer",
+ "lessons": ["aieng:07.02"]}

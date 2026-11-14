@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Multiple testing: Bonferroni and Benjamini-Hochberg', tags=['Probability and Statistics'], diff='Medium',
-            runtime='numpy', lessons=['mlmaths:12.03'], related=['t-test-one-sample', 'b-test-significance'])
+            runtime='numpy', lessons=['mlmaths:12.17'], related=['t-test-one-sample', 'b-test-significance'])
 
 STATEMENT = r"""
 Run 20 tests at $\alpha = 0.05$ when nothing is going on, and you expect one "significant" result by chance. Two standard corrections fix this for $m$ p-values $p_1, \dots, p_m$.

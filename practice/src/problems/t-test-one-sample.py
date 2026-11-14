@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Exact p-value for a one-sample t-test', tags=['Probability and Statistics'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:12.01', 'mlmaths:12.03'], related=['one-sample-t-statistic', 'z-test-one-sample', 'p-values-and-significance'])
+            lessons=['mlmaths:12.01', 'mlmaths:12.17'], related=['one-sample-t-statistic', 'z-test-one-sample', 'p-values-and-significance'])
 
 STATEMENT = r"""
 The t statistic $t = \dfrac{\bar x - \mu_0}{s / \sqrt n}$ (with sample standard deviation $s$, `ddof=1`) follows a Student-t distribution with $\nu = n - 1$ degrees of freedom under $H_0$. To turn it into a two-sided p-value without SciPy, use the closed form for **integer** $\nu$.

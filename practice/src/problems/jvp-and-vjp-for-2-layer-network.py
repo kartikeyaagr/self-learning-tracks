@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='JVPs and VJPs through a two-layer MLP', tags=['Calculus', 'Neural Networks'], diff='Hard', runtime='numpy',
-            lessons=['air-fanout-v1:01.09', 'mlmaths:09.04'],
+            lessons=['air-fanout-v1:01.09', 'mlmaths:09.28'],
             related=['jacobian-of-neural-network-layer', 'backpropagation-through-computation-graph',
                      'forward-mode-autodiff-with-dual-numbers'])
 

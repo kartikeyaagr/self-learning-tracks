@@ -1,0 +1,14 @@
+{"id": "grpo", "kind": "paper", "group": "Reinforcement learning and alignment",
+ "title": "DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language Models", "authors": "Shao et al.", "year": 2024,
+ "url": "https://arxiv.org/abs/2402.03300",
+ "blurb": "Introduced Group Relative Policy Optimization, which replaces PPO's value network with rewards normalised across a group of sampled answers, the RL algorithm behind later open reasoning models.",
+ "intro": "For each question GRPO samples a group of answers, scores them, and uses each answer's reward relative to the group as its advantage, so no critic is trained. The loss keeps PPO's clipped ratio and adds a KL penalty to a reference model directly. The paper also compares outcome supervision, one reward per answer, with process supervision, a reward per reasoning step. The steps build group-relative advantages and their normalisation choices, KL estimators, the leave-one-out baseline and token aggregation; the capstone computes process-supervised advantages and the full loss.",
+ "steps": [
+  {"name": "Group-relative advantages", "problem": "normalize-grpo-group-advantages"},
+  {"name": "GRPO loss", "problem": "grpo-group-relative-advantage"},
+  {"name": "KL estimators", "problem": "score-kl-regularized-policy-batch"},
+  {"name": "REINFORCE leave-one-out", "problem": "rloo-reinforce-leave-one-out", "note": "A closely related critic-free baseline."},
+  {"name": "Sequence vs token loss aggregation", "problem": "compare-sequence-and-token-length-normalization"}
+ ],
+ "capstone": "grpo-process-supervision-loss",
+ "lessons": ["air-fanout-v1:07.04", "dlcore:08.07"]}

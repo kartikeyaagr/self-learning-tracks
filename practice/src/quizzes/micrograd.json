@@ -1,0 +1,656 @@
+{
+ "plan": "micrograd",
+ "sections": [
+  {
+   "section": "Derivatives and gradient checks",
+   "questions": [
+    {
+     "q": "For $f(x) = x^2$ at $x = 3$, what does the forward difference $(f(3 + h) - f(3))/h$ give with $h = 0.1$?",
+     "options": [
+      "6",
+      "6.01",
+      "3.1",
+      "6.1"
+     ],
+     "answer": 3,
+     "why": "$(9.61 - 9)/0.1 = 6.1$. The error equals $h$ here, which shows the $O(h)$ bias of forward differences; the central difference gives exactly 6 for a quadratic."
+    },
+    {
+     "q": "You nudge input $a$ of $L = a\\cdot b + c$ by $h$ with $a = 2$, $b = -3$, $c = 10$. By how much does $L$ change?",
+     "options": [
+      "About $h$",
+      "About $10h$",
+      "About $-3h$",
+      "About $2h$"
+     ],
+     "answer": 2,
+     "why": "$\\partial L/\\partial a = b = -3$. Each input's derivative is the coefficient it is multiplied by."
+    },
+    {
+     "q": "In a long product $x_1x_2\\cdots x_{50}$ of numbers near 0.5, why might a finite-difference check fail in float32?",
+     "options": [
+      "Finite differences only work for sums",
+      "Products aren't differentiable",
+      "The product underflows or loses precision, so the tiny difference is swamped by rounding",
+      "The analytic gradient is always zero"
+     ],
+     "answer": 2,
+     "why": "$0.5^{50}\\approx 10^{-15}$, near float32's limits. Use float64 and compare relative errors."
+    },
+    {
+     "q": "Which measure is best for comparing an analytic and a numerical gradient?",
+     "options": [
+      "The relative error $|a - n|/\\max(|a|, |n|, \\epsilon)$",
+      "The absolute difference only",
+      "Whether they have the same sign",
+      "Their ratio"
+     ],
+     "answer": 0,
+     "why": "Absolute differences look tiny for tiny gradients and huge for huge ones. Relative error is scale-free."
+    },
+    {
+     "q": "Fitting $y = wx + b$ by gradient descent on mean squared error, what is $\\partial L/\\partial b$?",
+     "options": [
+      "$\\sum_i y_i$",
+      "$\\frac2n\\sum_i(wx_i + b - y_i)x_i$",
+      "0",
+      "$\\frac2n\\sum_i(wx_i + b - y_i)$"
+     ],
+     "answer": 3,
+     "why": "The bias enters each prediction with coefficient 1, so its gradient is the mean residual times 2. The weight's gradient carries the extra factor $x_i$."
+    },
+    {
+     "q": "The derivative of $f$ at $x$ is defined as...",
+     "options": [
+      "$f(x)/x$",
+      "The value of $f$ at $x$",
+      "$f(x + 1) - f(x)$",
+      "$\\lim_{h\\to0}(f(x + h) - f(x))/h$"
+     ],
+     "answer": 3,
+     "why": "Finite differences approximate this limit with a small but non-zero $h$."
+    },
+    {
+     "q": "Why not use $h = 10^{-15}$ for a finite-difference check in float64?",
+     "options": [
+      "It's too slow",
+      "Rounding error in $f(x + h) - f(x)$ becomes larger than the truncation error",
+      "Derivatives don't exist at that scale",
+      "The result is always zero"
+     ],
+     "answer": 1,
+     "why": "Subtracting nearly equal numbers loses most significant digits. $h$ around $10^{-6}$ balances rounding against truncation for central differences."
+    },
+    {
+     "q": "$f(x) = 3x^2 - 4x + 5$. What is $f'(2)$?",
+     "options": [
+      "4",
+      "12",
+      "8",
+      "9"
+     ],
+     "answer": 2,
+     "why": "$f'(x) = 6x - 4$, so $f'(2) = 8$."
+    }
+   ]
+  },
+  {
+   "section": "Value objects and expression graphs",
+   "questions": [
+    {
+     "q": "In a micrograd-style `Value`, what does `_prev` (the children) store?",
+     "options": [
+      "The input nodes that produced this value",
+      "The previous value of the same variable",
+      "The gradient from the last step",
+      "The nodes that use this value"
+     ],
+     "answer": 0,
+     "why": "Each node remembers its inputs so that backward can walk from the output to every leaf."
+    },
+    {
+     "q": "For `c = a + b`, what is the local backward rule?",
+     "options": [
+      "`a.grad += 1` only",
+      "`a.grad += c.grad` and `b.grad += c.grad`",
+      "`a.grad = b.data * c.grad`",
+      "`c.grad += a.grad + b.grad`"
+     ],
+     "answer": 1,
+     "why": "Addition passes the upstream gradient unchanged to both inputs. `+=` (not `=`) handles inputs used more than once."
+    },
+    {
+     "q": "For `c = a * b`, what does `a` receive?",
+     "options": [
+      "`a.data * c.grad`",
+      "`b.data * c.grad`",
+      "`c.data`",
+      "`c.grad`"
+     ],
+     "answer": 1,
+     "why": "$\\partial(ab)/\\partial a = b$, scaled by the upstream gradient. Each factor's gradient is the other factor."
+    },
+    {
+     "q": "Why should `Value.__radd__` be defined?",
+     "options": [
+      "So `2 + v` works when the left operand is a plain number",
+      "To add values in reverse order of the graph",
+      "To compute gradients",
+      "For subtraction"
+     ],
+     "answer": 0,
+     "why": "Python calls `int.__add__(2, v)` first, which fails, then falls back to `v.__radd__(2)`."
+    },
+    {
+     "q": "An expression `d = a * b + c` builds how many new `Value` nodes beyond the inputs?",
+     "options": [
+      "3",
+      "2 (one product, one sum)",
+      "1",
+      "0"
+     ],
+     "answer": 1,
+     "why": "Each operation creates one node: `a * b`, then that result `+ c`."
+    },
+    {
+     "q": "How do you collect every node that an output depends on?",
+     "options": [
+      "Follow the gradients",
+      "Sort nodes by their data value",
+      "A depth-first walk over `_prev` with a visited set",
+      "Iterate over all Python objects"
+     ],
+     "answer": 2,
+     "why": "A visited set avoids processing shared subexpressions more than once."
+    },
+    {
+     "q": "Interpreting a small program into a `Value` graph means what?",
+     "options": [
+      "Parsing the source into a syntax tree only",
+      "Each arithmetic operation executed creates a node, so the graph records exactly what ran",
+      "Compiling the program to machine code",
+      "Evaluating with plain floats and then guessing the graph"
+     ],
+     "answer": 1,
+     "why": "Operator overloading records the computation as it happens (define-by-run), including the branch actually taken by any `if`."
+    },
+    {
+     "q": "`a = Value(2.0); b = a * a`. After backward on `b`, what is `a.grad`?",
+     "options": [
+      "4.0",
+      "8.0",
+      "1.0",
+      "2.0"
+     ],
+     "answer": 0,
+     "why": "Both inputs of the product are `a`, so it receives $a\\cdot1 + a\\cdot1 = 4$. With `=` instead of `+=` you'd get 2."
+    }
+   ]
+  },
+  {
+   "section": "Neurons and activation gradients",
+   "questions": [
+    {
+     "q": "The backward rule for `t = tanh(x)` is...",
+     "options": [
+      "`x.grad += t.data * t.grad`",
+      "`x.grad += t.grad`",
+      "`x.grad += (1 - x.data**2) * t.grad`",
+      "`x.grad += (1 - t.data**2) * t.grad`"
+     ],
+     "answer": 3,
+     "why": "$\\tanh'(x) = 1 - \\tanh^2(x)$, which is cheapest to compute from the stored output."
+    },
+    {
+     "q": "A neuron computes $o = \\tanh(w_1x_1 + w_2x_2 + b)$. What is $\\partial o/\\partial w_1$?",
+     "options": [
+      "$x_1$",
+      "$1 - o^2$",
+      "$(1 - o^2)\\,x_1$",
+      "$(1 - o^2)\\,w_1$"
+     ],
+     "answer": 2,
+     "why": "Chain rule: tanh's local derivative times $\\partial n/\\partial w_1 = x_1$."
+    },
+    {
+     "q": "If the pre-activation $n$ is 5, roughly what is the gradient reaching the weights through tanh?",
+     "options": [
+      "About 5",
+      "About 1",
+      "Exactly 0.5",
+      "Almost 0, because $1 - \\tanh^2(5) \\approx 1.8\\times10^{-4}$"
+     ],
+     "answer": 3,
+     "why": "Saturated tanh units pass almost no gradient, which is why initialisation scale matters."
+    },
+    {
+     "q": "Why does the backward closure for a node capture its inputs and output?",
+     "options": [
+      "It doesn't need them",
+      "To print the graph",
+      "To keep them from being garbage collected only",
+      "It needs their values (for example `t.data`) and must write into their `.grad`"
+     ],
+     "answer": 3,
+     "why": "Each closure uses the forward values and updates its children's gradients; storing references makes that possible later."
+    },
+    {
+     "q": "A gradient check of a neuron reports mismatches only when the pre-activation is exactly 0 for a ReLU neuron. Why?",
+     "options": [
+      "ReLU isn't differentiable at 0, so the central difference averages the two slopes",
+      "The analytic gradient is wrong everywhere",
+      "Gradient checks don't work for neurons",
+      "The bias is missing"
+     ],
+     "answer": 0,
+     "why": "At a kink the numerical derivative gives 0.5 while the implementation picks 0 or 1. Avoid checking exactly at kinks."
+    },
+    {
+     "q": "In $o = \\tanh(n)$ with $n = w\\cdot x + b$, what is $\\partial o/\\partial b$?",
+     "options": [
+      "$1 - o^2$",
+      "$x$",
+      "0",
+      "$w$"
+     ],
+     "answer": 0,
+     "why": "The bias enters with coefficient 1, so only tanh's slope remains."
+    },
+    {
+     "q": "What is $\\tanh(0)$ and its derivative there?",
+     "options": [
+      "0.5 and 0.25",
+      "0 and 1",
+      "1 and 0",
+      "0 and 0"
+     ],
+     "answer": 1,
+     "why": "Tanh is centred at 0 with slope 1, unlike the sigmoid, which is 0.5 with slope 0.25."
+    },
+    {
+     "q": "Computing tanh as $(e^{2x} - 1)/(e^{2x} + 1)$ for $x = 400$ gives what in float64?",
+     "options": [
+      "1.0",
+      "An exact result",
+      "It fails: `math.exp(800)` raises `OverflowError`, and with NumPy it becomes inf/inf = NaN",
+      "0"
+     ],
+     "answer": 2,
+     "why": "$e^{800}$ is far beyond float64's range. `math.tanh` handles large inputs correctly; a hand-rolled version should use $e^{-2|x|}$, which never overflows: $\\tanh x = \\mathrm{sign}(x)\\,(1 - e^{-2|x|})/(1 + e^{-2|x|})$."
+    }
+   ]
+  },
+  {
+   "section": "Automatic reverse-mode autodiff",
+   "questions": [
+    {
+     "q": "Why must `backward()` visit nodes in reverse topological order?",
+     "options": [
+      "A node's gradient must be complete (all its consumers processed) before it is propagated to its inputs",
+      "To save memory",
+      "The order doesn't matter",
+      "To compute the forward pass again"
+     ],
+     "answer": 0,
+     "why": "Processing a node early would pass on a partial gradient, missing contributions from consumers handled later."
+    },
+    {
+     "q": "What should `backward()` set first?",
+     "options": [
+      "The output's gradient to 1.0",
+      "Every gradient to 1.0",
+      "The leaves' gradients to 1.0",
+      "The output's data to 0"
+     ],
+     "answer": 0,
+     "why": "$\\partial L/\\partial L = 1$ seeds the chain rule; every other gradient starts at 0."
+    },
+    {
+     "q": "A topological sort of a DAG puts each node...",
+     "options": [
+      "In random order",
+      "Before all of its inputs",
+      "In order of data value",
+      "After all of its inputs"
+     ],
+     "answer": 3,
+     "why": "Building the order by appending a node after recursing into its children gives inputs first; reverse it for backward."
+    },
+    {
+     "q": "Reverse-mode autodiff computes the gradient of a scalar loss with respect to all $n$ parameters in roughly how many backward passes?",
+     "options": [
+      "$n$",
+      "One",
+      "$\\log n$",
+      "$n^2$"
+     ],
+     "answer": 1,
+     "why": "One backward pass costs a small constant times the forward pass, regardless of how many parameters there are."
+    },
+    {
+     "q": "Local backward rule for `c = a - b`?",
+     "options": [
+      "`a.grad += c.grad`, `b.grad -= c.grad`",
+      "Both `+= c.grad`",
+      "Both `-= c.grad`",
+      "`a.grad -= c.grad`, `b.grad += c.grad`"
+     ],
+     "answer": 0,
+     "why": "$\\partial(a - b)/\\partial b = -1$. Implementing subtraction as `a + (-b)` gets this for free."
+    },
+    {
+     "q": "A gradient check of a whole graph passes for every leaf except one used in two places. What's the likely bug?",
+     "options": [
+      "The output gradient isn't 1",
+      "A backward rule uses `=` instead of `+=`",
+      "The topological order is reversed",
+      "The leaf has no data"
+     ],
+     "answer": 1,
+     "why": "Only nodes with multiple consumers expose overwriting, because only they receive more than one contribution."
+    },
+    {
+     "q": "What happens if you call `backward()` twice without zeroing gradients?",
+     "options": [
+      "The gradients reset to zero",
+      "It raises an error in micrograd",
+      "The second call is ignored",
+      "The gradients double"
+     ],
+     "answer": 3,
+     "why": "Accumulation is needed within one pass for shared nodes, so it also accumulates across passes unless you zero gradients."
+    },
+    {
+     "q": "Recursion depth can be a problem for a recursive topological sort when...",
+     "options": [
+      "The values are large",
+      "The graph has many leaves",
+      "The graph is very deep, such as a long chain of thousands of operations",
+      "The graph is wide but shallow"
+     ],
+     "answer": 2,
+     "why": "Python's default recursion limit is about 1000. An iterative DFS avoids the limit."
+    }
+   ]
+  },
+  {
+   "section": "Accumulation and the remaining operators",
+   "questions": [
+    {
+     "q": "Why does `zero_grad` exist?",
+     "options": [
+      "To prevent overflow in the forward pass",
+      "To make the graph smaller",
+      "Gradients accumulate across `backward` calls, so they must be reset before each new step",
+      "To initialise the weights"
+     ],
+     "answer": 2,
+     "why": "Without it each step's update would include all previous gradients."
+    },
+    {
+     "q": "For `c = a ** k` with a constant `k`, what is the backward rule?",
+     "options": [
+      "`a.grad += k * c.grad`",
+      "`a.grad += a.data ** k * c.grad`",
+      "`a.grad += log(a.data) * c.grad`",
+      "`a.grad += k * a.data ** (k - 1) * c.grad`"
+     ],
+     "answer": 3,
+     "why": "The power rule. When the exponent is itself a `Value`, there is a second term $c\\ln a$ for the exponent."
+    },
+    {
+     "q": "Division `a / b` is often implemented as `a * b**-1`. What is $\\partial(a/b)/\\partial b$?",
+     "options": [
+      "$1/b$",
+      "$-a/b^2$",
+      "$a/b^2$",
+      "$-1/b$"
+     ],
+     "answer": 1,
+     "why": "The power rule on $b^{-1}$ gives $-b^{-2}$, multiplied by $a$."
+    },
+    {
+     "q": "For `c = exp(a)`, which value does the backward rule reuse?",
+     "options": [
+      "1",
+      "`a.data`",
+      "`c.data`, because the derivative of $e^a$ is $e^a$",
+      "`log(c.data)`"
+     ],
+     "answer": 2,
+     "why": "`a.grad += c.data * c.grad`. Reusing the output avoids another exponential."
+    },
+    {
+     "q": "A node used by 3 consumers receives gradients 0.5, -1 and 2. What is its final gradient?",
+     "options": [
+      "0.5",
+      "1.5",
+      "2",
+      "-1"
+     ],
+     "answer": 1,
+     "why": "Contributions from every path add: $0.5 - 1 + 2$."
+    },
+    {
+     "q": "A \"stale gradient\" bug shows up in the second training step. What is the usual cause?",
+     "options": [
+      "The data was shuffled",
+      "Gradients from step 1 weren't zeroed before step 2's backward",
+      "The learning rate changed",
+      "The graph was rebuilt"
+     ],
+     "answer": 1,
+     "why": "The second step's update then mixes old and new gradients, often making the loss jump."
+    },
+    {
+     "q": "How should negation `-a` be implemented to get correct gradients for free?",
+     "options": [
+      "It needs no backward rule",
+      "As `0 - a.data` with a plain float",
+      "As `a * -1`",
+      "By flipping `a.data` in place"
+     ],
+     "answer": 2,
+     "why": "Building it from existing operators reuses their backward rules. Modifying `.data` in place bypasses the graph."
+    },
+    {
+     "q": "For `c = a / b` with `a = 6`, `b = 3`, what is `b.grad` if `c.grad = 1`?",
+     "options": [
+      "2",
+      "$-1/3$",
+      "$1/3$",
+      "$-2/3$"
+     ],
+     "answer": 3,
+     "why": "$-a/b^2 = -6/9$."
+    }
+   ]
+  },
+  {
+   "section": "Neural-network modules",
+   "questions": [
+    {
+     "q": "A `Neuron` with 3 inputs has how many parameters?",
+     "options": [
+      "4 (3 weights and a bias)",
+      "1",
+      "6",
+      "3"
+     ],
+     "answer": 0,
+     "why": "One weight per input plus one bias."
+    },
+    {
+     "q": "A `Layer` of 4 neurons, each with 3 inputs, has how many parameters?",
+     "options": [
+      "4",
+      "12",
+      "16",
+      "7"
+     ],
+     "answer": 2,
+     "why": "Each neuron has 3 weights and 1 bias, so $4\\cdot4$."
+    },
+    {
+     "q": "An MLP with layer sizes 3 → 4 → 4 → 1 has how many parameters?",
+     "options": [
+      "33",
+      "41",
+      "48",
+      "12"
+     ],
+     "answer": 1,
+     "why": "$(3 + 1)\\cdot4 + (4 + 1)\\cdot4 + (4 + 1)\\cdot1 = 16 + 20 + 5$."
+    },
+    {
+     "q": "`parameters()` on a nested module should return what?",
+     "options": [
+      "Every leaf parameter of its sub-modules, each once",
+      "Copies of the parameters",
+      "Only the module's own direct parameters",
+      "The gradients"
+     ],
+     "answer": 0,
+     "why": "The optimiser updates whatever `parameters()` returns. Returning copies would leave the model unchanged."
+    },
+    {
+     "q": "Two neurons share the same weight `Value`. After backward, what does that weight's gradient hold?",
+     "options": [
+      "Only the first neuron's contribution",
+      "Only the last neuron's contribution",
+      "The sum of both neurons' contributions",
+      "Zero, because the contributions cancel"
+     ],
+     "answer": 2,
+     "why": "Shared parameters are just shared nodes, so their gradients accumulate across every use."
+    },
+    {
+     "q": "Why does the output layer of a regression MLP often skip the tanh?",
+     "options": [
+      "Tanh is not differentiable",
+      "It doubles the parameter count",
+      "The output layer has no weights",
+      "Tanh limits outputs to $(-1, 1)$, which can't fit targets outside that range"
+     ],
+     "answer": 3,
+     "why": "A linear output can represent any real value; tanh would saturate on large targets."
+    },
+    {
+     "q": "Named parameters like `layers.0.neurons.2.w.1` are useful for what?",
+     "options": [
+      "Making training faster",
+      "Computing gradients",
+      "Shuffling data",
+      "Saving, loading and inspecting specific weights reliably"
+     ],
+     "answer": 3,
+     "why": "A stable name lets you map saved values back onto the right parameters, even as the code evolves."
+    },
+    {
+     "q": "Initialising every weight to exactly 0 in a tanh MLP causes what?",
+     "options": [
+      "All hidden units compute the same thing and get identical gradients, so they never differentiate",
+      "NaN outputs",
+      "Exploding gradients",
+      "Faster training"
+     ],
+     "answer": 0,
+     "why": "Random initialisation breaks the symmetry between units in a layer."
+    }
+   ]
+  },
+  {
+   "section": "Losses, training and zeroing gradients",
+   "questions": [
+    {
+     "q": "The squared-error loss through a tanh neuron, $L = (\\tanh(n) - y)^2$, has $\\partial L/\\partial n$ equal to...",
+     "options": [
+      "$2(o - y)(1 - o^2)$ with $o = \\tanh(n)$",
+      "$2(o - y)$",
+      "$2(n - y)$",
+      "$(1 - o^2)$"
+     ],
+     "answer": 0,
+     "why": "Chain rule: the loss's derivative in $o$ times tanh's derivative."
+    },
+    {
+     "q": "One SGD step with weight decay $\\lambda$ updates each parameter as...",
+     "options": [
+      "$p \\leftarrow \\lambda p$",
+      "$p \\leftarrow p - \\eta(\\partial L/\\partial p + \\lambda p)$",
+      "$p \\leftarrow p + \\eta\\,\\partial L/\\partial p$",
+      "$p \\leftarrow p - \\eta\\,\\partial L/\\partial p + \\lambda$"
+     ],
+     "answer": 1,
+     "why": "Weight decay adds $\\lambda p$ to the gradient, shrinking parameters a little every step."
+    },
+    {
+     "q": "In which order should a micrograd training step run?",
+     "options": [
+      "Zero gradients, update, forward, backward",
+      "Backward, forward, update, zero gradients",
+      "Forward, loss, zero gradients, backward, update",
+      "Update, forward, backward"
+     ],
+     "answer": 2,
+     "why": "Zeroing any time before `backward` works; updating must come after `backward`, using fresh gradients."
+    },
+    {
+     "q": "Why does the update step modify `p.data` rather than `p`?",
+     "options": [
+      "It doesn't matter",
+      "`p` is immutable",
+      "Updating `.data` changes the value without adding the update to the graph",
+      "`.data` is faster to read"
+     ],
+     "answer": 2,
+     "why": "Writing `p = p - lr * p.grad` would create a new node and lose the parameter object the model refers to."
+    },
+    {
+     "q": "Training loss falls for a few steps, then explodes to huge values. What is the most likely cause?",
+     "options": [
+      "The data is shuffled",
+      "The network is too small",
+      "Gradients were zeroed",
+      "The learning rate is too high"
+     ],
+     "answer": 3,
+     "why": "Steps that are too large overshoot and amplify errors. Lower the learning rate."
+    },
+    {
+     "q": "Training loss never moves from its starting value. Which bug is the most likely?",
+     "options": [
+      "The model has too many parameters",
+      "The loss is negative",
+      "Parameters are never updated, for example `.grad` is zeroed after `backward` but before the update",
+      "The learning rate is too high"
+     ],
+     "answer": 2,
+     "why": "If the update sees zero gradients, nothing changes. Check the order of zeroing, backward and update."
+    },
+    {
+     "q": "A tiny MLP reaches near-zero training loss on 4 examples. What does that show?",
+     "options": [
+      "There is a bug",
+      "The model will generalise",
+      "The learning rate is optimal",
+      "The model and autograd engine can fit data, but not that it generalises"
+     ],
+     "answer": 3,
+     "why": "Overfitting a tiny batch is a good sanity check that gradients flow; generalisation needs held-out data."
+    },
+    {
+     "q": "For a hinge loss $\\max(0, 1 - y\\cdot s)$ on a correctly classified example with margin $y\\cdot s = 2$, what is the gradient with respect to $s$?",
+     "options": [
+      "1",
+      "0",
+      "$-y$",
+      "$y$"
+     ],
+     "answer": 1,
+     "why": "The loss is 0 and flat once the margin exceeds 1, so confident correct examples don't contribute."
+    }
+   ]
+  }
+ ]
+}

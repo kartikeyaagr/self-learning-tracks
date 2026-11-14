@@ -601,10 +601,12 @@ textarea{border-radius:10px;background:var(--card)}
 // {done, at, act, grades, rev}) so the hub reads it unchanged. A "lesson" here is a problem; its module is its first tag.
 const DATA = __DATA__;
 const PARTS = __PARTS__;
-const PLANS = __PLANS__;                        // study plans: ordered sections of problem ids (src/plans/*.json)
+const PLANS = __PLANS__;
+const BUILDS = __BUILDS__;                      // paper implementations and projects (src/builds/*.json)
+const ROUNDS = __ROUNDS__;                      // timed interview rounds (src/rounds/*.json)                        // study plans: ordered sections of problem ids (src/plans/*.json)
 const ALL = DATA.flatMap(m => m.lessons.map((l, i) => ({...l, mod: m.n, idx: i})));
 const key = id => id.replace('.', '-');
-const st = {done:{}, at:{}, act:{}, grades:{}, rev:{}, code:{}, hints:{}, sol:{}, expl:{}};
+const st = {done:{}, at:{}, act:{}, grades:{}, rev:{}, code:{}, hints:{}, sol:{}, expl:{}, quiz:{}, rounds:{}, live:{}};
 function lsGet(){ try { return JSON.parse(localStorage.getItem('practice') || '{}'); } catch(e){ return {}; } }
 function lsSet(){ try { localStorage.setItem('practice', JSON.stringify(st)); } catch(e){} }
 Object.assign(st, lsGet());
@@ -701,6 +703,9 @@ const ICON = {
   all: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 4h10M3 8h10M3 12h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
   rev: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5V5h-2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   plan: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 2.5h7l3 3v8H3z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M5.5 8h5M5.5 10.5h3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
+  paper: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M4 2.5h8v11H4z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M6 5.5h4M6 8h4M6 10.5h2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+  proj: '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M2.5 5.5h11v7.5h-11zM6 5.5V3.5h4v2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
+  clock: '<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 5.5v3l2 1.5M6.5 1.5h3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
   day: '<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3" fill="currentColor"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
 };
 function side(){
@@ -709,6 +714,9 @@ function side(){
   $('#side').innerHTML = nv('#', 'home', 'home', 'Overview') + nv('#all', 'all', 'all', 'All problems', `<span class="c" style="margin-left:auto;font:500 11px var(--mono);color:var(--faint)">${ALL.length}</span>`)
     + nv('#l' + key(dl.id), 'daily', 'day', 'Problem of the day', isDone(dl.id) ? `<span style="margin-left:auto;color:var(--go)">${CHECK}</span>` : '')
     + (PLANS.length ? nv('#plans', 'plans', 'plan', 'Study plans', `<span class="c" style="margin-left:auto;font:500 11px var(--mono);color:var(--faint)">${PLANS.length}</span>`) : '')
+    + (BUILDS.some(b => b.kind === 'paper') ? nv('#papers', 'papers', 'paper', 'Papers', `<span class="c" style="margin-left:auto;font:500 11px var(--mono);color:var(--faint)">${BUILDS.filter(b => b.kind === 'paper').length}</span>`) : '')
+    + (BUILDS.some(b => b.kind === 'project') ? nv('#projects', 'projects', 'proj', 'Projects', `<span class="c" style="margin-left:auto;font:500 11px var(--mono);color:var(--faint)">${BUILDS.filter(b => b.kind === 'project').length}</span>`) : '')
+    + (ROUNDS.length ? nv('#interview', 'interview', 'clock', 'Interview prep', st.live.id ? '<span class="cnt">live</span>' : '') : '')
     + nv('#review', 'review', 'rev', 'Review', due ? `<span class="cnt">${due}</span>` : '')
     + PARTS.map((P, pi) => { const ms = DATA.filter(x => x.part === P); if (!ms.length) return '';
       return `<div class="part lab"><span>${esc(P)}</span></div>` + ms.map(x => { const d = modDone(x), t = x.lessons.length, on = x.n === m;
@@ -796,7 +804,9 @@ function planPage(id){
   </div><div class="big" aria-hidden="true">${pl.sections.length}</div></section>
   ${pl.prereq || pl.next ? `<div class="two" style="margin-top:14px">${pl.prereq ? `<div class="card" style="padding:18px 20px"><div class="lab" style="margin-bottom:8px">Before you start</div><p style="margin:0;font-size:15px;color:var(--muted)">${esc(pl.prereq)}</p></div>` : '<span></span>'}${pl.next ? `<div class="card" style="padding:18px 20px"><div class="lab" style="margin-bottom:8px">Where to go next</div><p style="margin:0;font-size:15px;color:var(--muted)">${esc(pl.next)}</p></div>` : ''}</div>` : ''}
   ${pl.sections.map((sec, si) => { const sl = sec.problems.map(x => ALL.find(l => l.id === x)).filter(Boolean), sd = sl.filter(l => isDone(l.id)).length;
-    return `<div class="parth"><span class="lab">Section ${si + 1}</span><h3>${esc(sec.name)}</h3><span class="lab" style="margin-left:auto">${sd}/${sl.length}</span></div>
+    const qz = (pl.quiz || []).includes(sec.name), best = st.quiz[`${pl.id}:${si}`];
+    return `<div class="parth"><span class="lab">Section ${si + 1}</span><h3>${esc(sec.name)}</h3><span class="lab" style="margin-left:auto">${sd}/${sl.length}</span>
+      ${qz ? `<a class="pill ${best ? (best.best === best.n ? 'ok' : 'ip') : 'k'}" href="#quiz-${pl.id}~${si}" style="text-decoration:none">Quiz${best ? ` · ${best.best}/${best.n}` : ''}</a>` : ''}</div>
     <div class="plist">${sl.map(l => row(l).replace('class="card prow"', 'class="card prow num"').replace('<span class="sd', `<span class="lab">${pad(++i)}</span><span class="sd`)).join('')}</div>`; }).join('')}`;
 }
 
@@ -842,6 +852,155 @@ function allPage(){
   $('#fs').onchange = e => { F.s = e.target.value; draw(); };
   document.querySelectorAll('.tchip').forEach(b => b.onclick = () => { const t = b.dataset.t; F.tags.has(t) ? F.tags.delete(t) : F.tags.add(t); b.setAttribute('aria-pressed', F.tags.has(t)); draw(); });
   draw();
+}
+
+
+// ---------- papers and projects: build something step by step, then a capstone ----------
+const buildItems = b => [...b.steps.map(x => x.problem), b.capstone].map(id => ALL.find(l => l.id === id)).filter(Boolean);
+function buildCard(b){
+  const ls = buildItems(b), d = ls.filter(l => isDone(l.id)).length;
+  return `<a class="card mcard" href="#build-${b.id}"><div class="tp"><span class="lab">${esc(b.kind === 'paper' ? `${b.group} · ${b.year}` : b.group)}</span>${d === ls.length && d ? `<span class="pill ok">${CHECK} Built</span>` : ''}</div>
+    <h4>${esc(b.title)}</h4><p style="margin:0;color:var(--muted);font-size:14px;line-height:1.45;flex:1">${esc(b.blurb)}</p>
+    <div class="bar"><i style="width:${ls.length ? d / ls.length * 100 : 0}%"></i></div>
+    <div class="ft"><span>${d}/${ls.length} done</span><span>${b.steps.length} steps + capstone</span></div></a>`;
+}
+function buildsPage(kind){
+  const bs = BUILDS.filter(b => b.kind === kind), title = kind === 'paper' ? 'Implement papers from scratch' : 'Projects';
+  crumbs([[kind === 'paper' ? 'Papers' : 'Projects', `#${kind}s`]]);
+  $('#view').innerHTML = `<h1 style="font-size:40px;letter-spacing:-.045em;margin:4px 0 6px">${title}</h1>
+  <p style="color:var(--muted);margin:0 0 8px;max-width:660px">${kind === 'paper' ? 'Rebuild influential models one tested component at a time, then assemble them in a capstone.' : 'Build a complete system step by step. Each step is a problem with tests; the capstone puts it together.'}</p>
+  ${[...new Set(bs.map(b => b.group))].map(g => `<div class="parth"><h3>${esc(g)}</h3></div><div class="mods">${bs.filter(b => b.group === g).map(buildCard).join('')}</div>`).join('')}`;
+}
+function buildPage(id){
+  const b = BUILDS.find(x => x.id === id); if (!b) return buildsPage('paper');
+  const list = b.kind === 'paper' ? ['Papers', '#papers'] : ['Projects', '#projects'];
+  crumbs([list, [b.title, `#build-${b.id}`]]);
+  const ls = buildItems(b), d = ls.filter(l => isDone(l.id)).length, nx = ls.find(l => !isDone(l.id)) || ls[0];
+  const cap = ALL.find(l => l.id === b.capstone);
+  $('#view').innerHTML = `
+  <section class="panel mhead"><div>
+    <div class="lab">${b.kind === 'paper' ? 'Paper' : 'Project'} · ${esc(b.group)}</div>
+    <h1>${esc(b.title)}</h1>
+    ${b.kind === 'paper' ? `<p style="margin:0 0 10px;color:var(--muted)">${esc(b.authors)} · ${b.year} · <a href="${esc(b.url)}" target="_blank" rel="noopener">Read the paper ↗</a></p>` : ''}
+    <p style="margin:0 0 16px;color:var(--muted);max-width:640px;font-size:16.5px">${esc(b.blurb)}</p>
+    <div class="meta"><span class="pill">${b.steps.length} steps + capstone</span>${counts(ls).filter(x => x[1]).map(([k, v]) => `<span class="pill ${k}">${v} ${k}</span>`).join('')}<span class="pill ${d===ls.length?'ok':d?'ip':''}">${d}/${ls.length} done</span></div>
+    <div style="margin-top:20px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">${nx ? `<a class="btn" href="#l${key(nx.id)}">${d ? (d === ls.length ? 'Build it again' : 'Continue') : 'Start building'} →</a>` : ''}
+      <div style="flex:1;min-width:180px"><div class="seg">${ls.map(l => `<i class="${isDone(l.id)?'on':''}"></i>`).join('')}</div></div></div>
+  </div><div class="big" aria-hidden="true">${b.steps.length}</div></section>
+  ${b.intro ? `<div class="prose" id="prose" style="max-width:760px;margin-top:26px">${render(b.intro)}</div>` : ''}
+  <div class="parth"><span class="lab">Steps</span><h3>Build it piece by piece</h3></div>
+  <div class="plist">${b.steps.map((st_, i) => { const l = ALL.find(x => x.id === st_.problem); if (!l) return '';
+    return row(l).replace('class="card prow"', 'class="card prow num"').replace('<span class="sd', `<span class="lab">${pad(i + 1)}</span><span class="sd`)
+      .replace('</b>', `</b>${st_.note ? `<span style="display:block;color:var(--muted);font-size:13.5px;margin-top:3px">${esc(st_.name)} · ${esc(st_.note)}</span>` : `<span style="display:block;color:var(--muted);font-size:13.5px;margin-top:3px">${esc(st_.name)}</span>`}`); }).join('')}</div>
+  ${cap ? `<div class="parth"><span class="lab">Capstone</span><h3>Put it together</h3></div><div class="plist">${row(cap).replace('class="card prow"', 'class="card prow" style="border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)"')}</div>` : ''}
+  ${(b.lesson_links || []).length ? `<section class="card blk"><div class="lab">Learn the ideas first</div><div class="links">${b.lesson_links.map(x => `<a href="${esc(x.href)}">${esc(x.t)}<span>${esc(x.c)}</span></a>`).join('')}</div></section>` : ''}`;
+  math($('#view'));
+}
+
+// ---------- section quizzes on study plans ----------
+const quizCache = {};
+async function quizPage(arg){
+  const [pid, si] = arg.split('~'), pl = PLANS.find(p => p.id === pid); if (!pl) return plansPage();
+  const sec = pl.sections[+si]; if (!sec) return planPage(pid);
+  crumbs([['Study plans', '#plans'], [pl.title, `#plan-${pl.id}`], ['Quiz', `#quiz-${arg}`]]);
+  let q = quizCache[pid];
+  if (!q){ $('#view').innerHTML = '<div class="card" style="padding:24px;color:var(--muted)">Loading quiz…</div>';
+    try { q = quizCache[pid] = await fetch(`quiz/${pid}.json`).then(r => r.json()); } catch(e){ $('#view').innerHTML = '<div class="card" style="padding:24px">Couldn\'t load this quiz.</div>'; return; } }
+  const qs = (q.sections.find(x => x.section === sec.name) || {}).questions || [], k = `${pid}:${si}`, best = st.quiz[k];
+  $('#view').innerHTML = `<div class="rv" style="max-width:760px">
+    <div class="lab">${esc(pl.title)} · Section ${+si + 1}</div>
+    <h1 style="font-size:34px;letter-spacing:-.045em;margin:6px 0 4px">${esc(sec.name)} quiz</h1>
+    <p style="color:var(--muted);margin:0 0 20px">${qs.length} questions${best ? ` · best so far ${best.best}/${best.n}` : ''}. Answer them all, then check.</p>
+    <form id="qz">${qs.map((x, i) => `<fieldset class="card blk qq" data-i="${i}" style="margin-top:14px;border:1px solid var(--line)"><legend class="lab" style="padding:0 6px">Question ${i + 1}</legend>
+      <p class="q" style="font-size:17px">${inl(x.q)}</p>${x.options.map((o, j) => `<label style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:10px;cursor:pointer" data-j="${j}"><input type="radio" name="q${i}" value="${j}" style="margin-top:5px"><span>${inl(o)}</span></label>`).join('')}
+      <div class="why" hidden></div></fieldset>`).join('')}
+    <div class="done-zone" style="margin-top:24px"><button type="submit" class="btn">Check answers</button><p><a href="#plan-${pl.id}">← Back to the plan</a></p></div></form></div>`;
+  math($('#view'));
+  $('#qz').onsubmit = e => {
+    e.preventDefault(); let n = 0;
+    document.querySelectorAll('.qq').forEach(f => { const i = +f.dataset.i, x = qs[i], pick = f.querySelector('input:checked'), ok = pick && +pick.value === x.answer; if (ok) n++;
+      f.querySelectorAll('label').forEach(l => { const j = +l.dataset.j; l.style.background = j === x.answer ? 'var(--go-soft)' : (pick && j === +pick.value ? 'var(--bad-soft)' : ''); });
+      const w = f.querySelector('.why'); w.hidden = false; w.innerHTML = `<div class="sample" style="margin-top:10px"><div class="lab">${ok ? 'Correct' : 'Why'}</div><p>${inl(x.why)}</p></div>`; });
+    st.quiz[k] = {best: Math.max(n, best?.best || 0), n: qs.length, last: n, at: now()}; bump();
+    toast(`<b>${n}/${qs.length}</b> ${n === qs.length ? 'Perfect score' : 'Answers explained below'}`, n === qs.length); math($('#view'));
+    e.submitter && (e.submitter.textContent = `Score: ${n}/${qs.length}`);
+  };
+}
+
+// ---------- interview prep: timed rounds with a readiness report ----------
+let QB = null;                                  // lesson question bank (questions.json, written by build_hub.py)
+const qbank = async () => QB || (QB = await fetch('questions.json').then(r => r.ok ? r.json() : {}).catch(() => ({})));
+function roundsPage(){
+  crumbs([['Interview prep', '#interview']]);
+  const roles = [...new Set(ROUNDS.map(r => r.role))];
+  $('#view').innerHTML = `<h1 style="font-size:40px;letter-spacing:-.045em;margin:4px 0 6px">Interview prep</h1>
+  <p style="color:var(--muted);margin:0 0 8px;max-width:660px">Timed rounds by role. Coding problems are graded by tests; theory questions come from the course lessons and you grade yourself against the model answer. Each round ends with a readiness report.</p>
+  ${st.live.id ? `<a class="card" href="#round-${st.live.id}" style="display:block;padding:16px 20px;margin:16px 0;border-color:var(--accent);text-decoration:none"><b>Round in progress:</b> ${esc((ROUNDS.find(r => r.id === st.live.id) || {}).title || '')} → resume</a>` : ''}
+  ${roles.map(role => `<div class="parth"><h3>${esc(role)}</h3></div><div class="mods">${ROUNDS.filter(r => r.role === role).map(r => { const h = st.rounds[r.id] || [], last = h[h.length - 1];
+    return `<a class="card mcard" href="#round-${r.id}"><div class="tp"><span class="lab">${r.minutes} min</span>${last ? `<span class="pill ${last.pct >= 70 ? 'ok' : 'ip'}">Last ${last.pct}%</span>` : ''}</div>
+      <h4>${esc(r.title)}</h4><p style="margin:0;color:var(--muted);font-size:14px;line-height:1.45;flex:1">${esc(r.blurb)}</p>
+      <div class="ft"><span>${(r.coding || []).length} coding · ${(r.theory || []).length} theory</span><span>${h.length ? `${h.length} attempt${h.length > 1 ? 's' : ''}` : 'Not tried'}</span></div></a>`; }).join('')}</div>`).join('')}`;
+}
+let tick = null;
+async function roundPage(id){
+  const r = ROUNDS.find(x => x.id === id); if (!r) return roundsPage();
+  crumbs([['Interview prep', '#interview'], [r.title, `#round-${r.id}`]]);
+  clearInterval(tick);
+  const live = st.live.id === r.id ? st.live : null, hist = st.rounds[r.id] || [];
+  const coding = (r.coding || []).map(x => ALL.find(l => l.id === x)).filter(Boolean);
+  if (!live){
+    $('#view').innerHTML = `<section class="panel mhead"><div><div class="lab">Interview round · ${esc(r.role)}</div><h1>${esc(r.title)}</h1>
+      <p style="margin:0 0 16px;color:var(--muted);max-width:640px;font-size:16.5px">${esc(r.blurb)}</p>
+      <div class="meta"><span class="pill">${r.minutes} minutes</span><span class="pill">${coding.length} coding</span><span class="pill">${(r.theory || []).length} theory</span></div>
+      <div style="margin-top:20px">${st.live.id ? `<p style="color:var(--muted)">Finish your other round first: <a href="#round-${st.live.id}">resume it</a>.</p>` : '<button class="btn" id="go">Start the timer →</button>'}</div></div>
+      <div class="big" aria-hidden="true">${r.minutes}′</div></section>
+      ${hist.length ? `<div class="parth"><h3>Past attempts</h3></div><div class="plist">${hist.slice().reverse().map(h => `<div class="card" style="padding:14px 18px;display:flex;justify-content:space-between;gap:12px"><span>${esc(h.at.slice(0, 10))}</span><span>Coding ${h.coding[0]}/${h.coding[1]} · Theory ${h.theory[0]}/${h.theory[1]} · <b>${h.pct}%</b> · ${h.mins} min</span></div>`).join('')}</div>` : ''}`;
+    const go = $('#go'); if (go) go.onclick = () => { st.live = {id: r.id, start: now(), grades: {}}; lsSet(); side(); roundPage(r.id); };
+    return;
+  }
+  const qb = await qbank(); if (cur.page !== 'interview') return;
+  const start = new Date(live.start).getTime(), end = start + r.minutes * 60000;
+  const solvedNow = l => isDone(l.id) && st.at[key(l.id)] && new Date(st.at[key(l.id)]).getTime() >= start;
+  const theory = (r.theory || []).map(ref => ({ref, ...(qb[ref] || {}), link: (r.theory_links || {})[ref]})).filter(x => x.q);
+  const qhtml = (x, f) => x.html ? x[f] : inl(x[f]);
+  $('#view').innerHTML = `<div style="max-width:860px;margin:0 auto">
+    <div class="card" style="position:sticky;top:72px;z-index:5;padding:14px 20px;display:flex;align-items:center;gap:16px;margin-bottom:18px">
+      <div><div class="lab">${esc(r.title)}</div><div id="clock" style="font:700 30px var(--mono);letter-spacing:-.03em">--:--</div></div>
+      <span class="grow" style="flex:1"></span><button class="btn ghost" id="quit">Abandon</button><button class="btn" id="finish">Finish and see report</button></div>
+    ${coding.length ? `<div class="parth"><span class="lab">Part 1</span><h3>Coding</h3><span class="lab" style="margin-left:auto">solved during this round count</span></div>
+      <div class="plist">${coding.map(l => row(l).replace('<span class="sd', `<span class="sd${solvedNow(l) ? ' on' : ''}" data-x`)).join('')}</div>` : ''}
+    ${theory.length ? `<div class="parth"><span class="lab">Part ${coding.length ? 2 : 1}</span><h3>Theory</h3></div>
+      ${theory.map((x, i) => { const g = live.grades[x.ref] || 0;
+        return `<section class="card blk th" data-ref="${esc(x.ref)}" style="margin-top:14px"><div class="lab">Question ${i + 1} · ${esc(x.c || '')}</div><p class="q">${qhtml(x, 'q')}</p>
+          <details><summary class="btn ghost" style="min-height:38px;font-size:14px;display:inline-flex">Show model answer</summary><div class="sample" style="margin-top:12px"><div class="lab">Model answer</div><p>${qhtml(x, 's')}</p>
+          ${x.link ? `<p style="margin-top:8px;font-size:14px"><a href="${esc(x.link.href)}" target="_blank" rel="noopener">Open the lesson ↗</a></p>` : ''}</div></details>
+          <div class="grade"><div class="lab">How did you do?</div><div class="gb">${[[1, 'Missed it'], [2, 'Partly'], [3, 'Nailed it']].map(([v, t]) => `<button type="button" class="gbtn" data-g="${v}" aria-pressed="${g === v}">${t}</button>`).join('')}</div></div></section>`; }).join('')}` : ''}
+  </div>`;
+  math($('#view'));
+  document.querySelectorAll('.th .gbtn').forEach(b => b.onclick = () => { const ref = b.closest('.th').dataset.ref; live.grades[ref] = +b.dataset.g; lsSet();
+    b.parentElement.querySelectorAll('.gbtn').forEach(x => x.setAttribute('aria-pressed', x === b)); });
+  const draw = () => { const left = Math.round((end - Date.now()) / 1000), a = Math.abs(left), c = $('#clock'); if (!c) return clearInterval(tick);
+    c.textContent = `${left < 0 ? '+' : ''}${pad(Math.floor(a / 60))}:${pad(a % 60)}`; c.style.color = left < 0 ? 'var(--bad)' : left < 300 ? 'var(--flame)' : ''; };
+  draw(); tick = setInterval(draw, 1000);
+  $('#quit').onclick = () => { if (!confirm('Abandon this round? Nothing is recorded.')) return; st.live = {}; lsSet(); clearInterval(tick); side(); roundPage(r.id); };
+  $('#finish').onclick = () => {
+    clearInterval(tick);
+    const cs = coding.filter(solvedNow).length, tg = theory.reduce((a, x) => a + Math.max(0, (live.grades[x.ref] || 1) - 1), 0), tmax = theory.length * 2;
+    const pct = Math.round(100 * (cs + tg) / Math.max(1, coding.length + tmax)), mins = Math.round((Date.now() - start) / 60000);
+    (st.rounds[r.id] = st.rounds[r.id] || []).push({at: now(), coding: [cs, coding.length], theory: [tg, tmax], pct, mins});
+    const byTag = {};
+    coding.forEach(l => { const t = l.tags[0]; byTag[t] = byTag[t] || [0, 0]; byTag[t][1]++; if (solvedNow(l)) byTag[t][0]++; });
+    theory.forEach(x => { const t = x.c || 'Theory'; byTag[t] = byTag[t] || [0, 0]; byTag[t][1] += 2; byTag[t][0] += Math.max(0, (live.grades[x.ref] || 1) - 1); });
+    st.live = {}; bump(); side();
+    const weak = Object.entries(byTag).filter(([, [a, b]]) => a / b < 0.6).map(([t]) => t);
+    $('#view').innerHTML = `<div class="rv" style="max-width:760px"><div class="lab">Readiness report · ${esc(r.role)}</div>
+      <h1 style="font-size:38px;letter-spacing:-.045em;margin:6px 0">${pct}% <span style="font-size:20px;color:var(--muted);font-weight:500">${pct >= 80 ? 'interview-ready' : pct >= 60 ? 'nearly there' : 'keep practising'}</span></h1>
+      <p style="color:var(--muted);margin:0 0 18px">${mins} of ${r.minutes} minutes · coding ${cs}/${coding.length} · theory ${tg}/${tmax}</p>
+      <div class="card" style="padding:18px 20px"><div class="lab" style="margin-bottom:10px">By topic</div>${Object.entries(byTag).map(([t, [a, b]]) => `<div style="display:grid;grid-template-columns:200px 1fr 60px;gap:12px;align-items:center;margin:8px 0;font-size:14px"><span>${esc(t)}</span><div class="bar"><i style="width:${100 * a / b}%;background:${a / b >= .6 ? 'var(--go)' : 'var(--flame)'}"></i></div><span class="lab">${a}/${b}</span></div>`).join('')}</div>
+      ${weak.length ? `<p style="margin-top:16px">Work on: <b>${weak.map(esc).join(', ')}</b>. Unsolved problems stay in the round; theory answers link back to their lessons.</p>` : '<p style="margin-top:16px">Strong across the board.</p>'}
+      <div style="display:flex;gap:10px;margin-top:20px"><a class="btn" href="#round-${r.id}">Back to the round</a><a class="btn ghost" href="#interview">All rounds</a></div></div>`;
+    toast(`<b>${pct}%</b> Round recorded`, pct >= 80);
+  };
 }
 
 function reviewPage(){
@@ -1032,6 +1191,11 @@ function route(){
   if (h === 'all'){ cur = {page: 'all', mod: null, k: null}; allPage(); }
   else if (h === 'review'){ cur = {page: 'review', mod: null, k: null}; reviewPage(); }
   else if (h === 'plans'){ cur = {page: 'plans', mod: null, k: null}; plansPage(); }
+  else if (h === 'papers' || h === 'projects'){ cur = {page: h, mod: null, k: null}; buildsPage(h.slice(0, -1)); }
+  else if (h.startsWith('build-')){ const b = BUILDS.find(x => x.id === h.slice(6)); cur = {page: b && b.kind === 'project' ? 'projects' : 'papers', mod: null, k: null}; buildPage(h.slice(6)); }
+  else if (h.startsWith('quiz-')){ cur = {page: 'plans', mod: null, k: null}; quizPage(h.slice(5)); }
+  else if (h === 'interview'){ cur = {page: 'interview', mod: null, k: null}; roundsPage(); }
+  else if (h.startsWith('round-')){ cur = {page: 'interview', mod: null, k: null}; roundPage(h.slice(6)); }
   else if (h.startsWith('plan-')){ cur = {page: 'plans', mod: null, k: null}; planPage(h.slice(5)); }
   else if (/^t\d\d$/.test(h)){ cur = {page: 'topic', mod: h.slice(1), k: null}; topicPage(h.slice(1)); }
   else if (/^l[a-z0-9-]+$/.test(h) && ALL.some(l => key(l.id) === h.slice(1))){
@@ -1050,6 +1214,7 @@ function rerender(){
 let lastHash = location.hash;
 addEventListener('hashchange', () => { route(); if (location.hash !== lastHash) scrollTo(0, 0); lastHash = location.hash; });
 route();
+addEventListener('load', () => math($('#view')));   // KaTeX loads deferred: pages drawn before it get rendered here
 </script>
 </body>
 </html>

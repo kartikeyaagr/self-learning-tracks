@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Bootstrap confidence intervals, vectorised', tags=['Probability and Statistics'], diff='Hard', runtime='numpy',
-            lessons=['mlmaths:12.03', 'ieng:00.04'], related=['standard-error-comparison', 'percentiles-quantiles'])
+            lessons=['mlmaths:12.17', 'ieng:00.04'], related=['standard-error-comparison', 'percentiles-quantiles'])
 
 STATEMENT = r"""
 The bootstrap estimates the uncertainty of a statistic $\hat\theta$ from a single sample by resampling it with replacement. Implement the whole pipeline.

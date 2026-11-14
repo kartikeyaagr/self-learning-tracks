@@ -1,0 +1,563 @@
+{
+ "plan": "cracking-dl",
+ "sections": [
+  {
+   "section": "Neural network foundations",
+   "questions": [
+    {
+     "q": "Why does a deep network with only linear layers have no more expressive power than one linear layer?",
+     "options": [
+      "The gradients vanish",
+      "Linear layers can't be trained",
+      "A composition of linear maps is itself a linear map",
+      "It has too few parameters"
+     ],
+     "answer": 2,
+     "why": "$W_2(W_1x) = (W_2W_1)x$. Nonlinear activations between layers are what allow deep networks to represent complex functions."
+    },
+    {
+     "q": "Which activation can cause \"dead\" units that never recover?",
+     "options": [
+      "Leaky ReLU",
+      "Sigmoid",
+      "ReLU, when a unit's input is negative for every example",
+      "Tanh"
+     ],
+     "answer": 2,
+     "why": "ReLU's gradient is zero for negative inputs, so a unit pushed into that region gets no updates. Leaky ReLU keeps a small slope."
+    },
+    {
+     "q": "Xavier/Glorot initialisation scales weights by $\\sqrt{2/(\\text{fan\\_in} + \\text{fan\\_out})}$. Which activation was it designed for?",
+     "options": [
+      "Step functions",
+      "ReLU",
+      "Softmax",
+      "Symmetric activations such as tanh"
+     ],
+     "answer": 3,
+     "why": "It keeps activation and gradient variances roughly constant for activations that are linear near zero. He initialisation adjusts for ReLU."
+    },
+    {
+     "q": "In the backward pass of softmax with cross-entropy, the gradient at the logits is...",
+     "options": [
+      "$\\log p$",
+      "$p - y$",
+      "$y - p$",
+      "$p(1 - p)$"
+     ],
+     "answer": 1,
+     "why": "The softmax Jacobian and the log combine into prediction minus target, which is why the two are usually fused."
+    },
+    {
+     "q": "A mini-batch training loop should save a checkpoint based on which metric?",
+     "options": [
+      "The epoch number",
+      "The learning rate",
+      "The validation metric",
+      "The training loss"
+     ],
+     "answer": 2,
+     "why": "Training loss keeps falling as the model overfits. The best validation checkpoint is the one to keep."
+    },
+    {
+     "q": "Channel dropout (`Dropout2d`) drops what?",
+     "options": [
+      "Individual pixels",
+      "Weights",
+      "Whole examples",
+      "Entire feature maps"
+     ],
+     "answer": 3,
+     "why": "Neighbouring pixels in a feature map are strongly correlated, so dropping single pixels barely regularises; dropping whole channels does."
+    },
+    {
+     "q": "BatchNorm at inference uses which statistics?",
+     "options": [
+      "Zero mean and unit variance always",
+      "Running averages collected during training",
+      "The current batch's statistics",
+      "The test set's statistics"
+     ],
+     "answer": 1,
+     "why": "Inference batches may be size 1 or unrepresentative, so the layer uses stored estimates. Forgetting `eval()` is a common bug."
+    },
+    {
+     "q": "Autograd with broadcasting: `y = x + b` where `x` is `(N, D)` and `b` is `(D,)`. What is the gradient for `b`?",
+     "options": [
+      "Zero",
+      "The upstream gradient itself, shape `(N, D)`",
+      "The mean over the batch axis",
+      "The upstream gradient summed over the batch axis"
+     ],
+     "answer": 3,
+     "why": "A broadcast input was used $N$ times, so its gradient sums the contributions back to its own shape."
+    }
+   ]
+  },
+  {
+   "section": "Convolutional networks",
+   "questions": [
+    {
+     "q": "A 3×3 convolution with stride 1 and padding 1 on a 32×32 input gives what output size?",
+     "options": [
+      "32×32",
+      "34×34",
+      "30×30",
+      "16×16"
+     ],
+     "answer": 0,
+     "why": "$\\lfloor(32 + 2\\cdot1 - 3)/1\\rfloor + 1 = 32$. \"Same\" padding for odd kernels is $(k - 1)/2$."
+    },
+    {
+     "q": "Two stacked 3×3 convolutions have the same receptive field as one...",
+     "options": [
+      "9×9 convolution",
+      "5×5 convolution, with fewer parameters and an extra nonlinearity",
+      "3×3 convolution",
+      "6×6 convolution"
+     ],
+     "answer": 1,
+     "why": "Each adds 2 to the receptive field. Two 3×3 layers use $18C^2$ weights against $25C^2$, the reasoning behind VGG."
+    },
+    {
+     "q": "What does a dilation of 2 do to a 3×3 kernel's receptive field?",
+     "options": [
+      "Expands it to 5×5 without adding parameters",
+      "Shrinks it",
+      "Makes it 6×6",
+      "Doubles the parameters"
+     ],
+     "answer": 0,
+     "why": "Dilation spaces the taps apart, letting the network see wider context cheaply, as in segmentation models."
+    },
+    {
+     "q": "Depthwise separable convolution reduces cost by roughly what factor for kernel size $k$ and $C_{out}$ output channels?",
+     "options": [
+      "About $1/C_{out} + 1/k^2$ of a standard convolution's cost",
+      "No reduction",
+      "$1/k$",
+      "$1/C_{in}$"
+     ],
+     "answer": 0,
+     "why": "A per-channel $k\\times k$ filter plus a 1×1 pointwise mix costs a small fraction of a full $k\\times k\\times C_{in}\\times C_{out}$ convolution, the basis of MobileNet."
+    },
+    {
+     "q": "Transposed convolution with stride 2 is commonly used for what?",
+     "options": [
+      "Learned upsampling, roughly doubling the spatial size",
+      "Normalisation",
+      "Pooling",
+      "Downsampling"
+     ],
+     "answer": 0,
+     "why": "It scatters each input pixel into a larger output. Uneven overlaps can produce checkerboard artefacts; resize-then-convolve avoids them."
+    },
+    {
+     "q": "Why does a ResNet block use a projection shortcut sometimes?",
+     "options": [
+      "Always, in every block",
+      "When the block changes the number of channels or the spatial size, so the shapes can be added",
+      "To add more parameters",
+      "To skip the nonlinearity"
+     ],
+     "answer": 1,
+     "why": "Identity shortcuts need matching shapes; a strided 1×1 convolution fixes the mismatch."
+    },
+    {
+     "q": "The Inception module uses 1×1 convolutions before 3×3 and 5×5 branches. Why?",
+     "options": [
+      "To normalise the input",
+      "To add spatial context",
+      "To replace pooling",
+      "To reduce channels and so the cost of the larger convolutions"
+     ],
+     "answer": 3,
+     "why": "Bottlenecking the channel count makes running several kernel sizes in parallel affordable."
+    },
+    {
+     "q": "Max pooling with a 2×2 window and stride 2 passes gradients to which inputs?",
+     "options": [
+      "All four elements equally",
+      "None",
+      "The minimum element",
+      "Only the maximum element of each window"
+     ],
+     "answer": 3,
+     "why": "The other elements didn't affect the output, so their gradient is zero. Average pooling would split the gradient evenly."
+    }
+   ]
+  },
+  {
+   "section": "Recurrent networks",
+   "questions": [
+    {
+     "q": "Why do vanilla RNNs struggle with long-range dependencies?",
+     "options": [
+      "They have too few parameters",
+      "They can't process variable-length input",
+      "Gradients through many time steps vanish or explode as they are repeatedly multiplied by the recurrent Jacobian",
+      "They have no hidden state"
+     ],
+     "answer": 2,
+     "why": "Repeated multiplication by matrices with norms below or above 1 shrinks or blows up the signal exponentially in the number of steps."
+    },
+    {
+     "q": "Which part of an LSTM lets gradients flow across many steps?",
+     "options": [
+      "The cell state, updated additively and scaled by the forget gate",
+      "The tanh on the hidden state",
+      "The output gate",
+      "The input embedding"
+     ],
+     "answer": 0,
+     "why": "When the forget gate is near 1, the cell state passes through almost unchanged, giving a near-identity gradient path."
+    },
+    {
+     "q": "A GRU differs from an LSTM how?",
+     "options": [
+      "It can't be bidirectional",
+      "It has more parameters",
+      "It merges the cell and hidden state and uses two gates instead of three",
+      "It has no gates"
+     ],
+     "answer": 2,
+     "why": "GRUs are a little cheaper and often perform similarly."
+    },
+    {
+     "q": "Teacher forcing during seq2seq training means what?",
+     "options": [
+      "Using an attention mask",
+      "Training with a larger learning rate",
+      "Forcing the encoder to copy the input",
+      "Feeding the ground-truth previous token to the decoder rather than its own prediction"
+     ],
+     "answer": 3,
+     "why": "It speeds up training but creates exposure bias: at inference the decoder sees its own mistakes, which it never saw in training."
+    },
+    {
+     "q": "Initialising the LSTM forget-gate bias to 1 or more helps because...",
+     "options": [
+      "The cell starts by remembering, so gradients flow across time early in training",
+      "It prevents overfitting",
+      "It speeds up the forward pass",
+      "It makes outputs positive"
+     ],
+     "answer": 0,
+     "why": "With a zero bias the forget gate starts near 0.5, halving the memory every step."
+    },
+    {
+     "q": "Gradient clipping is standard for RNN training because...",
+     "options": [
+      "RNNs have vanishing gradients only",
+      "Exploding gradients across time steps can produce huge updates",
+      "It speeds up training",
+      "It is required for teacher forcing"
+     ],
+     "answer": 1,
+     "why": "Clipping caps the update size; it doesn't fix vanishing gradients, which gated architectures address."
+    },
+    {
+     "q": "An Elman RNN over padded sequences should take the final hidden state from where?",
+     "options": [
+      "The first time step",
+      "Each sequence's last real time step, not the padded end",
+      "The average over all steps including padding",
+      "The last time step of the padded batch for all sequences"
+     ],
+     "answer": 1,
+     "why": "Steps after the real end process padding and change the state. Gather the state at `length - 1` or mask the updates."
+    },
+    {
+     "q": "How many parameters does an LSTM layer with input size $d$ and hidden size $h$ have (with biases)?",
+     "options": [
+      "$dh + h^2$",
+      "$3(dh + h^2 + h)$",
+      "$4(dh + h^2 + h)$",
+      "$4dh$"
+     ],
+     "answer": 2,
+     "why": "Four gates, each with input weights, recurrent weights and a bias. (PyTorch keeps two bias vectors per gate, giving $4(dh + h^2 + 2h)$.)"
+    }
+   ]
+  },
+  {
+   "section": "Transformers",
+   "questions": [
+    {
+     "q": "Self-attention's cost in sequence length $n$ and width $d$ is...",
+     "options": [
+      "$O(n\\log n)$",
+      "$O(nd^2)$ only",
+      "$O(n)$",
+      "$O(n^2d)$"
+     ],
+     "answer": 3,
+     "why": "Every token scores every other token. The projections cost $O(nd^2)$, which dominates for short sequences."
+    },
+    {
+     "q": "Pre-LN versus post-LN transformer blocks: which is easier to train deep without warmup?",
+     "options": [
+      "Post-LN",
+      "They are identical",
+      "Neither can be trained without warmup",
+      "Pre-LN, because the residual path is never normalised and gradients reach early layers directly"
+     ],
+     "answer": 3,
+     "why": "Post-LN normalises after the residual add, which makes gradients near the output large at initialisation. Most modern LLMs use pre-norm."
+    },
+    {
+     "q": "Why do transformers need positional information?",
+     "options": [
+      "To make attention causal",
+      "Attention is permutation-invariant; without positions, word order is lost",
+      "To normalise the inputs",
+      "To reduce memory"
+     ],
+     "answer": 1,
+     "why": "Shuffling the input tokens would just shuffle the outputs. Learned, sinusoidal or rotary encodings break that symmetry."
+    },
+    {
+     "q": "RoPE makes the query-key score depend on positions how?",
+     "options": [
+      "Only through their difference $m - n$",
+      "Through their sum",
+      "It doesn't depend on position",
+      "Through the absolute position of the query only"
+     ],
+     "answer": 0,
+     "why": "Rotating $q$ by $m\\theta$ and $k$ by $n\\theta$ leaves the dot product depending on $(m - n)\\theta$, giving relative-position attention."
+    },
+    {
+     "q": "In a decoder block with cross-attention, where do the keys and values come from?",
+     "options": [
+      "The decoder's own previous layer",
+      "The input embeddings",
+      "The encoder's output",
+      "Random noise"
+     ],
+     "answer": 2,
+     "why": "Queries come from the decoder; keys and values from the encoder, letting each output position look at the source sequence."
+    },
+    {
+     "q": "The backward pass of LayerNorm is not elementwise because...",
+     "options": [
+      "Each output depends on every input in its row through the mean and variance",
+      "It uses a square root",
+      "It is applied per batch",
+      "LayerNorm has learnable parameters"
+     ],
+     "answer": 0,
+     "why": "The gradient subtracts the row mean of the upstream gradient and its projection on the normalised values."
+    },
+    {
+     "q": "ViT prepends a learnable class token. What is it used for?",
+     "options": [
+      "It stores the position embeddings",
+      "Its final representation feeds the classification head",
+      "It replaces the first patch",
+      "It marks the end of the image"
+     ],
+     "answer": 1,
+     "why": "Through attention the token aggregates information from all patches. Global average pooling of patch tokens is a common alternative."
+    },
+    {
+     "q": "Grouped-query attention reduces what at inference?",
+     "options": [
+      "The KV cache size, by sharing key-value heads across query heads",
+      "The vocabulary",
+      "The model width",
+      "The number of query heads"
+     ],
+     "answer": 0,
+     "why": "Fewer KV heads means less memory traffic per decode step, which is often the bottleneck."
+    }
+   ]
+  },
+  {
+   "section": "Generative models",
+   "questions": [
+    {
+     "q": "Tied weights in an autoencoder mean what?",
+     "options": [
+      "The weights are frozen",
+      "The latent code is fixed",
+      "Encoder and decoder share biases only",
+      "The decoder uses the transpose of the encoder's weight matrix"
+     ],
+     "answer": 3,
+     "why": "Tying halves the parameters and acts as a regulariser."
+    },
+    {
+     "q": "The VAE's ELBO consists of which two terms?",
+     "options": [
+      "Reconstruction error plus weight decay",
+      "Adversarial loss plus reconstruction",
+      "Expected reconstruction log-likelihood minus the KL divergence from the encoder distribution to the prior",
+      "Two KL terms"
+     ],
+     "answer": 2,
+     "why": "Maximising it trains the encoder and decoder together. The KL term keeps the latent space close to the prior so you can sample from it."
+    },
+    {
+     "q": "Why is the reparameterisation trick needed in a VAE?",
+     "options": [
+      "To speed up the decoder",
+      "To make the KL term zero",
+      "It writes $z = \\mu + \\sigma\\epsilon$ so gradients can flow through the sampling step to $\\mu$ and $\\sigma$",
+      "To avoid using a prior"
+     ],
+     "answer": 2,
+     "why": "Sampling $z$ directly from $N(\\mu, \\sigma^2)$ isn't differentiable in $\\mu$ and $\\sigma$; moving the randomness into $\\epsilon$ fixes that."
+    },
+    {
+     "q": "In a GAN, the generator's non-saturating loss is $-\\log D(G(z))$. Why prefer it to $\\log(1 - D(G(z)))$?",
+     "options": [
+      "It is the original minimax objective",
+      "It gives strong gradients early on, when the discriminator easily rejects fakes",
+      "It makes training deterministic",
+      "It removes the discriminator"
+     ],
+     "answer": 1,
+     "why": "When $D(G(z)) \\approx 0$, $\\log(1 - D)$ is flat, so the generator learns little. The alternative has the same fixed point."
+    },
+    {
+     "q": "Mode collapse in a GAN means what?",
+     "options": [
+      "Training loss reaches zero",
+      "The generator outputs noise",
+      "The discriminator stops training",
+      "The generator produces only a few kinds of output, ignoring much of the data distribution"
+     ],
+     "answer": 3,
+     "why": "The generator can fool the discriminator with a narrow set of samples. Techniques like minibatch discrimination or other objectives mitigate it."
+    },
+    {
+     "q": "A VAE's samples are often blurrier than a GAN's. Why?",
+     "options": [
+      "VAEs have fewer parameters",
+      "VAEs can't use convolutions",
+      "A Gaussian reconstruction loss averages over plausible outputs",
+      "The KL term adds noise to samples"
+     ],
+     "answer": 2,
+     "why": "Pixel-wise likelihood rewards predicting the mean of possible images, which is blurry. Adversarial losses reward realism instead."
+    },
+    {
+     "q": "What does a VAE's KL term equal for a diagonal Gaussian encoder and a standard normal prior?",
+     "options": [
+      "$\\log\\sigma$",
+      "$\\frac12\\sum_j(\\mu_j^2 + \\sigma_j^2 - \\log\\sigma_j^2 - 1)$",
+      "$\\sum_j\\mu_j^2$",
+      "0"
+     ],
+     "answer": 1,
+     "why": "The closed form is cheap and differentiable, so no sampling is needed for this term."
+    },
+    {
+     "q": "Which component of a GAN gets gradients from the real data directly?",
+     "options": [
+      "Neither",
+      "Both",
+      "The generator only",
+      "The discriminator only"
+     ],
+     "answer": 3,
+     "why": "The generator sees real data only through the discriminator's judgement."
+    }
+   ]
+  },
+  {
+   "section": "Advanced architectures and techniques",
+   "questions": [
+    {
+     "q": "Non-maximum suppression removes boxes that...",
+     "options": [
+      "Have low IoU with all boxes",
+      "Overlap a higher-scoring box of the same class by more than an IoU threshold",
+      "Belong to a different class",
+      "Are smaller than a threshold"
+     ],
+     "answer": 1,
+     "why": "Greedy NMS keeps the best box and suppresses its near-duplicates. Class-aware NMS only compares boxes of the same class."
+    },
+    {
+     "q": "A squeeze-and-excitation block gates channels using what?",
+     "options": [
+      "A small MLP on globally pooled channel statistics, ending in a sigmoid",
+      "A softmax over pixels",
+      "Spatial attention maps",
+      "Random dropout"
+     ],
+     "answer": 0,
+     "why": "It learns per-channel weights from global context at little cost, adding a few percent of parameters."
+    },
+    {
+     "q": "A U-Net decoder step concatenates upsampled features with what?",
+     "options": [
+      "The bottleneck features",
+      "The input image",
+      "Random noise",
+      "The encoder features at the same resolution (skip connection)"
+     ],
+     "answer": 3,
+     "why": "Skip connections bring back fine spatial detail lost during downsampling. With valid convolutions the encoder features must be cropped to match."
+    },
+    {
+     "q": "Why does NMS use an IoU threshold rather than any overlap?",
+     "options": [
+      "IoU is cheaper to compute",
+      "Overlap is undefined for boxes",
+      "Different objects can overlap slightly; only near-duplicates should be removed",
+      "To keep every box"
+     ],
+     "answer": 2,
+     "why": "Typical thresholds are 0.5 to 0.7. Crowded scenes need higher thresholds or soft-NMS."
+    },
+    {
+     "q": "What is the main purpose of skip connections in very deep networks?",
+     "options": [
+      "To add nonlinearity",
+      "To reduce parameters",
+      "To provide direct paths for gradients and let blocks learn residuals",
+      "To normalise activations"
+     ],
+     "answer": 2,
+     "why": "With an identity path, a block can default to doing nothing, and gradients reach early layers without passing through every transformation."
+    },
+    {
+     "q": "Attention-style gating (SE, CBAM) helps CNNs by...",
+     "options": [
+      "Reweighting features based on global context",
+      "Replacing convolutions",
+      "Removing the need for training",
+      "Increasing the receptive field to infinity"
+     ],
+     "answer": 0,
+     "why": "Recalibrating channels or spatial positions lets the network emphasise informative features."
+    },
+    {
+     "q": "Knowledge distillation trains a small model on what?",
+     "options": [
+      "The large model's softened output distribution, often mixed with the true labels",
+      "Only the hard labels",
+      "Random targets",
+      "The large model's weights"
+     ],
+     "answer": 0,
+     "why": "Soft targets carry information about which wrong classes are similar, which hard labels lack. A temperature softens the teacher's softmax."
+    },
+    {
+     "q": "Mixed-precision training keeps a float32 copy of the weights. Why?",
+     "options": [
+      "Float16 can't be used for matmuls",
+      "Small updates added to float16 weights would be rounded away",
+      "To compute the loss",
+      "To use more memory"
+     ],
+     "answer": 1,
+     "why": "The master copy accumulates tiny updates accurately while the forward and backward passes run in half precision."
+    }
+   ]
+  }
+ ]
+}

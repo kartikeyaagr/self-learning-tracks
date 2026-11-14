@@ -1,0 +1,563 @@
+{
+ "plan": "cracking-rl",
+ "sections": [
+  {
+   "section": "MDPs and dynamic programming",
+   "questions": [
+    {
+     "q": "Rewards are 1, 0, 2 and γ = 0.5. What is the discounted return from the first step?",
+     "options": [
+      "2",
+      "1.25",
+      "1.5",
+      "3"
+     ],
+     "answer": 2,
+     "why": "G = 1 + 0.5·0 + 0.25·2 = 1.5. Returns are easiest to compute backwards: G_t = r_t + γ G_{t+1}."
+    },
+    {
+     "q": "What does the Bellman expectation equation for $V^\\pi$ express?",
+     "options": [
+      "The value equals the immediate reward only",
+      "A state's value equals the expected immediate reward plus the discounted value of the next state, under policy π",
+      "The value is the maximum over actions",
+      "The value is independent of the policy"
+     ],
+     "answer": 1,
+     "why": "$V^\\pi(s) = \\sum_a \\pi(a|s)\\sum_{s'} P(s'|s,a)[r + \\gamma V^\\pi(s')]$. The optimality equation replaces the average over π with a max."
+    },
+    {
+     "q": "Why does value iteration converge for γ < 1?",
+     "options": [
+      "Each step increases every value",
+      "It visits every state once",
+      "The Bellman optimality operator is a γ-contraction in the max norm",
+      "It solves a linear system exactly"
+     ],
+     "answer": 2,
+     "why": "The distance to the fixed point shrinks by at least a factor γ per sweep, so errors decay geometrically."
+    },
+    {
+     "q": "How does policy iteration differ from value iteration?",
+     "options": [
+      "It alternates full policy evaluation with greedy improvement, usually converging in few iterations",
+      "It never computes values",
+      "It works only for deterministic MDPs",
+      "It doesn't need a model of the environment"
+     ],
+     "answer": 0,
+     "why": "Each improvement step gives a policy at least as good. Because there are finitely many deterministic policies, it terminates."
+    },
+    {
+     "q": "In a continuing task with γ = 0.99 and reward 1 every step, what is the value of any state?",
+     "options": [
+      "100",
+      "99",
+      "1",
+      "Infinite"
+     ],
+     "answer": 0,
+     "why": "The geometric series gives 1/(1 - γ) = 100. That is why 1/(1 - γ) is called the effective horizon."
+    },
+    {
+     "q": "What is the relationship between $V^*$ and $Q^*$?",
+     "options": [
+      "They are unrelated",
+      "$V^*(s) = \\max_a Q^*(s, a)$",
+      "$V^*(s) = \\sum_a Q^*(s, a)$",
+      "$Q^*(s, a) = \\max_s V^*(s)$"
+     ],
+     "answer": 1,
+     "why": "The optimal value of a state is the value of its best action. Greedy action selection with respect to $Q^*$ is optimal."
+    },
+    {
+     "q": "Dynamic programming methods like value iteration need what that model-free methods don't?",
+     "options": [
+      "A neural network",
+      "Sampled episodes",
+      "A replay buffer",
+      "The transition probabilities and reward function"
+     ],
+     "answer": 3,
+     "why": "DP sweeps over all successor states using the known model. Model-free methods estimate the same quantities from sampled experience."
+    },
+    {
+     "q": "What is a stopping criterion commonly used for value iteration?",
+     "options": [
+      "Stop when the policy is random",
+      "Stop after exactly one sweep",
+      "Stop when the largest change in any state's value in a sweep falls below a threshold",
+      "Stop when all values are positive"
+     ],
+     "answer": 2,
+     "why": "A small max-norm change bounds the distance to the optimum by roughly $\\epsilon\\gamma/(1-\\gamma)$."
+    }
+   ]
+  },
+  {
+   "section": "Tabular model-free RL",
+   "questions": [
+    {
+     "q": "First-visit Monte Carlo evaluation updates V(s) using what?",
+     "options": [
+      "The maximum over actions",
+      "A bootstrap from V(s')",
+      "The immediate reward only",
+      "The return following the first time s is visited in each episode"
+     ],
+     "answer": 3,
+     "why": "MC waits for the episode to end and uses full returns. It is unbiased but can have high variance."
+    },
+    {
+     "q": "The TD(0) update is $V(s) \\leftarrow V(s) + \\alpha[r + \\gamma V(s') - V(s)]$. What is the bracket called?",
+     "options": [
+      "The advantage of the best action",
+      "The TD error",
+      "The return",
+      "The learning rate"
+     ],
+     "answer": 1,
+     "why": "TD bootstraps from its own estimate of the next state, trading some bias for much lower variance than MC."
+    },
+    {
+     "q": "What makes SARSA on-policy?",
+     "options": [
+      "It uses a replay buffer",
+      "Its target uses the max over next actions",
+      "It needs a model",
+      "Its target uses Q(s', a') for the action a' the current policy actually takes next"
+     ],
+     "answer": 3,
+     "why": "SARSA learns the value of the behaviour policy, including its exploration. Q-learning's max learns the greedy policy regardless of behaviour."
+    },
+    {
+     "q": "On the cliff-walking task with ε-greedy exploration, why does SARSA learn a safer path than Q-learning?",
+     "options": [
+      "SARSA accounts for the chance of a random step off the cliff; Q-learning values the optimal path as if it acts greedily",
+      "SARSA has a larger learning rate",
+      "Q-learning ignores rewards",
+      "Q-learning cannot reach the goal"
+     ],
+     "answer": 0,
+     "why": "Q-learning learns the shortest path along the edge, which is optimal for a greedy agent but falls off often while exploring."
+    },
+    {
+     "q": "What target does Q-learning use?",
+     "options": [
+      "$r + \\gamma \\max_{a'} Q(s', a')$",
+      "$r$ alone",
+      "The Monte Carlo return",
+      "$r + \\gamma Q(s', a')$ for the taken action"
+     ],
+     "answer": 0,
+     "why": "Taking the max makes it off-policy: it learns about the greedy policy while following any sufficiently exploratory one."
+    },
+    {
+     "q": "What does Expected SARSA replace the sampled next action with?",
+     "options": [
+      "A random action",
+      "The expectation of Q(s', ·) under the current policy",
+      "The previous action",
+      "The best action"
+     ],
+     "answer": 1,
+     "why": "Averaging over next actions removes the variance from sampling a'. With a greedy target policy it reduces to Q-learning."
+    },
+    {
+     "q": "Why does the max in Q-learning cause overestimation?",
+     "options": [
+      "It uses too few actions",
+      "The learning rate is too small",
+      "The max of noisy estimates is biased upward, since $E[\\max_a \\hat Q] \\ge \\max_a E[\\hat Q]$",
+      "Rewards are always positive"
+     ],
+     "answer": 2,
+     "why": "Double Q-learning uses one estimate to pick the action and another to evaluate it, which removes most of this bias."
+    },
+    {
+     "q": "Compared with Monte Carlo, what is TD's main advantage?",
+     "options": [
+      "It is unbiased",
+      "It works only for continuing tasks",
+      "It needs no discount factor",
+      "It can learn online from incomplete episodes, with lower variance"
+     ],
+     "answer": 3,
+     "why": "TD updates after every step. Its bias comes from bootstrapping off current estimates, which shrinks as they improve."
+    }
+   ]
+  },
+  {
+   "section": "Bandits and exploration",
+   "questions": [
+    {
+     "q": "Why is a purely greedy bandit strategy risky?",
+     "options": [
+      "An early unlucky estimate can stop it ever trying the arm that is actually best",
+      "It can't compute means",
+      "It always picks the last arm",
+      "It explores too much"
+     ],
+     "answer": 0,
+     "why": "Greedy never revisits arms it currently underrates. Some exploration, even ε-greedy, keeps estimates honest."
+    },
+    {
+     "q": "UCB1 picks the arm maximising $\\hat\\mu_a + \\sqrt{2\\ln t / n_a}$. What does the second term do?",
+     "options": [
+      "Adds random noise",
+      "Gives a bonus to arms tried less often, shrinking as they are pulled",
+      "Penalises arms with high variance",
+      "Decays the learning rate"
+     ],
+     "answer": 1,
+     "why": "This is optimism in the face of uncertainty. UCB1's regret grows logarithmically in t."
+    },
+    {
+     "q": "In Thompson sampling for Bernoulli arms with Beta priors, how is an arm chosen?",
+     "options": [
+      "Draw one sample from each arm's Beta posterior and pull the arm with the largest sample",
+      "Pick uniformly at random",
+      "Pick the arm with the highest posterior mean",
+      "Pick the arm with the most pulls"
+     ],
+     "answer": 0,
+     "why": "Arms with uncertain posteriors sometimes produce high samples and get explored. After a success the arm's α grows by 1; after a failure β grows by 1."
+    },
+    {
+     "q": "What is regret in a bandit problem?",
+     "options": [
+      "The reward of the worst arm",
+      "The variance of the rewards",
+      "The number of arms",
+      "The total reward lost compared with always pulling the best arm"
+     ],
+     "answer": 3,
+     "why": "Regret after T steps is $T\\mu^* - \\sum_t \\mu_{a_t}$. Good algorithms keep it sublinear in T."
+    },
+    {
+     "q": "In softmax (Boltzmann) exploration, what happens as the temperature goes to zero?",
+     "options": [
+      "All arms get equal value",
+      "Selection becomes greedy",
+      "Selection becomes uniform",
+      "It reduces to UCB"
+     ],
+     "answer": 1,
+     "why": "Probabilities are proportional to exp(Q/τ). Small τ sharpens them onto the best arm; large τ flattens them."
+    },
+    {
+     "q": "What does LinUCB assume about the reward?",
+     "options": [
+      "The reward is constant",
+      "The reward depends only on the time step",
+      "The expected reward is linear in a context feature vector, with per-arm (or shared) weights",
+      "Contexts are ignored"
+     ],
+     "answer": 2,
+     "why": "It keeps a ridge-regression estimate and adds a confidence bonus $\\alpha\\sqrt{x^\\top A^{-1} x}$ from the design matrix."
+    },
+    {
+     "q": "Why does fixed ε-greedy have linear regret?",
+     "options": [
+      "It never explores",
+      "It always picks the worst arm",
+      "It keeps exploring at rate ε forever, losing a constant amount per step on random pulls",
+      "It uses no estimates"
+     ],
+     "answer": 2,
+     "why": "Decaying ε over time (for example proportional to 1/t) can fix this."
+    },
+    {
+     "q": "What is the exploration-exploitation trade-off?",
+     "options": [
+      "Choosing between a large and a small model",
+      "Choosing the discount factor",
+      "Choosing between on-policy and off-policy learning",
+      "Choosing between actions known to be good and actions whose value is still uncertain"
+     ],
+     "answer": 3,
+     "why": "Too little exploration risks missing better options; too much wastes reward on options already known to be poor."
+    }
+   ]
+  },
+  {
+   "section": "Deep value-based RL",
+   "questions": [
+    {
+     "q": "Why does DQN use a separate target network?",
+     "options": [
+      "To store experience",
+      "To compute the policy gradient",
+      "To double the capacity",
+      "To keep the regression target fixed for a while, so the network isn't chasing a target that moves with every update"
+     ],
+     "answer": 3,
+     "why": "The target network is copied from the online network every few thousand steps, or updated slowly with Polyak averaging."
+    },
+    {
+     "q": "What problem does experience replay address?",
+     "options": [
+      "Consecutive transitions are strongly correlated; sampling from a buffer breaks that correlation and reuses data",
+      "It makes the policy on-policy",
+      "It removes the need for exploration",
+      "It reduces the action space"
+     ],
+     "answer": 0,
+     "why": "Random minibatches look closer to the i.i.d. data that SGD expects. Replay makes DQN off-policy, which is fine for Q-learning."
+    },
+    {
+     "q": "In prioritised experience replay, why are importance-sampling weights used?",
+     "options": [
+      "To increase the learning rate",
+      "Sampling by priority changes the data distribution, so weights correct the bias in the update",
+      "To remove old transitions",
+      "To make sampling uniform"
+     ],
+     "answer": 1,
+     "why": "Weights $(N \\cdot P(i))^{-\\beta}$ are normalised by their max, and β is annealed to 1 so the correction is complete by the end of training."
+    },
+    {
+     "q": "What is the Double DQN target?",
+     "options": [
+      "$r + \\gamma \\max_a Q_{online}(s', a)$",
+      "$r + \\gamma \\max_a Q_{target}(s', a)$",
+      "$r + \\gamma Q_{target}(s', \\arg\\max_a Q_{online}(s', a))$",
+      "$r + \\gamma Q_{online}(s', a)$ for a random a"
+     ],
+     "answer": 2,
+     "why": "The online network picks the action and the target network evaluates it, which reduces overestimation."
+    },
+    {
+     "q": "The dueling architecture writes Q as V(s) + A(s, a) - mean_a A(s, a). Why subtract the mean?",
+     "options": [
+      "Without it V and A are not identifiable, since a constant can move between them",
+      "To speed up the forward pass",
+      "To make A equal to Q",
+      "To keep Q positive"
+     ],
+     "answer": 0,
+     "why": "Subtracting the mean (or max) of A pins down the split, which stabilises learning."
+    },
+    {
+     "q": "For a terminal transition, what should the DQN target be?",
+     "options": [
+      "Zero",
+      "Just the reward r, with no bootstrap term",
+      "r + γ max Q(s', ·) as usual",
+      "The maximum Q-value in the batch"
+     ],
+     "answer": 1,
+     "why": "There is no future after a terminal state. Forgetting the done mask is a common bug that leaks value across episode boundaries."
+    },
+    {
+     "q": "Why is the Huber loss often used in DQN instead of squared error?",
+     "options": [
+      "It is not differentiable",
+      "It ignores small errors",
+      "It is linear for large errors, so rare large TD errors don't produce huge gradients",
+      "It makes the loss convex for neural networks"
+     ],
+     "answer": 2,
+     "why": "Huber behaves like squared error near zero and like absolute error far away, similar to clipping the gradient of the TD error."
+    },
+    {
+     "q": "DQN works for discrete actions. Why doesn't it extend directly to continuous actions?",
+     "options": [
+      "The replay buffer can't store them",
+      "Continuous actions have no rewards",
+      "Neural networks can't output continuous values",
+      "The target and greedy policy need a max over actions, which is an optimisation problem in a continuous space"
+     ],
+     "answer": 3,
+     "why": "Methods such as DDPG or SAC learn an actor that outputs the action, so the max isn't needed."
+    }
+   ]
+  },
+  {
+   "section": "Policy gradients and PPO",
+   "questions": [
+    {
+     "q": "The REINFORCE gradient estimate is $\\nabla_\\theta \\log \\pi_\\theta(a_t|s_t) \\, G_t$. Why does this work without differentiating the environment?",
+     "options": [
+      "The log-derivative trick moves the gradient onto the policy's log-probability, which we can differentiate",
+      "The environment is assumed linear",
+      "It uses a model of the dynamics",
+      "The return is differentiable"
+     ],
+     "answer": 0,
+     "why": "$\\nabla E_\\pi[G] = E_\\pi[G \\nabla \\log \\pi]$. Only the policy's own probabilities need gradients."
+    },
+    {
+     "q": "Why does subtracting a baseline b(s) from the return not bias the policy gradient?",
+     "options": [
+      "Baselines only reduce bias",
+      "The baseline is always zero",
+      "It changes the optimal policy",
+      "$E_{a\\sim\\pi}[\\nabla \\log \\pi(a|s)]\\,b(s) = 0$, since the score function has zero mean"
+     ],
+     "answer": 3,
+     "why": "The baseline doesn't change the expected gradient but can greatly reduce its variance. A learned V(s) is the usual choice."
+    },
+    {
+     "q": "In GAE, what does λ trade off?",
+     "options": [
+      "Exploration and exploitation",
+      "Bias and variance: λ = 0 gives the one-step TD advantage, λ = 1 gives the Monte Carlo advantage",
+      "Discount and reward scale",
+      "The learning rates of actor and critic"
+     ],
+     "answer": 1,
+     "why": "$A_t = \\sum_k (\\gamma\\lambda)^k \\delta_{t+k}$, a geometric mix of n-step advantages."
+    },
+    {
+     "q": "Why is an entropy bonus added to actor-critic losses?",
+     "options": [
+      "To speed up the forward pass",
+      "To make the critic more accurate",
+      "To keep the policy from becoming deterministic too early, so it keeps exploring",
+      "To reduce the action space"
+     ],
+     "answer": 2,
+     "why": "Maximising entropy pushes probabilities apart from zero. Its coefficient is usually small and sometimes decayed."
+    },
+    {
+     "q": "In the A2C loss, how is the critic trained?",
+     "options": [
+      "By maximising entropy",
+      "It isn't trained",
+      "By the policy gradient",
+      "By regressing V(s) toward a return or bootstrapped target with squared error"
+     ],
+     "answer": 3,
+     "why": "The critic supplies the baseline or advantage. Its gradient should not flow into the advantage used by the actor term."
+    },
+    {
+     "q": "What does PPO's clipped objective prevent?",
+     "options": [
+      "Negative advantages",
+      "Policy updates that move the probability ratio far outside [1 - ε, 1 + ε] in the direction that would increase the objective",
+      "Any change in the policy",
+      "Use of a value function"
+     ],
+     "answer": 1,
+     "why": "The objective is $\\min(r A, \\text{clip}(r, 1-\\epsilon, 1+\\epsilon) A)$, a pessimistic bound that removes the incentive to over-move."
+    },
+    {
+     "q": "Why can PPO reuse each batch of data for several epochs while vanilla policy gradient can't?",
+     "options": [
+      "PPO uses a replay buffer",
+      "PPO is off-policy",
+      "The clipped ratio keeps the updated policy near the one that collected the data, so the samples stay approximately valid",
+      "Vanilla PG uses too large a batch"
+     ],
+     "answer": 2,
+     "why": "Plain PG on stale data takes steps that the old samples no longer justify. The clip, often with a KL check, limits this."
+    },
+    {
+     "q": "Why are advantages often normalised within a batch?",
+     "options": [
+      "It keeps the gradient scale stable across batches and tasks",
+      "It is required for the value loss",
+      "It changes the sign of the gradient",
+      "It makes the policy deterministic"
+     ],
+     "answer": 0,
+     "why": "Normalising to zero mean and unit variance acts as an adaptive baseline and step size. It slightly changes the objective but helps in practice."
+    }
+   ]
+  },
+  {
+   "section": "RLHF and preference optimization",
+   "questions": [
+    {
+     "q": "A Bradley-Terry reward model is trained on pairs. What is its loss for a chosen response $y_w$ and rejected $y_l$?",
+     "options": [
+      "$-\\log \\sigma(r(x, y_w) - r(x, y_l))$",
+      "$(r(x, y_w) - 1)^2 + r(x, y_l)^2$",
+      "$-\\log \\sigma(r(x, y_w))$",
+      "$r(x, y_l) - r(x, y_w)$"
+     ],
+     "answer": 0,
+     "why": "Only the difference matters, so rewards are defined up to a constant per prompt. That is why they are often normalised before RL."
+    },
+    {
+     "q": "Why is a KL penalty against the reference (SFT) model used in RLHF?",
+     "options": [
+      "To speed up sampling",
+      "To make the reward model larger",
+      "To remove the need for a value function",
+      "To stop the policy exploiting reward model errors and drifting into text the reward model never saw"
+     ],
+     "answer": 3,
+     "why": "The reward is $r - \\beta \\log(\\pi/\\pi_{ref})$ per sample. Without it the policy finds outputs that score high but read badly."
+    },
+    {
+     "q": "What does DPO optimise instead of running RL?",
+     "options": [
+      "A classification loss on preference pairs using the log-ratio of policy to reference probabilities as an implicit reward",
+      "The reward model's loss alone",
+      "A PPO objective with a fixed reward",
+      "The SFT loss on chosen responses only"
+     ],
+     "answer": 0,
+     "why": "The loss is $-\\log\\sigma(\\beta[\\log\\frac{\\pi(y_w)}{\\pi_{ref}(y_w)} - \\log\\frac{\\pi(y_l)}{\\pi_{ref}(y_l)}])$, derived from the closed-form optimum of the KL-regularised objective."
+    },
+    {
+     "q": "In DPO, what does increasing β do?",
+     "options": [
+      "Increases the learning rate",
+      "Lets the policy move further from the reference",
+      "Has no effect",
+      "Keeps the policy closer to the reference model"
+     ],
+     "answer": 3,
+     "why": "β is the weight of the KL term in the objective DPO is derived from, so a larger β penalises drift from the reference more strongly."
+    },
+    {
+     "q": "How does GRPO estimate advantages without a value network?",
+     "options": [
+      "It trains a critic on the side",
+      "It uses the reward directly with no baseline",
+      "It samples a group of responses per prompt and standardises each reward by the group's mean and standard deviation",
+      "It uses the reference model's log-probability"
+     ],
+     "answer": 2,
+     "why": "The group mean acts as the baseline. This saves the memory and compute of a separate critic as large as the policy."
+    },
+    {
+     "q": "What baseline does RLOO use for sample i out of k?",
+     "options": [
+      "Zero",
+      "The mean reward of all k samples including i",
+      "The mean reward of the other k - 1 samples for the same prompt",
+      "The maximum reward in the group"
+     ],
+     "answer": 2,
+     "why": "Leaving sample i out keeps the baseline independent of its own action, so the gradient estimate stays unbiased."
+    },
+    {
+     "q": "What is \"reward hacking\" in RLHF?",
+     "options": [
+      "The KL penalty becomes negative",
+      "The policy finds outputs that score highly under the learned reward model but aren't actually better",
+      "The reward model is trained on too much data",
+      "The policy refuses to answer"
+     ],
+     "answer": 1,
+     "why": "Common symptoms are length growth, flattery and repeated phrases the reward model happens to like."
+    },
+    {
+     "q": "In PPO for RLHF, at what granularity is the KL penalty usually applied?",
+     "options": [
+      "Only once per batch",
+      "Per token, while the reward model's score is added at the final token",
+      "Per epoch",
+      "Only on the prompt tokens"
+     ],
+     "answer": 1,
+     "why": "Each generated token is an action. The per-token KL term gives dense feedback; the sequence-level reward arrives at the end."
+    }
+   ]
+  }
+ ]
+}

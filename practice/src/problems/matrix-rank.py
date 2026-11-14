@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Numerical rank from singular values', tags=['Linear Algebra'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:04.04', 'mlmaths:07.02'], related=['svd-components', 'matrix-determinant', 'low-rank-approximation'])
+            lessons=['mlmaths:04.17', 'mlmaths:07.07'], related=['svd-components', 'matrix-determinant', 'low-rank-approximation'])
 
 STATEMENT = r"""
 The rank of a matrix is the number of linearly independent columns (equivalently rows). In floating point, an exactly dependent column usually comes out *almost* dependent, so rank is computed by counting singular values that are clearly non-zero.

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Householder QR from scratch', tags=['Linear Algebra'], diff='Hard', runtime='numpy',
-            lessons=['mlmaths:06.03', 'mlmaths:06.02'], related=['gram-schmidt-orthogonalization', 'orthogonal-projection-matrix', 'least-squares-solution'])
+            lessons=['mlmaths:06.13', 'mlmaths:06.07'], related=['gram-schmidt-orthogonalization', 'orthogonal-projection-matrix', 'least-squares-solution'])
 
 STATEMENT = r"""
 Every matrix $A \in \mathbb{R}^{m\times n}$ with $m \ge n$ factors as $A = QR$, with $Q \in \mathbb{R}^{m\times n}$ having orthonormal columns and $R \in \mathbb{R}^{n\times n}$ upper-triangular. Libraries compute it with **Householder reflections**, which stay orthogonal to machine precision even when Gram–Schmidt doesn't.

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='SVD as a sum of rank-1 layers', tags=['Linear Algebra'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:07.02'], related=['low-rank-approximation', 'outer-product', 'matrix-rank'])
+            lessons=['mlmaths:07.07'], related=['low-rank-approximation', 'outer-product', 'matrix-rank'])
 
 STATEMENT = r"""
 The singular value decomposition writes any matrix as a weighted sum of rank-1 matrices:

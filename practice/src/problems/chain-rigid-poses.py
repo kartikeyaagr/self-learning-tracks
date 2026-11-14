@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Chain and invert rigid transforms', tags=['3D Geometry', 'Linear Algebra'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:03.05'], related=['rodrigues-rotation', 'pinhole-projection', 'matrix-multiply'])
+            lessons=['mlmaths:03.33'], related=['rodrigues-rotation', 'pinhole-projection', 'matrix-multiply'])
 
 STATEMENT = r"""
 A rigid transform in 3D is a rotation $R$ (orthonormal, $\det R = 1$) followed by a translation $t$, stored as a $4\times4$ homogeneous matrix:

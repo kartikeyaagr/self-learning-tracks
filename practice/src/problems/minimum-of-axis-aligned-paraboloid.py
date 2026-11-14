@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Minimum of a separable paraboloid', tags=['Optimization', 'Calculus'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:07.01', 'mlmaths:09.08'],
+            lessons=['mlmaths:07.01', 'mlmaths:09.52'],
             related=['minimum-of-univariate-quadratic', 'convexity-certificate-via-hessian', 'vanilla-gradient-descent'])
 
 STATEMENT = r"""

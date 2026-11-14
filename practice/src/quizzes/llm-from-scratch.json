@@ -1,0 +1,1586 @@
+{
+ "plan": "llm-from-scratch",
+ "sections": [
+  {
+   "section": "Tokenization",
+   "questions": [
+    {
+     "q": "A BPE trainer finds two pairs tied for the highest count. Why does the tie-break rule matter?",
+     "options": [
+      "Different merges give different vocabularies, so a fixed rule (such as lexicographic order) is needed for reproducible training",
+      "Both pairs are merged at once",
+      "Ties can't occur in BPE",
+      "The tie-break changes only the speed"
+     ],
+     "answer": 0,
+     "why": "Without a deterministic rule, two runs on the same data can produce different tokenizers."
+    },
+    {
+     "q": "Why do GPT-style tokenizers pre-split text with a regex before BPE?",
+     "options": [
+      "To speed up decoding only",
+      "To lower-case the text",
+      "To stop merges from crossing word, number or punctuation boundaries, such as \"dog.\" becoming one token",
+      "To remove spaces"
+     ],
+     "answer": 2,
+     "why": "Pre-tokenisation keeps tokens meaningful and stops the vocabulary filling with variants of the same word plus punctuation."
+    },
+    {
+     "q": "When encoding with a trained BPE, in what order are merges applied?",
+     "options": [
+      "In random order",
+      "By the frequency of each pair in the input",
+      "By rank: repeatedly apply the lowest-ranked (earliest learned) merge present in the word",
+      "Left to right, greedily matching the longest token"
+     ],
+     "answer": 2,
+     "why": "Applying merges in training order reproduces how the vocabulary was built."
+    },
+    {
+     "q": "Why does byte-level BPE never need an unknown token?",
+     "options": [
+      "It has an unlimited vocabulary",
+      "It removes rare characters",
+      "It maps unknown text to spaces",
+      "It starts from the 256 byte values, so any string can be represented"
+     ],
+     "answer": 3,
+     "why": "Rare characters become several byte tokens. The cost is longer sequences for non-Latin scripts."
+    },
+    {
+     "q": "What does a larger vocabulary trade off?",
+     "options": [
+      "Nothing; size doesn't matter",
+      "Better accuracy at no cost",
+      "Longer sequences and fewer parameters",
+      "Shorter sequences against a larger embedding and output layer, with rarer tokens seen less often in training"
+     ],
+     "answer": 3,
+     "why": "The output softmax over V entries is a noticeable cost for small models with large vocabularies."
+    },
+    {
+     "q": "Why are special tokens like `<|endoftext|>` handled outside of BPE merges?",
+     "options": [
+      "They must map to a single reserved ID and never be produced by merging ordinary text",
+      "BPE can't handle angle brackets",
+      "They are too long to merge",
+      "They are removed before training"
+     ],
+     "answer": 0,
+     "why": "Encoders split them out first, so user text containing the same characters can't inject control tokens by accident."
+    },
+    {
+     "q": "The word \"lower\" is encoded with merges ranked (l,o) = 0, (lo,w) = 1, (e,r) = 2. What is the result?",
+     "options": [
+      "[\"lo\", \"wer\"]",
+      "[\"low\", \"er\"]",
+      "[\"l\", \"o\", \"w\", \"e\", \"r\"]",
+      "[\"lower\"]"
+     ],
+     "answer": 1,
+     "why": "Apply (l,o) → \"lo\", then (lo,w) → \"low\", then (e,r) → \"er\". No further merges apply."
+    },
+    {
+     "q": "Why should a tokenizer round-trip decode(encode(text)) == text?",
+     "options": [
+      "It isn't required",
+      "Any loss means the model can't reproduce some inputs exactly, which breaks code, whitespace and evaluation",
+      "It is only needed for English",
+      "It speeds up training"
+     ],
+     "answer": 1,
+     "why": "Byte-level BPE gives exact round trips. Normalising tokenizers can lose information such as repeated spaces."
+    }
+   ]
+  },
+  {
+   "section": "PyTorch and einops",
+   "questions": [
+    {
+     "q": "What does `einsum('bhqd,bhkd->bhqk', q, k)` compute?",
+     "options": [
+      "The output of attention",
+      "Attention scores for each batch and head: dot products between every query and every key",
+      "A transpose of q",
+      "An element-wise product"
+     ],
+     "answer": 1,
+     "why": "The shared index d is summed over. The result has a q × k score matrix per batch and head."
+    },
+    {
+     "q": "Why are named-dimension tools like einops useful in model code?",
+     "options": [
+      "They remove the need for batching",
+      "They are faster than views in every case",
+      "Reshapes and transposes state their meaning explicitly, so axis mix-ups are easier to spot",
+      "They change the maths"
+     ],
+     "answer": 2,
+     "why": "`rearrange(x, 'b t (h d) -> b h t d', h=heads)` is clearer than a chain of view and transpose calls."
+    },
+    {
+     "q": "Training with AdamW in mixed precision, roughly how many bytes per parameter do weights, gradients and optimiser state take?",
+     "options": [
+      "About 4",
+      "About 2",
+      "About 32",
+      "About 16: bf16 weights and grads (4), fp32 master weights (4) and two fp32 Adam moments (8)"
+     ],
+     "answer": 3,
+     "why": "Activations come on top and depend on batch size and sequence length. This is why ZeRO-style sharding matters."
+    },
+    {
+     "q": "What is the usual estimate of training FLOPs for a dense transformer?",
+     "options": [
+      "About 6 · parameters · tokens",
+      "tokens²",
+      "About 2 · parameters · tokens",
+      "parameters²"
+     ],
+     "answer": 0,
+     "why": "The forward pass is about 2N FLOPs per token and the backward pass about 4N. Attention adds a term that grows with context length."
+    },
+    {
+     "q": "Why does gradient accumulation over k micro-batches give the same update as one batch k times larger?",
+     "options": [
+      "It multiplies the learning rate by k",
+      "Each micro-batch updates the weights separately",
+      "It doesn't; the results always differ",
+      "Gradients are summed (or averaged) across micro-batches before the optimiser step, just as for one large batch"
+     ],
+     "answer": 3,
+     "why": "Scale each micro-batch's loss by 1/k when the loss is a mean. Batch normalisation would break the equivalence, but transformers rarely use it."
+    },
+    {
+     "q": "When does gradient accumulation fail to match a large batch exactly?",
+     "options": [
+      "When using AdamW",
+      "When the loss is averaged per micro-batch and micro-batches have different numbers of valid tokens",
+      "When using bf16",
+      "Never"
+     ],
+     "answer": 1,
+     "why": "Averaging per micro-batch weights tokens unequally. Summing losses and dividing by the total token count fixes it."
+    },
+    {
+     "q": "What does `torch.no_grad()` do during evaluation?",
+     "options": [
+      "Freezes batch norm",
+      "Zeros the gradients",
+      "Sets the model to eval mode",
+      "Stops autograd recording operations, saving memory and time"
+     ],
+     "answer": 3,
+     "why": "Eval mode (`model.eval()`) is separate: it changes dropout and normalisation behaviour."
+    },
+    {
+     "q": "Why is bf16 usually preferred over fp16 for training large models?",
+     "options": [
+      "bf16 uses less memory than fp16",
+      "fp16 isn't supported by GPUs",
+      "bf16 has the same exponent range as fp32, so it rarely overflows and doesn't need loss scaling",
+      "bf16 has more mantissa bits"
+     ],
+     "answer": 2,
+     "why": "bf16 keeps 8 exponent bits and drops mantissa bits. fp16 has more precision but a much smaller range."
+    }
+   ]
+  },
+  {
+   "section": "Architectures",
+   "questions": [
+    {
+     "q": "Why is RMSNorm cheaper than LayerNorm?",
+     "options": [
+      "It skips mean subtraction and usually the bias, needing one reduction",
+      "It doesn't divide",
+      "It normalises over the batch",
+      "It has no learned scale"
+     ],
+     "answer": 0,
+     "why": "Empirically it performs about as well, which is why most recent LLMs use it."
+    },
+    {
+     "q": "A SwiGLU FFN has three matrices instead of two. How is its hidden size usually set to match a standard FFN's parameters?",
+     "options": [
+      "To about 2/3 of 4d, so 3 · d · (8d/3) ≈ 2 · d · 4d",
+      "To 4d, accepting 50% more parameters",
+      "To d",
+      "To 8d"
+     ],
+     "answer": 0,
+     "why": "LLaMA used 2/3 · 4d rounded to a multiple of 256."
+    },
+    {
+     "q": "In SwiGLU, what does the gate do?",
+     "options": [
+      "Multiplies one projection element-wise by SiLU of another, letting the network control each hidden unit",
+      "Selects an expert",
+      "Adds a residual",
+      "Normalises the output"
+     ],
+     "answer": 0,
+     "why": "FFN(x) = W₂(SiLU(W₁x) ⊙ W₃x)."
+    },
+    {
+     "q": "Rotary embeddings make the score $q_m^\\top k_n$ depend on what?",
+     "options": [
+      "Only on absolute positions",
+      "On the sequence length",
+      "On nothing positional",
+      "Only on the relative offset m − n (and the content of q and k)"
+     ],
+     "answer": 3,
+     "why": "Rotating q by mθ and k by nθ gives a dot product that depends on (m − n)θ."
+    },
+    {
+     "q": "Where is RoPE applied in an attention layer?",
+     "options": [
+      "To values only",
+      "To the input embeddings only",
+      "To queries and keys after projection, before the dot product; not to values",
+      "To the attention output"
+     ],
+     "answer": 2,
+     "why": "Values carry content, not position, so they aren't rotated."
+    },
+    {
+     "q": "What does a causal mask do in a decoder?",
+     "options": [
+      "Reverses the sequence",
+      "Sets scores for future positions to −∞ before the softmax so each token attends only to itself and earlier tokens",
+      "Masks random tokens",
+      "Masks padding only"
+     ],
+     "answer": 1,
+     "why": "It makes training on all positions at once equivalent to autoregressive prediction."
+    },
+    {
+     "q": "In GQA with 32 query heads and 8 KV heads, how are keys used in the score computation?",
+     "options": [
+      "Each query head gets its own key",
+      "Each KV head is shared by a group of 4 consecutive query heads (often by repeating it)",
+      "Keys are averaged across heads",
+      "All query heads share one key"
+     ],
+     "answer": 1,
+     "why": "Repeat-interleave or reshape the query heads into groups so no copy is made."
+    },
+    {
+     "q": "Why do pre-norm transformers train more stably than post-norm ones at depth?",
+     "options": [
+      "Post-norm can't use attention",
+      "Pre-norm has fewer parameters",
+      "The residual path stays an identity, so gradients reach early layers without passing through normalisation each time",
+      "Pre-norm removes the residual"
+     ],
+     "answer": 2,
+     "why": "Post-norm usually needs careful warm-up to train deep stacks."
+    }
+   ]
+  },
+  {
+   "section": "Attention Alternatives",
+   "questions": [
+    {
+     "q": "Linear attention replaces softmax with a feature map φ. What does that enable?",
+     "options": [
+      "Removing keys",
+      "Bidirectional attention only",
+      "Computing $\\phi(Q)(\\phi(K)^\\top V)$, which is linear in sequence length and can run as a recurrence",
+      "Exact softmax attention at lower cost"
+     ],
+     "answer": 2,
+     "why": "With a causal mask, the running sum $S_t = S_{t-1} + \\phi(k_t)v_t^\\top$ is a fixed-size state."
+    },
+    {
+     "q": "Why do the parallel and recurrent forms of causal linear attention give the same output?",
+     "options": [
+      "The recurrent state is exactly the prefix sum of $\\phi(k_i)v_i^\\top$ that the masked parallel form computes",
+      "The parallel form uses softmax",
+      "They don't; one approximates the other",
+      "The recurrent form ignores earlier tokens"
+     ],
+     "answer": 0,
+     "why": "Training uses the parallel or chunked form; inference uses the recurrence with constant memory per token."
+    },
+    {
+     "q": "What does a gating term add to a linear-attention state update, as in Mamba-2 or GLA?",
+     "options": [
+      "A second key",
+      "A softmax over the state",
+      "A larger head size",
+      "A decay that lets the state forget old information at a learned, input-dependent rate"
+     ],
+     "answer": 3,
+     "why": "$S_t = a_t S_{t-1} + k_t v_t^\\top$. Without decay the state only accumulates and can't forget."
+    },
+    {
+     "q": "The delta rule update $S_t = S_{t-1} + \\beta_t(v_t - S_{t-1}k_t)k_t^\\top$ does what?",
+     "options": [
+      "Corrects the state toward storing $v_t$ under key $k_t$, overwriting what was stored there before",
+      "Adds $v_t k_t^\\top$ with no correction",
+      "Computes softmax attention",
+      "Resets the state"
+     ],
+     "answer": 0,
+     "why": "It is one step of online regression for the key-value map. Gated DeltaNet multiplies $S_{t-1}$ by a decay first."
+    },
+    {
+     "q": "Why are hybrid models often built with a few full attention layers among linear or state-space layers?",
+     "options": [
+      "It is required for RoPE",
+      "Recurrent layers have fixed-size memory and struggle with exact recall over long contexts; a few attention layers restore it",
+      "Attention layers are cheaper",
+      "Linear layers can't be trained"
+     ],
+     "answer": 1,
+     "why": "The mix keeps most of the memory and speed benefits while recovering retrieval ability."
+    },
+    {
+     "q": "A top-k MoE router computes what per token?",
+     "options": [
+      "The token's position",
+      "The average of all experts",
+      "One expert chosen at random",
+      "Scores for each expert; the top k are selected and their weights normalised"
+     ],
+     "answer": 3,
+     "why": "Routers often use softmax or sigmoid scores. Selected weights may be renormalised to sum to 1."
+    },
+    {
+     "q": "Which statistics does a router typically report for load balancing?",
+     "options": [
+      "The vocabulary size",
+      "Only the loss",
+      "The fraction of tokens sent to each expert and the mean router probability per expert",
+      "The number of layers"
+     ],
+     "answer": 2,
+     "why": "Their product summed over experts (times the number of experts) gives the standard auxiliary loss."
+    },
+    {
+     "q": "What is the memory cost of a recurrent linear-attention layer at inference, per sequence?",
+     "options": [
+      "A fixed d_k × d_v state per head, independent of context length",
+      "Zero",
+      "Grows quadratically with context length",
+      "Grows linearly with context length"
+     ],
+     "answer": 0,
+     "why": "Compare a KV cache, which grows by one key and value per token."
+    }
+   ]
+  },
+  {
+   "section": "GPUs and TPUs",
+   "questions": [
+    {
+     "q": "What limits occupancy on a GPU streaming multiprocessor?",
+     "options": [
+      "The PCIe bandwidth",
+      "Registers per thread, shared memory per block, threads per block and the hardware's block and warp limits",
+      "Only global memory size",
+      "The clock speed"
+     ],
+     "answer": 1,
+     "why": "The most restrictive resource sets how many blocks fit on one SM at once."
+    },
+    {
+     "q": "A kernel uses 64 registers per thread and the SM has 65,536 registers. What is the maximum number of resident threads by registers alone?",
+     "options": [
+      "512",
+      "1,024",
+      "2,048",
+      "64"
+     ],
+     "answer": 1,
+     "why": "65,536 / 64 = 1,024. If the SM supports 2,048 threads, occupancy is capped at 50%."
+    },
+    {
+     "q": "When do shared-memory bank conflicts happen?",
+     "options": [
+      "When shared memory is full",
+      "When threads read the same address",
+      "When several threads in a warp access different addresses in the same bank in one instruction",
+      "When two warps use shared memory"
+     ],
+     "answer": 2,
+     "why": "Shared memory has 32 banks of 4-byte words. Reading the same address broadcasts; different addresses in one bank are serialised."
+    },
+    {
+     "q": "Threads in a warp read `smem[tid * 32]` (4-byte floats). How bad is the conflict?",
+     "options": [
+      "16-way",
+      "No conflict",
+      "2-way",
+      "32-way: every thread hits bank 0"
+     ],
+     "answer": 3,
+     "why": "Bank = (address / 4) mod 32 = (tid · 32) mod 32 = 0. Padding the row length to 33 spreads them across banks."
+    },
+    {
+     "q": "What does global memory coalescing mean?",
+     "options": [
+      "A warp's accesses to consecutive addresses are combined into a few wide memory transactions",
+      "Caches are flushed",
+      "Threads share registers",
+      "Memory is compressed"
+     ],
+     "answer": 0,
+     "why": "Strided or scattered accesses need more transactions for the same useful bytes."
+    },
+    {
+     "q": "A warp reads 32 floats with stride 2. Roughly how much of the fetched bandwidth is wasted?",
+     "options": [
+      "None",
+      "About half",
+      "About 90%",
+      "All of it"
+     ],
+     "answer": 1,
+     "why": "The warp touches 256 bytes of memory to use 128. Larger strides waste more."
+    },
+    {
+     "q": "What is blockwise online softmax for?",
+     "options": [
+      "Computing softmax over a long row in chunks with a running max and sum, without storing the row",
+      "Approximating softmax",
+      "Computing argmax only",
+      "Sorting the row"
+     ],
+     "answer": 0,
+     "why": "It is the core of FlashAttention."
+    },
+    {
+     "q": "How does a TPU's matrix unit differ from a GPU's CUDA cores?",
+     "options": [
+      "It has no memory",
+      "It runs arbitrary threads",
+      "It is used only for inference",
+      "It is a large systolic array specialised for dense matmul, fed by the XLA compiler"
+     ],
+     "answer": 3,
+     "why": "TPUs trade flexibility for very high matmul throughput, which is why kernels and sharding are planned by the compiler."
+    }
+   ]
+  },
+  {
+   "section": "Kernels, Triton, and XLA",
+   "questions": [
+    {
+     "q": "In a masked Triton GELU kernel, what does the mask prevent?",
+     "options": [
+      "Recompilation",
+      "Negative values",
+      "NaNs",
+      "Reads and writes past the end of the tensor in the last block"
+     ],
+     "answer": 3,
+     "why": "`mask = offs < n` on both `tl.load` and `tl.store`."
+    },
+    {
+     "q": "A Triton row-wise softmax with the whole row in one block does how many trips to global memory per element?",
+     "options": [
+      "Three reads and one write",
+      "None",
+      "One read and one write",
+      "Two reads and two writes"
+     ],
+     "answer": 2,
+     "why": "Max, exponent, sum and divide happen on-chip."
+    },
+    {
+     "q": "In a tiled row-sum kernel where rows are longer than the block, what does each program do?",
+     "options": [
+      "Sums the whole tensor",
+      "Loops over its row in BLOCK-sized chunks, accumulating a partial sum, then writes one value",
+      "Sums one element",
+      "Writes a partial per chunk with no accumulation"
+     ],
+     "answer": 1,
+     "why": "The loop keeps memory per program fixed whatever the row length."
+    },
+    {
+     "q": "What is the benefit of fusing ReLU into a tiled matmul kernel?",
+     "options": [
+      "It changes the matmul's precision",
+      "It is applied to the accumulator in registers, avoiding a separate pass over the output",
+      "It doubles throughput of the matmul itself",
+      "It removes the need for tiling"
+     ],
+     "answer": 1,
+     "why": "Epilogue fusion is close to free."
+    },
+    {
+     "q": "What does XLA do with a JAX or TensorFlow computation graph?",
+     "options": [
+      "Converts it to Python",
+      "Interprets each operation separately at runtime",
+      "Runs it on the CPU only",
+      "Compiles it as a whole, fusing operations and choosing layouts before generating device code"
+     ],
+     "answer": 3,
+     "why": "Whole-graph compilation enables fusion that eager frameworks get only through hand-written kernels or graph capture."
+    },
+    {
+     "q": "Why can kernel fusion give large speedups for chains of element-wise ops?",
+     "options": [
+      "The chain is memory-bound; fusing removes intermediate reads and writes",
+      "It reduces FLOPs",
+      "It uses tensor cores",
+      "It changes the algorithm"
+     ],
+     "answer": 0,
+     "why": "A chain of five element-wise ops fused into one reads and writes the data once instead of five times."
+    },
+    {
+     "q": "Why must Triton block sizes be powers of two?",
+     "options": [
+      "Global memory is addressed in powers of two",
+      "It doesn't; any size works",
+      "`tl.arange` and the compiler's layouts require power-of-two shapes",
+      "Python requires it"
+     ],
+     "answer": 2,
+     "why": "Use masks to handle sizes that aren't a power of two."
+    },
+    {
+     "q": "When is writing a custom kernel not worth it?",
+     "options": [
+      "When the operation is memory-bound",
+      "Always",
+      "When the operation is already well served by a library call or compiler fusion, or isn't a bottleneck",
+      "Never"
+     ],
+     "answer": 2,
+     "why": "Profile first. Custom kernels add maintenance cost."
+    }
+   ]
+  },
+  {
+   "section": "Parallelism I",
+   "questions": [
+    {
+     "q": "What does an all-reduce do?",
+     "options": [
+      "Combines (for example sums) a tensor across all ranks and leaves the result on every rank",
+      "Splits a tensor across ranks",
+      "Sends one rank's data to all",
+      "Collects data on one rank"
+     ],
+     "answer": 0,
+     "why": "It equals a reduce-scatter followed by an all-gather."
+    },
+    {
+     "q": "In a ring all-reduce over p ranks, how much data does each rank send?",
+     "options": [
+      "The tensor size divided by p",
+      "p times the tensor size",
+      "Zero",
+      "About 2(p − 1)/p times the tensor size"
+     ],
+     "answer": 3,
+     "why": "Reduce-scatter and all-gather each send (p − 1)/p. The cost barely grows with p, which is why rings scale well in bandwidth."
+    },
+    {
+     "q": "What is effective (bus) bandwidth for a collective?",
+     "options": [
+      "The number of GPUs",
+      "The link's nominal speed",
+      "The data each rank must move divided by the time, which lets you compare against link bandwidth",
+      "The tensor size divided by time"
+     ],
+     "answer": 2,
+     "why": "For all-reduce, bus bandwidth = (size × 2(p − 1)/p) / time."
+    },
+    {
+     "q": "In data parallelism, what must happen before the optimiser step?",
+     "options": [
+      "Weights are all-reduced after the step",
+      "Nothing; replicas train independently",
+      "Gradients are all-reduced (averaged) across replicas so every replica applies the same update",
+      "Only rank 0 updates"
+     ],
+     "answer": 2,
+     "why": "Implementations overlap the all-reduce with the backward pass by bucketing gradients."
+    },
+    {
+     "q": "In a column-parallel linear layer, how is the weight split?",
+     "options": [
+      "By layer",
+      "By batch",
+      "Along the input dimension",
+      "Along the output dimension, so each rank computes a slice of the output features"
+     ],
+     "answer": 3,
+     "why": "Following it with a row-parallel layer means only one all-reduce is needed for the pair."
+    },
+    {
+     "q": "How do you reconstruct the full output from column-parallel shards?",
+     "options": [
+      "Take rank 0's output",
+      "Average them",
+      "Concatenate the ranks' output slices along the feature dimension (an all-gather)",
+      "Sum them"
+     ],
+     "answer": 2,
+     "why": "Row-parallel shards, by contrast, produce partial sums that must be added."
+    },
+    {
+     "q": "What does a reduce-scatter leave on each rank?",
+     "options": [
+      "One shard of the reduced result",
+      "The full reduced result",
+      "Nothing",
+      "The original tensor"
+     ],
+     "answer": 0,
+     "why": "ZeRO and FSDP use it for gradients, so each rank only keeps the shard it updates."
+    },
+    {
+     "q": "Why does data parallelism alone stop scaling for very large models?",
+     "options": [
+      "Batch size can't grow",
+      "Every replica must hold the full model, gradients and optimiser state, which eventually exceeds one GPU's memory",
+      "All-reduce becomes impossible",
+      "It changes the loss"
+     ],
+     "answer": 1,
+     "why": "Sharding state (ZeRO) or the model itself (tensor or pipeline parallelism) is then needed."
+    }
+   ]
+  },
+  {
+   "section": "Parallelism II",
+   "questions": [
+    {
+     "q": "What does ZeRO stage 1 shard across data-parallel ranks?",
+     "options": [
+      "Optimiser state, gradients and parameters",
+      "Optimiser state only",
+      "Activations",
+      "Optimiser state and gradients"
+     ],
+     "answer": 1,
+     "why": "Stage 2 also shards gradients, and stage 3 (or FSDP) also shards parameters."
+    },
+    {
+     "q": "With mixed-precision Adam (16 bytes per parameter) and 8 data-parallel ranks, about how many bytes per parameter does each rank hold under ZeRO stage 3?",
+     "options": [
+      "4",
+      "2",
+      "12",
+      "16"
+     ],
+     "answer": 1,
+     "why": "All 16 bytes are sharded: 16 / 8 = 2. Parameters are gathered on demand for each layer's forward and backward."
+    },
+    {
+     "q": "What is the pipeline bubble?",
+     "options": [
+      "Idle time at the start and end of each step while the pipeline fills and drains",
+      "A memory leak",
+      "A failed communication",
+      "Unused tensor cores"
+     ],
+     "answer": 0,
+     "why": "For p stages and m micro-batches in a GPipe-style schedule, the bubble fraction is (p − 1)/(m + p − 1)."
+    },
+    {
+     "q": "With 4 pipeline stages and 12 micro-batches, what is the bubble fraction?",
+     "options": [
+      "3/12 = 25%",
+      "4/12 ≈ 33%",
+      "1/4 = 25%",
+      "3/15 = 20%"
+     ],
+     "answer": 3,
+     "why": "(p − 1)/(m + p − 1) = 3/15. More micro-batches shrink the bubble but need more activation memory."
+    },
+    {
+     "q": "What does a 1F1B pipeline schedule improve over GPipe?",
+     "options": [
+      "Peak activation memory, since each stage starts backward passes early and holds fewer micro-batches at once",
+      "The model's accuracy",
+      "The bubble size, to zero",
+      "Communication volume"
+     ],
+     "answer": 0,
+     "why": "The bubble is the same as GPipe for the same p and m. Interleaved schedules reduce it further."
+    },
+    {
+     "q": "Why is tensor parallelism usually placed on the fastest links?",
+     "options": [
+      "It uses the least communication",
+      "Pipeline parallelism needs NVLink",
+      "It doesn't communicate",
+      "It communicates within every layer, so its collectives are on the critical path"
+     ],
+     "answer": 3,
+     "why": "A typical plan is tensor parallel inside a node, pipeline across nodes and data parallel across groups."
+    },
+    {
+     "q": "What does \"topology-aware\" mean when choosing a parallel plan?",
+     "options": [
+      "Choosing the batch size only",
+      "Choosing the model architecture",
+      "Placing all GPUs in one rack",
+      "Mapping the most communication-heavy dimensions to the highest-bandwidth links between GPUs"
+     ],
+     "answer": 3,
+     "why": "The same plan can be much slower if tensor-parallel groups span slow inter-node links."
+    },
+    {
+     "q": "What does activation checkpointing trade?",
+     "options": [
+      "Accuracy for speed",
+      "Parameters for activations",
+      "Extra compute (recomputing activations in the backward pass) for lower activation memory",
+      "Communication for compute"
+     ],
+     "answer": 2,
+     "why": "Recomputing each layer's forward adds about one extra forward pass in total."
+    }
+   ]
+  },
+  {
+   "section": "Scaling Laws I",
+   "questions": [
+    {
+     "q": "What does a saturating power law $L(x) = E + A x^{-\\alpha}$ add over a plain power law?",
+     "options": [
+      "A linear term",
+      "An irreducible loss floor E that the curve approaches",
+      "An exponential decay",
+      "A maximum loss"
+     ],
+     "answer": 1,
+     "why": "Fitting without E overestimates how fast loss keeps falling at large scale."
+    },
+    {
+     "q": "Why fit scaling laws in log space?",
+     "options": [
+      "Optimisers need it",
+      "To remove the floor",
+      "Logs make the loss smaller",
+      "A pure power law is a straight line in log-log coordinates, and errors are closer to multiplicative"
+     ],
+     "answer": 3,
+     "why": "With a floor, fit log(L − E) or use nonlinear least squares directly."
+    },
+    {
+     "q": "What does an IsoFLOP analysis do?",
+     "options": [
+      "Fixes the model and varies data only",
+      "Measures inference cost",
+      "Trains several model sizes at fixed compute and finds the size that minimises loss, then repeats across budgets",
+      "Trains one model for many FLOPs"
+     ],
+     "answer": 2,
+     "why": "Fitting the optimum size against compute gives an exponent such as N_opt ∝ C^a."
+    },
+    {
+     "q": "What did Chinchilla conclude about compute-optimal training?",
+     "options": [
+      "Scaling laws don't hold",
+      "Parameters and tokens should grow in roughly equal proportion, around 20 tokens per parameter",
+      "Models should be as large as possible on fixed data",
+      "Data matters more than parameters by 10×"
+     ],
+     "answer": 1,
+     "why": "Many earlier models were undertrained for their size by this measure."
+    },
+    {
+     "q": "What is the critical batch size?",
+     "options": [
+      "The batch size beyond which larger batches give much smaller reductions in the number of steps needed",
+      "The batch where loss is zero",
+      "The smallest batch that converges",
+      "The largest batch that fits in memory"
+     ],
+     "answer": 0,
+     "why": "Below it, doubling the batch roughly halves the steps; above it, returns diminish. It tends to grow as loss falls."
+    },
+    {
+     "q": "Why are data mixture scaling curves extrapolated per domain?",
+     "options": [
+      "Different domains improve at different rates with more data, so the best mixture can change with scale",
+      "To choose the tokenizer",
+      "Only the total matters",
+      "Domains all scale the same"
+     ],
+     "answer": 0,
+     "why": "Small-scale experiments fit per-domain curves, which are then used to predict loss for a target mixture at larger scale."
+    },
+    {
+     "q": "A fit gives $N_{opt} \\propto C^{0.5}$. If compute grows 100×, how should model size change?",
+     "options": [
+      "Unchanged",
+      "2× larger",
+      "About 10× larger",
+      "100× larger"
+     ],
+     "answer": 2,
+     "why": "100^0.5 = 10. Tokens would also grow about 10× if they follow the same exponent."
+    },
+    {
+     "q": "What is a risk when extrapolating a scaling law far beyond fitted points?",
+     "options": [
+      "The law becomes linear",
+      "Small errors in the exponent compound, and new regimes (such as data repetition) can bend the curve",
+      "The loss floor disappears",
+      "Extrapolation is always exact"
+     ],
+     "answer": 1,
+     "why": "Fit over as wide a range as possible and check predictions against at least one larger held-out run."
+    }
+   ]
+  },
+  {
+   "section": "Inference",
+   "questions": [
+    {
+     "q": "During decode with a KV cache, what does attention compute for the new token?",
+     "options": [
+      "Nothing; the cache stores outputs",
+      "Attention only to the previous token",
+      "Full attention over the whole sequence again",
+      "Scores between its query and all cached keys, then a weighted sum of cached values"
+     ],
+     "answer": 3,
+     "why": "The new key and value are appended to the cache first, so the token also attends to itself."
+    },
+    {
+     "q": "How do you estimate how many tokens of KV cache fit in memory?",
+     "options": [
+      "Free memory after weights ÷ (2 · layers · KV heads · head dim · bytes per value)",
+      "Total memory ÷ parameters",
+      "Free memory ÷ vocabulary size",
+      "Number of layers × batch size"
+     ],
+     "answer": 0,
+     "why": "Divide by the expected sequence length to get the number of concurrent requests."
+    },
+    {
+     "q": "In exact speculative sampling, when is draft token x accepted?",
+     "options": [
+      "With probability min(1, p(x)/q(x)), where p is the target and q the draft distribution",
+      "Always, if it is the target's argmax",
+      "Never; the target always resamples",
+      "With probability q(x)"
+     ],
+     "answer": 0,
+     "why": "On rejection, sample from the normalised max(0, p − q). The output distribution then equals p exactly."
+    },
+    {
+     "q": "If all k draft tokens are accepted, what happens next?",
+     "options": [
+      "One extra token is sampled from the target's distribution at the next position, giving k + 1 tokens for one target pass",
+      "The sequence ends",
+      "The draft generates another k before checking",
+      "The step ends with k tokens"
+     ],
+     "answer": 0,
+     "why": "The target's forward pass already produced that distribution, so the bonus token is free."
+    },
+    {
+     "q": "Why is the decode phase usually memory-bandwidth bound at small batch?",
+     "options": [
+      "Attention is quadratic at decode",
+      "The softmax dominates",
+      "Every step reads all weights and the KV cache to produce one token per sequence",
+      "Decoding needs more FLOPs than prefill"
+     ],
+     "answer": 2,
+     "why": "Batching more sequences reuses each weight read for more tokens."
+    },
+    {
+     "q": "What happens to throughput and latency as the decode batch grows?",
+     "options": [
+      "Throughput falls and latency falls",
+      "Throughput rises, while per-token latency stays flat at first and then rises once compute-bound",
+      "Both fall",
+      "Neither changes"
+     ],
+     "answer": 1,
+     "why": "The knee of that curve is a natural operating point."
+    },
+    {
+     "q": "Why are prompt tokens processed in parallel but output tokens one at a time?",
+     "options": [
+      "Output tokens use a different model",
+      "The GPU can't parallelise outputs",
+      "All prompt tokens are known up front; each output token depends on the one before it",
+      "Prompts are shorter"
+     ],
+     "answer": 2,
+     "why": "Speculative decoding and multi-token prediction try to break this sequential dependency."
+    },
+    {
+     "q": "What does a KV-cache capacity plan need besides model shape?",
+     "options": [
+      "The tokenizer's merges",
+      "The training data size",
+      "The learning rate",
+      "Expected sequence lengths, the concurrency target and memory reserved for activations and fragmentation"
+     ],
+     "answer": 3,
+     "why": "Paged allocators reduce fragmentation but still need headroom."
+    }
+   ]
+  },
+  {
+   "section": "Scaling Laws II",
+   "questions": [
+    {
+     "q": "What does a warmup-stable-decay (WSD) schedule look like?",
+     "options": [
+      "A constant rate with no warm-up",
+      "Linear warm-up, a long constant learning rate, then a short final decay",
+      "An exponential decay throughout",
+      "A cosine from the start to the end"
+     ],
+     "answer": 1,
+     "why": "The stable phase can be branched at any point with a short decay, giving checkpoints for many training lengths from one run."
+    },
+    {
+     "q": "Why is learning-rate warm-up used at the start of training?",
+     "options": [
+      "To speed up the first steps",
+      "To save memory",
+      "Early updates with large learning rates can be unstable while Adam's moment estimates and the weights are still poorly scaled",
+      "It is required for bf16"
+     ],
+     "answer": 2,
+     "why": "Warm-up over a few thousand steps is typical."
+    },
+    {
+     "q": "How do the optimal learning rate and batch size typically scale with model size?",
+     "options": [
+      "Batch size shrinks with size",
+      "Larger models usually need smaller learning rates; optimal batch size tends to grow with compute or data",
+      "Both stay constant",
+      "Learning rate grows with size"
+     ],
+     "answer": 1,
+     "why": "Fitting these trends on small runs lets you set hyperparameters for large runs without a full sweep."
+    },
+    {
+     "q": "What does the Muon optimiser do to the momentum update for a weight matrix?",
+     "options": [
+      "Sets it to the sign of the gradient",
+      "Normalises each element by its variance",
+      "Adds weight decay only",
+      "Approximately orthogonalises it (for example with Newton-Schulz iterations), so all singular directions get similar step sizes"
+     ],
+     "answer": 3,
+     "why": "Orthogonalisation replaces $UΣV^\\top$ with roughly $UV^\\top$. Embeddings and scalar parameters are usually left to AdamW."
+    },
+    {
+     "q": "What problem does μP (maximal update parametrisation) solve?",
+     "options": [
+      "It removes the need for an optimiser",
+      "Hyperparameters tuned on a narrow model stay near-optimal as width grows",
+      "It makes models deeper",
+      "It reduces memory"
+     ],
+     "answer": 1,
+     "why": "It rescales initialisation and per-layer learning rates with width so updates stay the same size."
+    },
+    {
+     "q": "Under μP, which diagnostic should stay roughly constant as width grows?",
+     "options": [
+      "The loss at step 0 only",
+      "The typical size of activation updates per step in each layer",
+      "The number of attention heads",
+      "The total number of parameters"
+     ],
+     "answer": 1,
+     "why": "Plotting per-layer activation or update norms against width is a quick check of whether the parametrisation is correct."
+    },
+    {
+     "q": "Why does a short final decay phase in WSD improve loss substantially?",
+     "options": [
+      "Lowering the learning rate lets the model settle into a sharper minimum that high-rate noise kept it out of",
+      "It changes the tokenizer",
+      "It adds parameters",
+      "It trains on new data"
+     ],
+     "answer": 0,
+     "why": "Most of the loss drop from annealing happens in the decay, which can be as short as 10–20% of training."
+    },
+    {
+     "q": "Why fit hyperparameter scaling laws instead of sweeping at the target scale?",
+     "options": [
+      "A sweep at full scale costs many full training runs; small-scale fits predict the optimum at a fraction of the cost",
+      "Sweeps are always wrong",
+      "Small models need no tuning",
+      "Large models have no hyperparameters"
+     ],
+     "answer": 0,
+     "why": "The risk is that trends change at scale, so check against at least one larger run."
+    }
+   ]
+  },
+  {
+   "section": "Evaluation",
+   "questions": [
+    {
+     "q": "What is conditional perplexity on a response?",
+     "options": [
+      "The number of tokens in the response",
+      "The perplexity of the prompt",
+      "The perplexity of prompt and response together",
+      "The perplexity of the response tokens given the prompt, with prompt tokens excluded from the average"
+     ],
+     "answer": 3,
+     "why": "Mask the prompt in the loss so the metric measures only how well the model predicts the answer."
+    },
+    {
+     "q": "In log-likelihood multiple-choice evaluation, why normalise by length?",
+     "options": [
+      "Longer answer options have lower total log-probability simply because they have more tokens",
+      "It isn't needed",
+      "To make scores positive",
+      "Short answers are always wrong"
+     ],
+     "answer": 0,
+     "why": "Common choices are per-token or per-character normalisation. Each can favour different options, so report which one was used."
+    },
+    {
+     "q": "What does the Elo (Bradley-Terry) model assume about pairwise votes?",
+     "options": [
+      "Every model wins half the time",
+      "Ratings are fixed by model size",
+      "The probability that A beats B is a logistic function of their rating difference",
+      "Votes are independent of the models"
+     ],
+     "answer": 2,
+     "why": "P(A beats B) = σ((r_A − r_B)·ln10/400) in Elo units. Fitting by maximum likelihood is more stable than online Elo updates."
+    },
+    {
+     "q": "Why is fitting Bradley-Terry ratings by maximum likelihood preferred over sequential Elo updates for leaderboards?",
+     "options": [
+      "Sequential Elo is undefined",
+      "It is faster for one vote",
+      "It gives integer ratings",
+      "The fit doesn't depend on the order of battles and uses all comparisons jointly"
+     ],
+     "answer": 3,
+     "why": "Bootstrapping the fit gives confidence intervals."
+    },
+    {
+     "q": "LLM judges tend to prefer longer responses. How can this bias be reduced?",
+     "options": [
+      "Use only human judges",
+      "Truncate every response to one sentence",
+      "Ask the judge to ignore length, with no checks",
+      "Model the score as depending on length and remove that component, or compare at matched lengths"
+     ],
+     "answer": 3,
+     "why": "A regression of score on length difference estimates the bias. The adjusted score is what remains."
+    },
+    {
+     "q": "Why is benchmark contamination a problem?",
+     "options": [
+      "It only affects small models",
+      "It slows evaluation",
+      "If test items appear in training data, scores measure memorisation instead of ability",
+      "It changes tokenisation"
+     ],
+     "answer": 2,
+     "why": "n-gram overlap checks between training data and test sets are a common defence."
+    },
+    {
+     "q": "What does pass@k measure for code generation?",
+     "options": [
+      "The number of samples needed",
+      "Code length",
+      "The probability that at least one of k sampled solutions passes the tests",
+      "The fraction of tests passed by one sample"
+     ],
+     "answer": 2,
+     "why": "The unbiased estimator draws n ≥ k samples, counts c correct ones, and computes 1 − C(n−c, k)/C(n, k)."
+    },
+    {
+     "q": "Why should evaluation prompts and formatting be fixed across models being compared?",
+     "options": [
+      "It reduces compute only",
+      "Small changes in prompt wording or few-shot examples can shift scores by several points",
+      "Formatting has no effect",
+      "Models can't read different prompts"
+     ],
+     "answer": 1,
+     "why": "Report the exact template and decoding settings with results."
+    }
+   ]
+  },
+  {
+   "section": "Data Processing",
+   "questions": [
+    {
+     "q": "What does stable exact deduplication keep?",
+     "options": [
+      "The first occurrence of each duplicate, in original order",
+      "The last occurrence",
+      "All occurrences",
+      "A random occurrence"
+     ],
+     "answer": 0,
+     "why": "Hashing normalised documents makes it linear time. \"Stable\" means the order of kept documents doesn't change."
+    },
+    {
+     "q": "Why does near-duplicate removal use MinHash and LSH rather than pairwise comparison?",
+     "options": [
+      "MinHash is exact",
+      "Pairwise comparison can't find duplicates",
+      "Comparing all pairs is quadratic; LSH buckets likely duplicates so only a few pairs are checked",
+      "LSH removes all duplicates without hashing"
+     ],
+     "answer": 2,
+     "why": "Banding r rows per band over b bands gives an S-curve that sets the similarity threshold."
+    },
+    {
+     "q": "In temperature-based data mixing with weights $p_i \\propto n_i^{1/T}$, what does T > 1 do?",
+     "options": [
+      "Upsamples smaller sources relative to their natural size",
+      "Removes the largest source",
+      "Leaves proportions unchanged",
+      "Downsamples small sources"
+     ],
+     "answer": 0,
+     "why": "T = 1 uses natural proportions; large T approaches a uniform mix. Multilingual models use it to give low-resource languages more weight."
+    },
+    {
+     "q": "Why is deduplication important for pretraining?",
+     "options": [
+      "It makes the dataset larger",
+      "It is only needed for code",
+      "Repeated text wastes compute, encourages memorisation and can skew the model toward boilerplate",
+      "Duplicates break tokenizers"
+     ],
+     "answer": 2,
+     "why": "Dedup also reduces the chance of benchmark items appearing many times."
+    },
+    {
+     "q": "What is a risk of over-upsampling a small, high-quality source?",
+     "options": [
+      "Training becomes faster",
+      "The model sees the same examples many times and starts to overfit or memorise them",
+      "The tokenizer changes",
+      "The model ignores the source"
+     ],
+     "answer": 1,
+     "why": "Beyond a few epochs, repeated data gives diminishing and then negative returns."
+    },
+    {
+     "q": "What do quality filters such as perplexity or classifier scores aim to remove?",
+     "options": [
+      "Duplicates only",
+      "Low-quality text such as spam, boilerplate and machine-generated junk",
+      "All informal text",
+      "All code"
+     ],
+     "answer": 1,
+     "why": "Filters can also remove useful dialects or topics, so their effects should be audited."
+    },
+    {
+     "q": "When computing MinHash, what is the shingle?",
+     "options": [
+      "A whole document",
+      "A token ID",
+      "A single character",
+      "A short contiguous sequence of words or characters used as a set element"
+     ],
+     "answer": 3,
+     "why": "Choosing 5-word shingles, for example, makes small edits change only a few elements of the set."
+    },
+    {
+     "q": "Why must data mixtures be decided before training rather than adjusted freely?",
+     "options": [
+      "They can't be computed",
+      "Tokenizers depend on them",
+      "It doesn't matter",
+      "The learning-rate schedule and token budget interact with the mixture; changing it mid-run shifts what the model learns"
+     ],
+     "answer": 3,
+     "why": "Some recipes deliberately change the mixture in a final annealing phase, which is planned up front."
+    }
+   ]
+  },
+  {
+   "section": "Mid-Training and Post-Training",
+   "questions": [
+    {
+     "q": "In supervised fine-tuning on chat data, why mask the loss on user turns?",
+     "options": [
+      "The model should learn to produce assistant replies, not to imitate user messages",
+      "To shorten sequences",
+      "It is required by the tokenizer",
+      "User turns are always wrong"
+     ],
+     "answer": 0,
+     "why": "Only assistant tokens (often including the end-of-turn token) contribute to the loss."
+    },
+    {
+     "q": "Why is the end-of-turn token usually included in the SFT loss?",
+     "options": [
+      "It changes the template",
+      "It isn't",
+      "It carries the most information",
+      "So the model learns when to stop generating"
+     ],
+     "answer": 3,
+     "why": "Without it, the model may keep generating past the end of a reply."
+    },
+    {
+     "q": "What should canonicalising pairwise preference data handle?",
+     "options": [
+      "Only spelling",
+      "Duplicates, contradictory pairs, ties and consistent chosen/rejected ordering",
+      "Only very long responses",
+      "Only the prompts"
+     ],
+     "answer": 1,
+     "why": "The same pair labelled both ways gives no signal and adds noise to training."
+    },
+    {
+     "q": "What is a KL-regularised policy objective?",
+     "options": [
+      "$KL(\\pi_{ref} \\| \\pi)$ alone",
+      "The SFT loss plus the reward",
+      "$E[r(x, y)] - \\beta\\,KL(\\pi(\\cdot|x) \\,\\|\\, \\pi_{ref}(\\cdot|x))$",
+      "$E[r(x, y)]$ alone"
+     ],
+     "answer": 2,
+     "why": "Its optimum is $\\pi^*(y|x) \\propto \\pi_{ref}(y|x)\\exp(r(x,y)/\\beta)$, which is the starting point for DPO."
+    },
+    {
+     "q": "How is the per-sequence KL to the reference estimated from samples?",
+     "options": [
+      "As the sum over tokens of $\\log\\pi(y_t) - \\log\\pi_{ref}(y_t)$ on sequences sampled from π",
+      "It can't be estimated",
+      "From the final token only",
+      "As the difference in loss on the prompt"
+     ],
+     "answer": 0,
+     "why": "This is unbiased but noisy. Lower-variance estimators exist, such as $(r - 1) - \\log r$ with $r = \\pi_{ref}/\\pi$."
+    },
+    {
+     "q": "What does the DPO loss increase during training?",
+     "options": [
+      "The margin between the policy's log-ratio (to the reference) on chosen versus rejected responses",
+      "The reward model's accuracy",
+      "The absolute probability of the chosen response only",
+      "The KL to the reference"
+     ],
+     "answer": 0,
+     "why": "Both log-probabilities can fall while the margin grows, which is a known DPO behaviour."
+    },
+    {
+     "q": "What is mid-training?",
+     "options": [
+      "Evaluation during training",
+      "Training only the middle layers",
+      "A phase between pretraining and post-training that shifts the data mix toward higher-quality or targeted data, often with longer contexts",
+      "Training at half the learning rate"
+     ],
+     "answer": 2,
+     "why": "It is often combined with the learning-rate decay at the end of pretraining."
+    },
+    {
+     "q": "Why do post-training recipes often start from SFT before preference optimisation?",
+     "options": [
+      "The model must first follow the chat format and produce reasonable answers for preferences to refine",
+      "It is required for tokenisation",
+      "Preference methods can't use base models at all",
+      "SFT removes the need for preferences"
+     ],
+     "answer": 0,
+     "why": "Preference methods compare responses; they work best when both responses are already plausible."
+    }
+   ]
+  },
+  {
+   "section": "Post-Training with RLVR",
+   "questions": [
+    {
+     "q": "What does RLVR stand for?",
+     "options": [
+      "Reward learning via voting",
+      "Reinforcement learning with verifiable rewards",
+      "Reinforcement learning with value regression",
+      "Recurrent learning with variable rates"
+     ],
+     "answer": 1,
+     "why": "The reward comes from a checker, such as unit tests or an answer match, rather than a learned reward model."
+    },
+    {
+     "q": "In GRPO, how is each response's advantage computed?",
+     "options": [
+      "reward only",
+      "The log-probability of the response",
+      "(reward − mean of the group's rewards) ÷ standard deviation of the group's rewards",
+      "reward − value prediction"
+     ],
+     "answer": 2,
+     "why": "Responses to the same prompt form the group."
+    },
+    {
+     "q": "What happens to GRPO advantages when every response in a group gets the same reward?",
+     "options": [
+      "They become undefined and training crashes",
+      "They are all one",
+      "They equal the reward",
+      "They are all zero (with an ε in the denominator), so the prompt gives no gradient"
+     ],
+     "answer": 3,
+     "why": "Prompts that are always solved or never solved carry no signal. Filtering them saves compute."
+    },
+    {
+     "q": "How does sequence-level length normalisation differ from token-level normalisation in the policy loss?",
+     "options": [
+      "Token-level ignores long responses",
+      "Sequence-level drops short responses",
+      "Sequence-level averages each response's token losses first, so long responses get less weight per token; token-level averages over all tokens",
+      "They are identical"
+     ],
+     "answer": 2,
+     "why": "Sequence-level weighting can bias the model toward longer wrong answers or shorter right ones."
+    },
+    {
+     "q": "Why might standardising by group standard deviation cause problems?",
+     "options": [
+      "It can't be computed",
+      "It removes the baseline",
+      "It makes all advantages positive",
+      "Groups with nearly identical rewards get their small differences amplified, giving too much weight to easy or hard prompts"
+     ],
+     "answer": 3,
+     "why": "Some variants use only mean-centring, without the division."
+    },
+    {
+     "q": "Why is a verifiable reward less prone to reward hacking than a learned reward model?",
+     "options": [
+      "It is more expensive",
+      "It is always zero",
+      "It can't be gamed at all",
+      "It checks the actual outcome, so there is no learned model whose errors the policy can exploit"
+     ],
+     "answer": 3,
+     "why": "Verifiers can still be gamed, for example by tests that are too weak or answers formatted to fool the parser."
+    },
+    {
+     "q": "Why sample several responses per prompt in GRPO?",
+     "options": [
+      "To pick the best one for SFT",
+      "The group provides the baseline that replaces a learned value function",
+      "It isn't necessary",
+      "To increase the batch size only"
+     ],
+     "answer": 1,
+     "why": "Typical group sizes are 4 to 64."
+    },
+    {
+     "q": "What does a pass-rate curriculum do in RLVR?",
+     "options": [
+      "Trains on the easiest prompts only",
+      "Focuses training on prompts the model solves sometimes but not always, where the gradient signal is strongest",
+      "Trains on the hardest prompts only",
+      "Shuffles prompts randomly every step"
+     ],
+     "answer": 1,
+     "why": "Pass rates shift as the model improves, so the pool is refreshed during training."
+    }
+   ]
+  },
+  {
+   "section": "Alignment and Multimodality",
+   "questions": [
+    {
+     "q": "How does a ViT turn an image into tokens?",
+     "options": [
+      "Use one token per channel",
+      "Use one token per pixel",
+      "Run a language model on the pixels",
+      "Split it into fixed-size patches, flatten each patch, and project it linearly"
+     ],
+     "answer": 3,
+     "why": "A 224×224 image with 14×14 patches gives 256 tokens."
+    },
+    {
+     "q": "What does CLIP's symmetric contrastive loss do?",
+     "options": [
+      "Uses only negative pairs",
+      "Classifies images into fixed labels",
+      "Regresses image embeddings onto text embeddings",
+      "Treats each matched image-text pair as the correct class in a softmax over the batch, in both image-to-text and text-to-image directions"
+     ],
+     "answer": 3,
+     "why": "The two cross-entropy losses are averaged. A learned temperature scales the cosine similarities."
+    },
+    {
+     "q": "How does SigLIP's loss differ from CLIP's?",
+     "options": [
+      "It uses a larger temperature only",
+      "It uses only positive pairs",
+      "It uses an independent sigmoid on every image-text pair instead of a softmax over the batch",
+      "It doesn't use text"
+     ],
+     "answer": 2,
+     "why": "No normalisation across the batch is needed, which simplifies large distributed batches. A learned bias offsets the many negatives."
+    },
+    {
+     "q": "Why does SigLIP need a bias term in its logits?",
+     "options": [
+      "To replace the temperature",
+      "It doesn't use one",
+      "To make the logits positive",
+      "Most pairs are negatives, so without a bias the loss would be dominated by pushing negatives down at the start"
+     ],
+     "answer": 3,
+     "why": "The bias starts strongly negative so initial predictions match the heavy class imbalance."
+    },
+    {
+     "q": "In a vision-language model, how are image tokens usually combined with text?",
+     "options": [
+      "They are summed into the first token only",
+      "Image patch embeddings are projected into the language model's embedding space and placed in the token sequence",
+      "They replace the text entirely",
+      "They are used only by the output layer"
+     ],
+     "answer": 1,
+     "why": "A projector (often an MLP) maps vision features to the LM's hidden size."
+    },
+    {
+     "q": "What does multimodal RoPE (such as M-RoPE) do for image tokens?",
+     "options": [
+      "Assigns separate position components for time, height and width so the model knows each patch's 2-D location",
+      "Removes positions for images",
+      "Uses only the 1-D token index",
+      "Uses the same position for every image token"
+     ],
+     "answer": 0,
+     "why": "Text tokens use the same value for all components, so they behave like ordinary 1-D RoPE."
+    },
+    {
+     "q": "Why does the batch size matter so much in contrastive pretraining?",
+     "options": [
+      "Each example's negatives are the other examples in the batch, so larger batches give more and harder negatives",
+      "Small batches are faster to converge",
+      "Large batches remove the need for temperature",
+      "It doesn't"
+     ],
+     "answer": 0,
+     "why": "CLIP used a batch of 32,768."
+    },
+    {
+     "q": "What is a common alignment failure in vision-language models?",
+     "options": [
+      "Being unable to read text",
+      "Producing only images",
+      "Describing objects that aren't in the image (hallucination), often driven by language priors",
+      "Running out of tokens"
+     ],
+     "answer": 2,
+     "why": "Preference training and grounding data are common mitigations."
+    }
+   ]
+  },
+  {
+   "section": "Guest Lecture with Dan Fu",
+   "questions": [
+    {
+     "q": "In continuous decode batching, when does a new request join the running batch?",
+     "options": [
+      "At the next iteration boundary, as soon as a slot and enough KV memory are free",
+      "Only when the whole batch has finished",
+      "Never; batches are fixed",
+      "After a fixed timeout"
+     ],
+     "answer": 0,
+     "why": "Iteration-level scheduling keeps the GPU full as requests finish at different times."
+    },
+    {
+     "q": "What does a KV-cache trie (prefix tree) let a server find?",
+     "options": [
+      "Unused GPU memory",
+      "The longest cached prefix shared between a new request and earlier requests",
+      "The shortest request",
+      "The most common output"
+     ],
+     "answer": 1,
+     "why": "Matching on token IDs means the cached keys and values for that prefix can be reused."
+    },
+    {
+     "q": "What does cache-aware routing do in a multi-replica deployment?",
+     "options": [
+      "Sends requests randomly",
+      "Sends a request to the replica most likely to have its prefix cached, while still balancing load",
+      "Duplicates every request on all replicas",
+      "Sends every request to the least-loaded replica only"
+     ],
+     "answer": 1,
+     "why": "Pure cache affinity can overload one replica, so routers mix the two goals."
+    },
+    {
+     "q": "What does a kernel timeline utilisation measure show?",
+     "options": [
+      "The amount of memory used",
+      "The FLOP/s of the fastest kernel",
+      "The fraction of wall-clock time the GPU spends running kernels, which exposes gaps from launch overhead or CPU stalls",
+      "The model's accuracy"
+     ],
+     "answer": 2,
+     "why": "Small decode kernels can leave large gaps between launches. CUDA graphs or fused kernels reduce them."
+    },
+    {
+     "q": "Why do CUDA graphs help small-batch decoding?",
+     "options": [
+      "They make kernels compute faster",
+      "They record a sequence of kernel launches and replay it with one launch, removing per-kernel CPU overhead",
+      "They change the model",
+      "They reduce memory use"
+     ],
+     "answer": 1,
+     "why": "At small batch, kernels are short enough that launch overhead is a large share of step time."
+    },
+    {
+     "q": "Why can prefix reuse dramatically reduce time to first token?",
+     "options": [
+      "It speeds up decoding steps",
+      "It quantises the model",
+      "The prefill for the shared prefix is skipped, so only the new suffix must be processed",
+      "It shortens the output"
+     ],
+     "answer": 2,
+     "why": "Long system prompts or multi-turn chats benefit most."
+    },
+    {
+     "q": "When should a cached prefix be evicted?",
+     "options": [
+      "Never",
+      "When memory is needed, usually choosing least-recently-used entries that no running request references",
+      "At random",
+      "Immediately after each request"
+     ],
+     "answer": 1,
+     "why": "Blocks still used by active requests must be pinned."
+    },
+    {
+     "q": "What is the main cost of keeping many cached prefixes?",
+     "options": [
+      "They take GPU memory that could otherwise hold more concurrent requests' KV caches",
+      "They slow down every kernel",
+      "They change outputs",
+      "They use extra CPU only"
+     ],
+     "answer": 0,
+     "why": "The best cache size balances hit rate against admission capacity."
+    }
+   ]
+  }
+ ]
+}

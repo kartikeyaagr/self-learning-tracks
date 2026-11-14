@@ -1,0 +1,129 @@
+---
+import Site from '../../../../layouts/Site.astro';
+import CourseSide from '../../../../components/CourseSide.astro';
+import { getCollection, render } from 'astro:content';
+import { courseData, lessonUrl, key, practiceFor, practiceHref, inlM } from '../../../../lib/course.mjs';
+export async function getStaticPaths() {
+  const out = [];
+  for (const c of await getCollection('courses')) {
+    const { modules } = await courseData(c.id);
+    for (const m of modules) for (const l of m.lessons) out.push({params: {course: c.id, module: m.slug, lesson: l.data.slug}, props: {lessonId: l.data.id}});
+  }
+  return out;
+}
+const { course: courseId } = Astro.params;
+const { lessonId } = Astro.props;
+const { course, lessons, modules, math } = await courseData(courseId);
+const byN = Object.fromEntries(modules.map(m => [m.n, m]));
+const l = lessons.find(x => x.data.id === lessonId), L = l.data, m = byN[L.module];
+const gi = lessons.indexOf(l), prev = lessons[gi - 1], next = lessons[gi + 1];
+const url = x => lessonUrl(courseId, byN[x.data.module], x);
+const { Content, headings } = await render(l);
+const toc = headings.filter(h => h.depth === 2);
+const words = ((l.body || '') + (L.html || '').replace(/<[^>]+>/g, ' ')).split(/\s+/).length;
+const mins = L.mins || Math.max(2, Math.ceil(words / 180));
+const practice = practiceFor(course.key, l);
+const host = u => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+const k = key(L.id), I = s => inlM(s, math);
+const own = course.css !== 'house';                       // exports bring their own figure code
+// Old in-page links (#l03-02, #m03) and AI Research's block links resolve through this map.
+const linkMap = Object.fromEntries([...lessons.map(x => [x.data.id, url(x)]), ...modules.map(mm => ['m' + mm.n, `/courses/${courseId}/${mm.slug}/`])]);
+---
+<Site title={`${L.title} · ${course.title}`} description={(L.keyIdeas[0] || L.lead || L.title).replace(/<[^>]+>|[*`$⟦⟧\d]/g, '').slice(0, 200)} course={course} courseId={courseId} side
+      crumbs={[[`${m.n} · ${m.name}`, `/courses/${courseId}/${m.slug}/`], [L.title, Astro.url.pathname]]}>
+  <CourseSide slot="side" course={course} courseId={courseId} modules={modules} curMod={m.n} curLesson={L.id} />
+  <div class="lgrid">
+    <article>
+      <header class="panel lhead">
+        <a class="back" href={`/courses/${courseId}/${m.slug}/`}>← Module {m.n} · {m.name}</a>
+        <div class="idrow"><span class="lid">{L.id}</span><span class="lab">Lesson {m.lessons.indexOf(l) + 1} of {m.lessons.length}{L.topic && ` · Topic ${L.topic.id}`}</span><span class="pill ok" id="donepill" hidden>✓ Completed</span></div>
+        <h1>{L.title}</h1>
+        <div class="meta"><span class="pill">{mins} min read</span>{L.topic && <span class="pill">{L.topic.title}</span>}{L.tags.map(t => <span class="pill k">{t}</span>)}{L.tools.map(t => <span class="pill">{t}</span>)}</div>
+      </header>
+      <div class="prose" id="prose">{L.html ? <Fragment set:html={L.html} /> : <Content />}</div>
+      {L.blocks.length > 0 && <div id="air-blocks" data-blocks={JSON.stringify(L.blocks)}></div>}
+
+      {L.question && <section class="card blk" id="check"><div class="lab">Check yourself</div>
+        <p class="q" set:html={I(L.question)} />
+        <textarea id="ans" aria-label="Your answer" placeholder="Write your answer first. It saves automatically."></textarea>
+        <div class="arow"><span class="saved" id="saved"></span>{L.answer && <button type="button" class="btn" id="reveal">Check against model answer</button>}</div>
+        <div id="model" hidden>
+          <div class="sample"><div class="lab">Model answer</div><p set:html={I(L.answer)} /></div>
+          {L.rubric.length > 0 && <div class="sample" style="background:var(--card);border-color:var(--line)"><div class="lab">A strong answer covers</div><ul style="margin:6px 0 0;padding-left:20px">{L.rubric.map(x => <li set:html={I(x)} />)}</ul></div>}
+          <div class="grade"><div class="lab">How did your answer compare?</div><div class="gb">
+            <button type="button" class="gbtn" data-g="1" aria-pressed="false">Missed it<small>+3 XP</small></button>
+            <button type="button" class="gbtn" data-g="2" aria-pressed="false">Partly<small>+8 XP</small></button>
+            <button type="button" class="gbtn" data-g="3" aria-pressed="false">Nailed it<small>+15 XP</small></button></div></div>
+        </div>
+      </section>}
+
+      {practice.length > 0 && <section class="card blk" id="practice"><div class="lab">Practice this</div><h3>Problems that use this lesson</h3>
+        <div class="plinks">{practice.map(([s, t, d]) => <a href={practiceHref(s)}><span>{t}</span><span class={`pd ${d}`}>{d}</span></a>)}</div></section>}
+
+      <div class="done-zone">
+        <button type="button" class="btn" id="complete">Mark complete <span class="xp">+10 XP</span></button>
+        <p>Shortcuts: C complete · J next · K previous</p>
+      </div>
+      <nav class="pn" aria-label="Lesson navigation">
+        {prev && <a class="card" href={url(prev)}><span class="lab">← Previous · {prev.data.id}</span><b>{prev.data.title}</b></a>}
+        {next && <a class="card nx" href={url(next)}><span class="lab">Next · {next.data.id} →</span><b>{next.data.title}</b></a>}
+      </nav>
+      {L.sources.length > 0 && <section class="card blk xr"><div class="lab">Extra reading</div><h3>Want to go further?</h3>
+        <ul class="srcs">{L.sources.map(r => <li><span class="fav" aria-hidden="true">{(host(r.url)[0] || '?').toUpperCase()}</span><span class="tx"><a href={r.url} target="_blank" rel="noopener">{r.title}</a>{r.note && <span class="n" set:html={I(r.note)} />}<span class="h">{host(r.url)}</span></span></li>)}</ul></section>}
+    </article>
+    <aside class="rail">
+      <div class="card"><div class="lab" style="margin-bottom:10px">On this page</div><div class="toc" id="toc">{toc.map(h => <a href={`#${h.slug}`}>{h.text}</a>)}{L.question && <a href="#check">Check yourself</a>}</div></div>
+      {L.keyIdeas.length > 0 && <div class="card"><div class="lab" style="margin-bottom:10px">Key ideas</div><ul style="margin:0;padding-left:18px;font-size:13.5px;color:var(--muted)">{L.keyIdeas.map(x => <li style="margin:4px 0" set:html={I(x)} />)}</ul></div>}
+    </aside>
+  </div>
+  <script define:vars={{ courseKey: course.key, courseDir: courseId, own, k, linkMap, nextUrl: next ? url(next) : null, prevUrl: prev ? url(prev) : null }}>
+    window.__lesson = { courseKey, courseDir, own, k, nextUrl, prevUrl };
+    window.__lessonUrl = linkMap;
+  </script>
+  <script>
+    import { load, save, now, dk } from '../../../../lib/progress.js';
+    const { courseKey, courseDir, own, k, nextUrl, prevUrl } = window.__lesson, map = window.__lessonUrl;
+    const st = load(courseKey); ['done', 'at', 'notes', 'grades', 'rev', 'act'].forEach(x => st[x] = st[x] || {});
+    const $ = s => document.querySelector(s), prose = $('#prose');
+    const bump = () => { const d = dk(Date.now()); st.act[d] = (st.act[d] || 0) + 1; };
+    // old in-page links → new URLs
+    prose.querySelectorAll('a[href^="#l"], a[href^="#m"]').forEach(a => { const h = a.getAttribute('href').slice(1);
+      const t = h[0] === 'l' ? map[h.slice(1).replace('-', '.')] : map[h]; if (t) a.href = t; });
+    // HTML lessons have no build-time headings: build the table of contents here
+    const toc = $('#toc');
+    if (!toc.querySelector('a[href^="#"]:not([href="#check"])')) {
+      const hs = [...prose.querySelectorAll('h2')]; hs.forEach((h, i) => h.id = h.id || 's' + (i + 1));
+      toc.insertAdjacentHTML('afterbegin', hs.map(h => `<a href="#${h.id}">${h.textContent.replace(/</g, '&lt;')}</a>`).join(''));
+    }
+    // answer box: autosave
+    const ans = $('#ans');
+    if (ans) { ans.value = st.notes[k] || ''; let t;
+      ans.addEventListener('input', () => { clearTimeout(t); $('#saved').textContent = 'Saving…'; t = setTimeout(() => { st.notes[k] = ans.value; save(courseKey, st); $('#saved').textContent = 'Saved'; }, 400); }); }
+    // model answer + self-grade
+    const rv = $('#reveal');
+    if (rv) {
+      const showModel = on => { $('#model').hidden = !on; rv.textContent = on ? 'Hide model answer' : 'Check against model answer'; rv.classList.toggle('ghost', on); };
+      rv.addEventListener('click', () => showModel($('#model').hidden));
+      const g = st.grades[k]?.g; if (g) { showModel(true); document.querySelector(`.gbtn[data-g="${g}"]`)?.setAttribute('aria-pressed', 'true'); }
+      document.querySelectorAll('.gbtn').forEach(b => b.addEventListener('click', () => {
+        st.grades[k] = {g: +b.dataset.g, at: now()}; bump(); save(courseKey, st);
+        document.querySelectorAll('.gbtn').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+      }));
+    }
+    // completion
+    const paint = () => { const d = !!st.done[k]; $('#donepill').hidden = !d; const c = $('#complete'); c.className = d ? 'btn go' : 'btn'; c.innerHTML = d ? '✓ Completed · undo' : 'Mark complete <span class="xp">+10 XP</span>'; };
+    $('#complete').addEventListener('click', () => { if (st.done[k]) { delete st.done[k]; delete st.at[k]; } else { st.done[k] = true; st.at[k] = now(); } save(courseKey, st); paint(); });
+    paint();
+    addEventListener('keydown', e => { if (e.target.closest('textarea, input') || e.metaKey || e.ctrlKey) return;
+      if (e.key === 'c') $('#complete').click(); else if (e.key === 'j' && nextUrl) location.href = nextUrl; else if (e.key === 'k' && prevUrl) location.href = prevUrl; });
+    // figures: exports run their own figure code (loaded only for that course); house courses share the house code
+    const figs = import.meta.glob('../../../../lib/figs/*.gen.js');
+    if (own) figs[`../../../../lib/figs/${courseDir}.gen.js`]().then(m => m.mount(prose)).catch(e => console.error('figures', e));
+    else Promise.all([import('../../../../lib/figs.gen.js'), import('../../../../lib/scenes.js')]).then(([f, s]) => { f.initFigs(prose); s.initScenes(prose); });
+    // reading progress + table-of-contents highlight
+    const rb = $('#readbar'), tocA = () => [...document.querySelectorAll('.toc a')];
+    addEventListener('scroll', () => { const H = document.documentElement.scrollHeight - innerHeight; rb.style.width = (H > 0 ? Math.min(1, scrollY / H) * 100 : 0) + '%';
+      let on = null; tocA().forEach(a => { const el = document.querySelector(a.getAttribute('href')); if (el && el.getBoundingClientRect().top < innerHeight * .3) on = a; });
+      tocA().forEach(a => a.classList.toggle('on', a === on)); }, {passive: true});
+  </script>
+</Site>

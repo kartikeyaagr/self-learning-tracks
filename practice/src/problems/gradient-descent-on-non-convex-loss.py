@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Gradient descent from many starts on a non-convex loss', tags=['Optimization'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:09.08', 'air-fanout-v1:05.05'],
+            lessons=['mlmaths:09.52', 'air-fanout-v1:05.05'],
             related=['learning-rate-stability-and-convergence-bounds', 'directional-derivative-and-steepest-descent-dire',
                      'higher-order-derivatives-and-loss-curvature'])
 

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Minimum-norm subgradient of the lasso', tags=['Calculus', 'Optimization', 'Regression'], diff='Medium',
-            runtime='numpy', lessons=['mlmaths:09.08', 'air-fanout-v1:02.04'],
+            runtime='numpy', lessons=['mlmaths:09.52', 'air-fanout-v1:02.04'],
             related=['continuity-of-activation-functions', 'gradient-of-multivariate-linear-regression-loss',
                      'lagrange-multipliers-regularization-as-constrain'])
 

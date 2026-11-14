@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Oriented surface normals by local PCA', tags=['3D Geometry', 'Linear Algebra'], diff='Hard', runtime='numpy',
-            lessons=['mlmaths:08.03'], related=['icp-kabsch-step', 'eigendecomposition', 'pca'])
+            lessons=['mlmaths:08.06'], related=['icp-kabsch-step', 'eigendecomposition', 'pca'])
 
 STATEMENT = r"""
 A point cloud from a depth sensor has positions but no surface normals. A standard way to estimate them: take each point's neighbourhood, fit a plane by PCA, and use the direction of **least** variance as the normal.

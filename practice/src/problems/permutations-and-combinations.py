@@ -1,5 +1,5 @@
 META = dict(title='Four ways to count selections', tags=['Probability'], diff='Easy', runtime='python',
-            lessons=['mlmaths:10.05'], related=['binomial-distribution'])
+            lessons=['mlmaths:10.25'], related=['binomial-distribution'])
 
 STATEMENT = r"""
 Choosing $k$ items from $n$ distinct items can be counted four ways, depending on whether **order** matters and whether an item may be picked **more than once**:

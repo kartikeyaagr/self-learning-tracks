@@ -1,0 +1,656 @@
+{
+ "plan": "diffusion",
+ "sections": [
+  {
+   "section": "Gaussian Foundations",
+   "questions": [
+    {
+     "q": "What does the reparameterisation trick write a sample from $\\mathcal N(\\mu, \\sigma^2)$ as?",
+     "options": [
+      "$\\sigma + \\mu\\epsilon$",
+      "$\\mu + \\sigma\\epsilon$ with $\\epsilon \\sim \\mathcal N(0, 1)$",
+      "$\\mu \\cdot \\epsilon$",
+      "$\\epsilon / \\sigma$"
+     ],
+     "answer": 1,
+     "why": "Randomness moves into ε, which doesn't depend on the parameters, so gradients flow through μ and σ."
+    },
+    {
+     "q": "What is the KL divergence $KL(\\mathcal N(\\mu, \\sigma^2) \\,\\|\\, \\mathcal N(0, 1))$ for one dimension?",
+     "options": [
+      "$\\tfrac12(\\mu - \\sigma)^2$",
+      "$\\mu^2 + \\sigma^2$",
+      "$\\tfrac12(\\mu^2 + \\sigma^2 - 1 - \\log\\sigma^2)$",
+      "$\\log\\sigma - \\mu$"
+     ],
+     "answer": 2,
+     "why": "It is zero only when μ = 0 and σ = 1. For a diagonal Gaussian, sum this over dimensions."
+    },
+    {
+     "q": "What is the score of a distribution?",
+     "options": [
+      "The gradient of its log density with respect to the data, $\\nabla_x \\log p(x)$",
+      "Its derivative with respect to parameters",
+      "Its entropy",
+      "Its log-likelihood value"
+     ],
+     "answer": 0,
+     "why": "The score points toward higher density and doesn't depend on the normalising constant, which is why it is easy to model."
+    },
+    {
+     "q": "What is the score of $\\mathcal N(\\mu, \\sigma^2 I)$ at x?",
+     "options": [
+      "$-(x - \\mu)/\\sigma^2$",
+      "$x/\\sigma^2$",
+      "$-\\log\\sigma$",
+      "$(x - \\mu)/\\sigma$"
+     ],
+     "answer": 0,
+     "why": "Differentiate $-\\|x - \\mu\\|^2/(2\\sigma^2)$. The score points back toward the mean, more strongly for smaller σ."
+    },
+    {
+     "q": "For a Gaussian mixture, how is the score at x formed?",
+     "options": [
+      "The score of the nearest component only",
+      "The sum of all component scores with equal weight",
+      "A posterior-weighted average of each component's score",
+      "The score of the mixture mean"
+     ],
+     "answer": 2,
+     "why": "$\\nabla \\log p = \\sum_k r_k(x)\\,\\nabla \\log \\mathcal N_k(x)$ with responsibilities $r_k$ computed by a softmax over log weighted densities."
+    },
+    {
+     "q": "Why compute Gaussian mixture responsibilities in log space?",
+     "options": [
+      "It makes the weights sum to more than one",
+      "Densities far from a component underflow to zero; log-sum-exp keeps them stable",
+      "It removes the covariance",
+      "Logs are faster than exponentials"
+     ],
+     "answer": 1,
+     "why": "In high dimensions every density can underflow, giving 0/0. Working with log densities avoids that."
+    },
+    {
+     "q": "Adding independent Gaussian noise $\\mathcal N(0, \\sigma_2^2)$ to $x \\sim \\mathcal N(0, \\sigma_1^2)$ gives what distribution?",
+     "options": [
+      "$\\mathcal N(0, \\sigma_1\\sigma_2)$",
+      "$\\mathcal N(0, \\sigma_1 + \\sigma_2)$",
+      "A non-Gaussian distribution",
+      "$\\mathcal N(0, \\sigma_1^2 + \\sigma_2^2)$"
+     ],
+     "answer": 3,
+     "why": "Variances of independent Gaussians add. This is why many forward steps collapse into one closed-form jump."
+    },
+    {
+     "q": "Why is the KL divergence between two Gaussians useful in diffusion training?",
+     "options": [
+      "It removes the need for noise",
+      "It measures image quality directly",
+      "It is always zero",
+      "The variational bound splits into KL terms between Gaussian posteriors and model steps, each with a closed form"
+     ],
+     "answer": 3,
+     "why": "With fixed variances, each KL reduces to a weighted squared error between means, which leads to the noise-prediction loss."
+    }
+   ]
+  },
+  {
+   "section": "Forward Process and Noise Schedules",
+   "questions": [
+    {
+     "q": "In DDPM, what is $\\bar\\alpha_t$?",
+     "options": [
+      "The sum of the β values",
+      "The noise level at step t only",
+      "A learned parameter",
+      "The product $\\prod_{s \\le t}(1 - \\beta_s)$"
+     ],
+     "answer": 3,
+     "why": "It is the fraction of signal variance left at step t. It falls from near 1 to near 0."
+    },
+    {
+     "q": "What is the closed-form forward sample $x_t$ given $x_0$?",
+     "options": [
+      "$x_0 + \\beta_t\\epsilon$",
+      "$\\sqrt{\\bar\\alpha_t}\\,x_0 + \\sqrt{1 - \\bar\\alpha_t}\\,\\epsilon$",
+      "$\\bar\\alpha_t x_0 + \\epsilon$",
+      "$\\sqrt{\\beta_t}x_0 + \\sqrt{1 - \\beta_t}\\epsilon$"
+     ],
+     "answer": 1,
+     "why": "Training can jump straight to any t without simulating the chain."
+    },
+    {
+     "q": "What was the motivation for the cosine noise schedule?",
+     "options": [
+      "It removes the need for β",
+      "Cosine is cheaper to compute",
+      "The linear schedule destroys information too quickly at low resolution, wasting many late steps on near-pure noise",
+      "Linear schedules can't reach zero"
+     ],
+     "answer": 2,
+     "why": "Cosine defines $\\bar\\alpha_t$ directly so it decreases more gradually in the middle, and clips β to avoid a singularity at the end."
+    },
+    {
+     "q": "What is the signal-to-noise ratio at step t?",
+     "options": [
+      "$\\bar\\alpha_t / (1 - \\bar\\alpha_t)$",
+      "$\\beta_t$",
+      "$\\sqrt{\\bar\\alpha_t}$",
+      "$1 - \\bar\\alpha_t$"
+     ],
+     "answer": 0,
+     "why": "The schedule's whole effect can be described by how log-SNR changes over t."
+    },
+    {
+     "q": "What does \"zero terminal SNR\" mean?",
+     "options": [
+      "At the last step $\\bar\\alpha_T = 0$ exactly, so $x_T$ is pure noise with no leftover signal",
+      "The model predicts zero",
+      "The SNR is zero at the first step",
+      "No noise is added"
+     ],
+     "answer": 0,
+     "why": "Common schedules leave a little signal at T. Training then sees slightly informative noise that sampling never matches, which limits very bright or dark images."
+    },
+    {
+     "q": "When rescaling a schedule to zero terminal SNR, which prediction target is recommended and why?",
+     "options": [
+      "v-prediction, because at $\\bar\\alpha_T = 0$ predicting ε from pure noise gives no information about $x_0$",
+      "Predicting $x_T$",
+      "ε-prediction, because it is unchanged",
+      "Predicting the variance"
+     ],
+     "answer": 0,
+     "why": "When $x_T = \\epsilon$, an ε-predictor can output its input and learn nothing. v-prediction still asks for $x_0$ at that step."
+    },
+    {
+     "q": "In a linear β schedule from 1e-4 to 0.02 over 1000 steps, what is $\\bar\\alpha_{1000}$ roughly?",
+     "options": [
+      "About 0.02",
+      "About 0.5",
+      "Exactly 1",
+      "Very close to zero (around 4e-5)"
+     ],
+     "answer": 3,
+     "why": "The sum of β is about 10, so $\\bar\\alpha_T \\approx e^{-10}$. That is small but not zero, which is the issue zero-terminal-SNR rescaling fixes."
+    },
+    {
+     "q": "Why is the forward process chosen to be fixed rather than learned in DDPM?",
+     "options": [
+      "To reduce model size",
+      "Learned noise is impossible",
+      "It makes sampling deterministic",
+      "So $x_t$ can be sampled in closed form and the training target is simple"
+     ],
+     "answer": 3,
+     "why": "The model only has to learn the reverse. Some later variants learn the schedule, at extra complexity."
+    }
+   ]
+  },
+  {
+   "section": "The Denoising Network",
+   "questions": [
+    {
+     "q": "How is the timestep t given to the denoising network?",
+     "options": [
+      "As a sinusoidal embedding passed through an MLP and added or used to modulate features in each block",
+      "As an extra image channel filled with t",
+      "As a one-hot vector concatenated to the output",
+      "It isn't; the network infers it"
+     ],
+     "answer": 0,
+     "why": "Sinusoids give smooth, multi-frequency features of t, much like positional encodings in transformers."
+    },
+    {
+     "q": "In a time-conditioned residual block, a common way to inject the time embedding is what?",
+     "options": [
+      "Multiply the input image by t",
+      "Project it to per-channel scale and shift (or a bias) applied after a normalisation layer",
+      "Concatenate it to the output only",
+      "Replace the skip connection with it"
+     ],
+     "answer": 1,
+     "why": "Scale-and-shift conditioning (like FiLM or AdaGN) lets each channel's behaviour depend on the noise level."
+    },
+    {
+     "q": "Why does a U-Net suit denoising?",
+     "options": [
+      "It has no convolutions",
+      "It works only at one resolution",
+      "Skip connections pass fine detail from the encoder to the decoder while the bottleneck sees global context",
+      "It is invariant to noise"
+     ],
+     "answer": 2,
+     "why": "The output must match the input resolution exactly, and noise must be removed at every scale."
+    },
+    {
+     "q": "Where in the U-Net is self-attention usually added?",
+     "options": [
+      "Only on the output",
+      "At the highest resolution only",
+      "Nowhere",
+      "At the lower-resolution levels, where the number of positions is small enough for attention to be affordable"
+     ],
+     "answer": 3,
+     "why": "At 64×64 there are 4096 positions; at 16×16 only 256, which makes the quadratic cost manageable."
+    },
+    {
+     "q": "In a spatial self-attention block, what are the tokens?",
+     "options": [
+      "The channels",
+      "The spatial positions of the feature map, each a C-dimensional vector",
+      "The timesteps",
+      "The images in the batch"
+     ],
+     "answer": 1,
+     "why": "The H×W×C map is flattened to (HW) tokens of size C, attended over, then reshaped back, usually with a residual connection."
+    },
+    {
+     "q": "Why is group normalisation preferred over batch normalisation in diffusion U-Nets?",
+     "options": [
+      "It speeds up attention",
+      "It is the only normalisation that works with convolutions",
+      "It doesn't depend on batch statistics, which vary with small batches and mixed noise levels",
+      "It has no parameters"
+     ],
+     "answer": 2,
+     "why": "Each batch mixes very different timesteps, so batch statistics would blend unrelated inputs."
+    },
+    {
+     "q": "What does the network output in standard DDPM training?",
+     "options": [
+      "A class label",
+      "A single scalar",
+      "A tensor of the same shape as the input image, such as the predicted noise",
+      "A smaller latent"
+     ],
+     "answer": 2,
+     "why": "Whatever the target (ε, $x_0$ or v), it has the shape of $x_t$."
+    },
+    {
+     "q": "Why do output layers in diffusion models often start at zero initialisation?",
+     "options": [
+      "To make outputs always zero",
+      "So each residual block starts as identity and training begins from a stable point",
+      "To match the noise schedule",
+      "To prevent overfitting"
+     ],
+     "answer": 1,
+     "why": "Zero-initialised final convolutions are a common stabiliser in deep residual generators."
+    }
+   ]
+  },
+  {
+   "section": "Training Objective",
+   "questions": [
+    {
+     "q": "What is the simplified DDPM training loss?",
+     "options": [
+      "$\\|\\epsilon - \\epsilon_\\theta(x_t, t)\\|^2$ with t uniform and $x_t$ built from $x_0$ and ε",
+      "A GAN loss",
+      "The negative log-likelihood of $x_0$ under a Gaussian",
+      "$\\|x_t - x_0\\|^2$"
+     ],
+     "answer": 0,
+     "why": "It drops the per-timestep weights of the variational bound and works better in practice for sample quality."
+    },
+    {
+     "q": "What is the mean of the forward posterior $q(x_{t-1} \\mid x_t, x_0)$?",
+     "options": [
+      "Just $x_0$",
+      "Just $x_t$",
+      "A weighted combination of $x_0$ and $x_t$ with coefficients from the schedule",
+      "Zero"
+     ],
+     "answer": 2,
+     "why": "$\\tilde\\mu = \\frac{\\sqrt{\\bar\\alpha_{t-1}}\\beta_t}{1-\\bar\\alpha_t}x_0 + \\frac{\\sqrt{\\alpha_t}(1-\\bar\\alpha_{t-1})}{1-\\bar\\alpha_t}x_t$. The reverse model plugs in its estimate of $x_0$."
+    },
+    {
+     "q": "What is the posterior variance $\\tilde\\beta_t$?",
+     "options": [
+      "$\\beta_t$",
+      "$1 - \\bar\\alpha_t$",
+      "$\\frac{1 - \\bar\\alpha_{t-1}}{1 - \\bar\\alpha_t}\\beta_t$",
+      "0"
+     ],
+     "answer": 2,
+     "why": "It is slightly smaller than $\\beta_t$. DDPM found both choices for the reverse variance work similarly."
+    },
+    {
+     "q": "Given a predicted ε, how do you recover the predicted $x_0$?",
+     "options": [
+      "$\\hat x_0 = x_t - \\hat\\epsilon$",
+      "$\\hat x_0 = \\sqrt{\\bar\\alpha_t}x_t$",
+      "$\\hat x_0 = \\hat\\epsilon$",
+      "$\\hat x_0 = (x_t - \\sqrt{1 - \\bar\\alpha_t}\\,\\hat\\epsilon)/\\sqrt{\\bar\\alpha_t}$"
+     ],
+     "answer": 3,
+     "why": "This inverts the forward formula. It is noisy at large t because it divides by a small $\\sqrt{\\bar\\alpha_t}$."
+    },
+    {
+     "q": "What is v-prediction?",
+     "options": [
+      "Predicting $v = \\sqrt{\\bar\\alpha_t}\\epsilon - \\sqrt{1 - \\bar\\alpha_t}x_0$",
+      "Predicting the next image in a video",
+      "Predicting the velocity of the sampler only at t = 0",
+      "Predicting the variance"
+     ],
+     "answer": 0,
+     "why": "v stays well-scaled at all noise levels and gives both $x_0$ and ε by simple linear combinations with $x_t$."
+    },
+    {
+     "q": "What does Min-SNR loss weighting do?",
+     "options": [
+      "Removes all high-noise steps",
+      "Caps each timestep's weight at min(SNR, γ) (adjusted for the target), so low-noise steps don't dominate training",
+      "Weights every step equally in $x_0$ space",
+      "Sets weights to the SNR exactly"
+     ],
+     "answer": 1,
+     "why": "Different timesteps compete for model capacity. Clamping their weights speeds convergence."
+    },
+    {
+     "q": "Why does ε-prediction implicitly weight timesteps differently in terms of $x_0$ error?",
+     "options": [
+      "It emphasises only the last step",
+      "It doesn't; the weighting is uniform",
+      "It ignores the schedule",
+      "The ε loss equals the $x_0$ loss times the SNR, so it emphasises low-noise steps"
+     ],
+     "answer": 3,
+     "why": "The $\\hat x_0$ error is the ε error divided by $\\sqrt{\\text{SNR}}$, so the squared ε error equals SNR times the squared $x_0$ error."
+    },
+    {
+     "q": "Why is t sampled uniformly during training rather than going through steps in order?",
+     "options": [
+      "Each step's loss is an independent regression problem, and uniform sampling covers all of them without simulating chains",
+      "Ordered steps can't be batched",
+      "Uniform sampling makes the loss zero",
+      "The model only sees one step per epoch"
+     ],
+     "answer": 0,
+     "why": "Some methods sample t non-uniformly, or by log-SNR, to focus on harder noise levels."
+    }
+   ]
+  },
+  {
+   "section": "Sampling",
+   "questions": [
+    {
+     "q": "What does one DDPM ancestral step do?",
+     "options": [
+      "Runs the forward process once more",
+      "Subtracts the predicted noise and stops",
+      "Computes the posterior mean from the predicted noise and adds fresh Gaussian noise scaled by the step's standard deviation",
+      "Samples a new $x_T$"
+     ],
+     "answer": 2,
+     "why": "$x_{t-1} = \\frac{1}{\\sqrt{\\alpha_t}}(x_t - \\frac{\\beta_t}{\\sqrt{1-\\bar\\alpha_t}}\\hat\\epsilon) + \\sigma_t z$, with no noise added at the last step."
+    },
+    {
+     "q": "How does classifier-free guidance combine predictions?",
+     "options": [
+      "It adds a classifier's gradient",
+      "$\\hat\\epsilon = \\epsilon_\\theta(x, \\varnothing) + w(\\epsilon_\\theta(x, c) - \\epsilon_\\theta(x, \\varnothing))$",
+      "It uses only the unconditional prediction",
+      "It averages conditional and unconditional predictions"
+     ],
+     "answer": 1,
+     "why": "w > 1 pushes samples toward the condition. The same network learns both by dropping the condition for some training examples."
+    },
+    {
+     "q": "What is the main trade-off as the guidance scale increases?",
+     "options": [
+      "More diversity but worse alignment",
+      "Better prompt adherence and sharper images, but less diversity and eventually oversaturated artifacts",
+      "No effect",
+      "Faster sampling but lower resolution"
+     ],
+     "answer": 1,
+     "why": "Very high w moves samples off the data manifold, which shows up as harsh colours and repeated textures."
+    },
+    {
+     "q": "What does DDIM with η = 0 give?",
+     "options": [
+      "A stochastic sampler identical to DDPM",
+      "A sampler that needs retraining",
+      "A sampler that only works for 1000 steps",
+      "A deterministic sampler that maps each noise sample to one image and can skip many steps"
+     ],
+     "answer": 3,
+     "why": "DDIM reuses the DDPM-trained model. η interpolates between deterministic (0) and DDPM-like (1)."
+    },
+    {
+     "q": "In one DDIM step from t to s, what quantities are used?",
+     "options": [
+      "The model's gradients",
+      "Only $x_t$",
+      "A fresh random $x_T$",
+      "The predicted $\\hat x_0$ and $\\hat\\epsilon$, recombined at noise level s"
+     ],
+     "answer": 3,
+     "why": "$x_s = \\sqrt{\\bar\\alpha_s}\\hat x_0 + \\sqrt{1-\\bar\\alpha_s}\\hat\\epsilon$ when η = 0."
+    },
+    {
+     "q": "Karras-style samplers parameterise noise by σ. How is $x$ written?",
+     "options": [
+      "$x = x_0 + \\sigma\\epsilon$, with σ decreasing from σ_max toward 0",
+      "$x = \\sigma x_0$",
+      "$x = x_0 / \\sigma$",
+      "$x = \\sqrt{\\bar\\alpha}x_0$ only"
+     ],
+     "answer": 0,
+     "why": "This \"variance exploding\" view turns sampling into solving an ODE in σ. An Euler step uses $dx/d\\sigma = (x - \\hat x_0)/\\sigma$."
+    },
+    {
+     "q": "Why do Karras schedules space σ values more densely near zero?",
+     "options": [
+      "Because the model is untrained at high noise",
+      "To avoid σ = 0",
+      "Errors at low noise levels affect fine detail most, so smaller steps there improve quality for the same number of steps",
+      "To make sampling faster at high noise"
+     ],
+     "answer": 2,
+     "why": "The schedule interpolates $\\sigma^{1/\\rho}$ linearly with ρ = 7, concentrating steps at small σ."
+    },
+    {
+     "q": "Why is noise not added at the final DDPM step?",
+     "options": [
+      "It is added, but scaled by 1000",
+      "Noise can't be added to images",
+      "The output should be the clean sample; adding noise at t = 1 would only blur it",
+      "The variance is undefined"
+     ],
+     "answer": 2,
+     "why": "The last step returns the posterior mean (or $\\hat x_0$)."
+    }
+   ]
+  },
+  {
+   "section": "Score and Flow View",
+   "questions": [
+    {
+     "q": "What does denoising score matching train the network to predict?",
+     "options": [
+      "The data likelihood",
+      "The clean image",
+      "The noise level",
+      "The score of the noised data distribution, using $-\\epsilon/\\sigma$ as the target"
+     ],
+     "answer": 3,
+     "why": "For $\\tilde x = x + \\sigma\\epsilon$, the score of $q(\\tilde x | x)$ is $-\\epsilon/\\sigma$. Minimising the squared error recovers $\\nabla \\log q_\\sigma(\\tilde x)$."
+    },
+    {
+     "q": "How is ε-prediction related to the score?",
+     "options": [
+      "The score is ε times the SNR",
+      "They are unrelated",
+      "The score equals ε",
+      "$\\nabla_x \\log p_t(x) \\approx -\\epsilon_\\theta(x, t)/\\sqrt{1 - \\bar\\alpha_t}$"
+     ],
+     "answer": 3,
+     "why": "A noise predictor is a scaled score model, which links DDPM to score-based models."
+    },
+    {
+     "q": "What does one Langevin dynamics step do?",
+     "options": [
+      "$x \\leftarrow x + \\tfrac{\\eta}{2}\\nabla \\log p(x) + \\sqrt{\\eta}\\,z$",
+      "$x \\leftarrow x + \\eta$",
+      "$x \\leftarrow z$",
+      "$x \\leftarrow x - \\eta\\nabla \\log p(x)$"
+     ],
+     "answer": 0,
+     "why": "It climbs the log density and adds noise. With small steps and many iterations it samples from p."
+    },
+    {
+     "q": "Why does annealed Langevin dynamics start at high noise?",
+     "options": [
+      "The score is zero at low noise",
+      "At low noise the score is inaccurate in low-density regions; high noise smooths the distribution so the sampler can find all modes",
+      "High noise is faster to compute",
+      "It avoids using a network"
+     ],
+     "answer": 1,
+     "why": "The sampler runs a few steps at each σ, moving from large to small, using the previous level's samples as starting points."
+    },
+    {
+     "q": "In conditional flow matching with a straight path, what is the target velocity?",
+     "options": [
+      "Zero",
+      "$x_1 - x_0$, the difference between the data sample and the noise sample",
+      "The noise ε",
+      "The clean image"
+     ],
+     "answer": 1,
+     "why": "With $x_t = (1-t)x_0 + t x_1$, the derivative is constant. The network regresses it at random t."
+    },
+    {
+     "q": "What does a trained flow-matching model let you do at sampling time?",
+     "options": [
+      "Sample by running the forward process",
+      "Integrate the learned velocity field from noise to data with an ODE solver",
+      "Skip the network entirely",
+      "Compute exact class labels"
+     ],
+     "answer": 1,
+     "why": "Straighter paths need fewer integration steps, which is one appeal over curved diffusion trajectories."
+    },
+    {
+     "q": "Why is conditioning on a single pair $(x_0, x_1)$ enough to learn the marginal velocity field?",
+     "options": [
+      "The regression's minimiser is the conditional expectation of the per-pair velocity, which is the marginal field",
+      "It isn't; flow matching needs the full marginal",
+      "The model sees all pairs at once",
+      "Each pair has the same velocity"
+     ],
+     "answer": 0,
+     "why": "This is the same argument that makes denoising score matching work without knowing the true score."
+    },
+    {
+     "q": "How do diffusion and flow matching relate?",
+     "options": [
+      "They are unrelated methods",
+      "Flow matching needs adversarial training",
+      "Diffusion sampling with a probability-flow ODE is a flow with a particular curved path; flow matching picks the path directly",
+      "Diffusion has no ODE form"
+     ],
+     "answer": 2,
+     "why": "Both learn a time-dependent vector field. They differ in the interpolation path and in how the loss is weighted."
+    }
+   ]
+  },
+  {
+   "section": "Evaluation, Transformers and Capstone",
+   "questions": [
+    {
+     "q": "The Fréchet distance between two Gaussians uses which formula?",
+     "options": [
+      "$KL(\\mathcal N_1 \\| \\mathcal N_2)$",
+      "$\\text{Tr}(\\Sigma_1 - \\Sigma_2)$",
+      "$\\|\\mu_1 - \\mu_2\\|^2 + \\text{Tr}(\\Sigma_1 + \\Sigma_2 - 2(\\Sigma_1\\Sigma_2)^{1/2})$",
+      "$\\|\\mu_1 - \\mu_2\\|$"
+     ],
+     "answer": 2,
+     "why": "FID fits Gaussians to Inception features of real and generated images and computes this distance. Lower is better."
+    },
+    {
+     "q": "Why is FID biased for small sample sizes?",
+     "options": [
+      "It ignores the mean",
+      "Covariances estimated from few samples are noisy, which inflates the score",
+      "It needs labelled data",
+      "The formula only holds for 10,000 samples exactly"
+     ],
+     "answer": 1,
+     "why": "Comparisons are only fair with the same number of samples, commonly 50,000."
+    },
+    {
+     "q": "In a DiT, what does adaLN-Zero do?",
+     "options": [
+      "Adds a class token",
+      "Replaces attention with convolution",
+      "Removes layer normalisation",
+      "Regresses scale, shift and gate values from the conditioning, with the gate initialised to zero so each block starts as identity"
+     ],
+     "answer": 3,
+     "why": "The zero-initialised gate on each residual branch made training more stable than other conditioning schemes in the DiT paper."
+    },
+    {
+     "q": "How does a DiT turn a latent image into tokens?",
+     "options": [
+      "It flattens the whole image into one token",
+      "It runs a U-Net first",
+      "It uses one token per channel",
+      "It splits the latent into p×p patches and linearly embeds each one, adding positional embeddings"
+     ],
+     "answer": 3,
+     "why": "Smaller patches give more tokens and better results at higher compute cost."
+    },
+    {
+     "q": "Why do many modern diffusion models run in a VAE's latent space?",
+     "options": [
+      "The latent is much smaller than pixel space, cutting compute while the decoder restores fine detail",
+      "The VAE removes the need for a noise schedule",
+      "Pixels can't be noised",
+      "Latents are always binary"
+     ],
+     "answer": 0,
+     "why": "Latent diffusion moved most of the cost to an autoencoder trained once and reused."
+    },
+    {
+     "q": "In a toy diffusion training step, which values are drawn at random?",
+     "options": [
+      "Only the noise",
+      "A batch of data, a timestep per example and a noise tensor",
+      "Only the timestep",
+      "The model weights"
+     ],
+     "answer": 1,
+     "why": "The model then predicts the noise from $x_t$ and t, and the loss is the mean squared error."
+    },
+    {
+     "q": "A toy DDPM sampler starts from what?",
+     "options": [
+      "$x_T \\sim \\mathcal N(0, I)$, then applies the reverse step from T down to 1",
+      "A zero tensor",
+      "A training image",
+      "The mean of the dataset"
+     ],
+     "answer": 0,
+     "why": "Each step uses the model's prediction at the current t. The final $x_0$ is the sample."
+    },
+    {
+     "q": "What does precision/recall for generative models measure that FID doesn't separate?",
+     "options": [
+      "Model size",
+      "Sampling steps",
+      "Sample quality (how many samples look real) separately from coverage (how much of the data distribution is produced)",
+      "Training speed"
+     ],
+     "answer": 2,
+     "why": "FID combines both in one number. A model can have good precision but poor recall, for example under strong guidance."
+    }
+   ]
+  }
+ ]
+}

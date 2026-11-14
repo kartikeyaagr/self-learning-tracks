@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Jacobian of softmax', tags=['Calculus', 'Activation Functions'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:01.08', 'mlmaths:09.04'], related=['softmax-rows', 'cross-entropy-logits'])
+            lessons=['air-fanout-v1:01.08', 'mlmaths:09.28'], related=['softmax-rows', 'cross-entropy-logits'])
 
 STATEMENT = r"""
 For $s = \mathrm{softmax}(z)$ with $z \in \mathbb{R}^n$, the Jacobian $J \in \mathbb{R}^{n \times n}$ has entries $J_{ij} = \partial s_i / \partial z_j$.

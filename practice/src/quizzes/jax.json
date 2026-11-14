@@ -1,0 +1,842 @@
+{
+ "plan": "jax",
+ "sections": [
+  {
+   "section": "Arrays the JAX way",
+   "questions": [
+    {
+     "q": "`x = jnp.zeros(3); x[0] = 1` raises an error. What is the JAX way to set an element?",
+     "options": [
+      "`x = x.at[0].set(1)`, which returns a new array",
+      "`x.set(0, 1)` in place",
+      "`np.put(x, 0, 1)`",
+      "`x[0] = 1` inside `jax.jit` only"
+     ],
+     "answer": 0,
+     "why": "JAX arrays are immutable. `.at[...]` expresses the update functionally, and under `jit` XLA usually performs it in place anyway."
+    },
+    {
+     "q": "What does `x.at[jnp.array([1, 1])].add(5)` do to `x = jnp.zeros(3)`?",
+     "options": [
+      "Gives `[5, 5, 0]`",
+      "Gives `[0, 10, 0]`, because repeated indices accumulate",
+      "Gives `[0, 5, 0]`",
+      "Raises an error for repeated indices"
+     ],
+     "answer": 1,
+     "why": "`.at[].add` is a scatter-add, so both updates land on index 1, like `np.add.at`."
+    },
+    {
+     "q": "Why does JAX require explicit PRNG keys instead of a global seed?",
+     "options": [
+      "Keys are faster to generate",
+      "To save memory",
+      "NumPy's generator isn't random enough",
+      "Functions stay pure, so results don't depend on hidden state, which matters for jit, vmap and parallelism"
+     ],
+     "answer": 3,
+     "why": "Hidden global state would make traced and vectorised functions non-reproducible. Every random call takes a key explicitly."
+    },
+    {
+     "q": "You call `jax.random.normal(key, ...)` twice with the same `key`. What happens?",
+     "options": [
+      "You get different numbers",
+      "You get identical numbers both times; split the key first",
+      "The key advances automatically",
+      "It raises an error"
+     ],
+     "answer": 1,
+     "why": "The same key always produces the same output. `key, sub = jax.random.split(key)` gives a fresh subkey for each use."
+    },
+    {
+     "q": "Inside `jax.jit`, why does `x[x > 0]` fail?",
+     "options": [
+      "Boolean arrays aren't allowed in JAX",
+      "Comparison operators aren't traceable",
+      "It works but is slow",
+      "Its output shape depends on the data, and jit needs static shapes"
+     ],
+     "answer": 3,
+     "why": "Under tracing the number of selected elements is unknown. Use `jnp.where(mask, x, 0)` with masked sums and counts instead."
+    },
+    {
+     "q": "To compute the mean of the positive entries under jit, which is correct?",
+     "options": [
+      "`x[x > 0].mean()` with `static_argnums`",
+      "`jnp.mean(x[x > 0])`",
+      "`jnp.sum(jnp.where(x > 0, x, 0)) / jnp.maximum(jnp.sum(x > 0), 1)`",
+      "`jnp.nanmean(x)`"
+     ],
+     "answer": 2,
+     "why": "Masked reductions keep shapes fixed. The `maximum(..., 1)` guards the all-negative case."
+    },
+    {
+     "q": "Why pad variable-length batches up to a few fixed \"bucket\" lengths in JAX?",
+     "options": [
+      "JAX can't handle padding otherwise",
+      "To make vmap work",
+      "It improves accuracy",
+      "Each new shape triggers a recompilation, so bucketing bounds the number of compiled versions"
+     ],
+     "answer": 3,
+     "why": "jit caches one compiled program per input shape. Padding to, say, 128, 256 and 512 means at most three compilations."
+    },
+    {
+     "q": "What is the default float dtype of `jnp.array(1.0)`?",
+     "options": [
+      "`bfloat16`",
+      "`float32`, unless 64-bit mode is enabled",
+      "`float16`",
+      "`float64`"
+     ],
+     "answer": 1,
+     "why": "JAX defaults to 32-bit for accelerator performance. `jax.config.update('jax_enable_x64', True)` enables float64."
+    }
+   ]
+  },
+  {
+   "section": "Automatic Differentiation",
+   "questions": [
+    {
+     "q": "`jax.value_and_grad(loss_fn, has_aux=True)` expects `loss_fn` to return what?",
+     "options": [
+      "Only the loss",
+      "`(grads, loss)`",
+      "A tuple `(loss, aux)`, and it returns `((loss, aux), grads)`",
+      "A dict with a `loss` key"
+     ],
+     "answer": 2,
+     "why": "`has_aux` lets you return metrics such as accuracy alongside the scalar being differentiated, without differentiating them."
+    },
+    {
+     "q": "`jax.grad(f)` requires `f` to return what?",
+     "options": [
+      "A scalar",
+      "A tuple of arrays",
+      "A pytree",
+      "A vector of any shape"
+     ],
+     "answer": 0,
+     "why": "`grad` is for scalar outputs. For vector outputs use `jax.jacfwd`, `jax.jacrev`, `jax.vjp` or `jax.jvp`."
+    },
+    {
+     "q": "A Hessian-vector product computed as `jax.jvp(jax.grad(f), (x,), (v,))[1]` costs about...",
+     "options": [
+      "A small constant times one gradient evaluation, without forming the Hessian",
+      "$n$ gradient evaluations",
+      "It isn't possible in JAX",
+      "$O(n^2)$ to form the Hessian first"
+     ],
+     "answer": 0,
+     "why": "Forward-over-reverse differentiates the gradient in direction $v$. It is the standard way to get curvature information for large models."
+    },
+    {
+     "q": "Per-example gradients for a batch are computed with...",
+     "options": [
+      "A Python loop with `jit` inside",
+      "`jax.grad(loss)(params, xs, ys)`",
+      "`jax.vmap(jax.grad(loss), in_axes=(None, 0, 0))(params, xs, ys)`",
+      "`jax.pmap(jax.grad(loss))`"
+     ],
+     "answer": 2,
+     "why": "`vmap` maps over the batch axis of the data while sharing `params` (`None`), giving one gradient per example, which DP-SGD needs for per-example clipping."
+    },
+    {
+     "q": "A straight-through estimator for rounding uses `custom_vjp`. What does the backward rule return?",
+     "options": [
+      "Zero, the true derivative of rounding",
+      "The upstream gradient unchanged, as if rounding were the identity",
+      "The rounded gradient",
+      "The gradient times the quantisation step"
+     ],
+     "answer": 1,
+     "why": "Rounding has zero derivative almost everywhere, which would stop learning. Pretending it is the identity in the backward pass lets fake-quantised training work."
+    },
+    {
+     "q": "A simpler way to write a straight-through estimator without `custom_vjp` is...",
+     "options": [
+      "`jax.lax.stop_gradient(jnp.round(x))`",
+      "`x * jnp.round(x)`",
+      "`x + jax.lax.stop_gradient(jnp.round(x) - x)`",
+      "`jnp.round(x)`"
+     ],
+     "answer": 2,
+     "why": "The forward value is `round(x)`, but the gradient only sees the `x` term because the difference is wrapped in `stop_gradient`."
+    },
+    {
+     "q": "`jax.jacfwd` versus `jax.jacrev`: which is cheaper for a function from $\\mathbb R^{1000}$ to $\\mathbb R^{3}$?",
+     "options": [
+      "They always cost the same",
+      "`jacrev`, which needs one pass per output (3)",
+      "Neither works for non-square Jacobians",
+      "`jacfwd`, which needs one pass per input (1000)"
+     ],
+     "answer": 1,
+     "why": "Reverse mode scales with the number of outputs, forward mode with the number of inputs. Wide-to-narrow functions favour reverse mode."
+    },
+    {
+     "q": "What does `jax.lax.stop_gradient(x)` do in the forward pass?",
+     "options": [
+      "Nothing; it returns `x` unchanged and only blocks gradients",
+      "Rounds `x`",
+      "Returns zeros",
+      "Detaches and copies `x` to host memory"
+     ],
+     "answer": 0,
+     "why": "It is the identity in value and zero in derivative, used for targets, straight-through tricks and target networks."
+    }
+   ]
+  },
+  {
+   "section": "Compiling with jit and scan",
+   "questions": [
+    {
+     "q": "A function's window size changes the output shape. How do you jit it?",
+     "options": [
+      "Pass it as a traced array",
+      "Mark the window as static with `static_argnums` or `static_argnames`",
+      "It can't be jitted",
+      "Use `jnp.asarray(window)`"
+     ],
+     "answer": 1,
+     "why": "Static arguments are part of the cache key and are known as Python values during tracing, so shapes can depend on them. Each distinct value triggers a compile."
+    },
+    {
+     "q": "Inside a jitted function, `if x > 0:` on a traced array raises an error. What should you use?",
+     "options": [
+      "`x.item() > 0`",
+      "`static_argnums` for `x`",
+      "`try`/`except`",
+      "`jnp.where` or `jax.lax.cond`"
+     ],
+     "answer": 3,
+     "why": "Python control flow needs concrete values, which tracers don't have. `lax.cond` compiles both branches and picks one at run time."
+    },
+    {
+     "q": "A learning-rate schedule receives the step count as a traced array. Which is valid inside jit?",
+     "options": [
+      "`math.cos(step)`",
+      "`if step < warmup: ...` in Python",
+      "`jnp.where(step < warmup, step / warmup, 0.5 * (1 + jnp.cos(jnp.pi * progress)))`",
+      "`int(step)`"
+     ],
+     "answer": 2,
+     "why": "JAX operations accept tracers; Python's `math` functions and `int()` need concrete numbers."
+    },
+    {
+     "q": "Why use `jax.lax.scan` instead of a Python `for` loop under jit?",
+     "options": [
+      "The Python loop is unrolled into the compiled graph, so long loops compile slowly; `scan` compiles the body once",
+      "Python loops give wrong answers",
+      "`for` loops can't be differentiated",
+      "`scan` runs the iterations in parallel"
+     ],
+     "answer": 0,
+     "why": "Unrolling 1,000 steps makes a program 1,000 times larger. `scan` keeps compile time constant and still supports autodiff."
+    },
+    {
+     "q": "`lax.scan(f, init, xs)` expects `f` to return what?",
+     "options": [
+      "`(new_carry, y)`, where the `y`s are stacked into the second output",
+      "Only `y`",
+      "A list of carries",
+      "Only the new carry"
+     ],
+     "answer": 0,
+     "why": "The carry threads state between iterations; the per-step outputs are stacked along a new leading axis."
+    },
+    {
+     "q": "When would you use `lax.fori_loop` instead of `scan`?",
+     "options": [
+      "When the loop length is unknown at trace time and depends on data",
+      "When you need gradients through a while loop",
+      "Never; they are identical",
+      "When you only need the final carry, not per-step outputs"
+     ],
+     "answer": 3,
+     "why": "`fori_loop` with static bounds lowers to a scan and is differentiable. With dynamic bounds it becomes a `while_loop`, which supports forward-mode but not reverse-mode differentiation."
+    },
+    {
+     "q": "Print statements inside a jitted function run when?",
+     "options": [
+      "On every call",
+      "Only on the GPU",
+      "Never",
+      "Only during tracing, typically once per new shape; use `jax.debug.print` for run-time values"
+     ],
+     "answer": 3,
+     "why": "Python side effects happen while tracing. `jax.debug.print` is staged into the compiled program."
+    },
+    {
+     "q": "An exponential moving average with bias correction inside `scan` should carry what?",
+     "options": [
+      "Nothing; scan stores it automatically",
+      "Only the running average",
+      "The running average and the step count (or the running product of decay factors)",
+      "The full history of values"
+     ],
+     "answer": 2,
+     "why": "The bias-correction factor $1 - \\beta^t$ needs $t$. Resetting the average means resetting both parts of the carry."
+    }
+   ]
+  },
+  {
+   "section": "Vectorizing with vmap",
+   "questions": [
+    {
+     "q": "`jax.vmap(f, in_axes=(0, None))(xs, w)` does what?",
+     "options": [
+      "Maps `f` over the leading axis of `xs` while broadcasting the same `w` to every call",
+      "Maps over both arguments",
+      "Maps over `w` only",
+      "Runs `f` once on the whole batch without mapping"
+     ],
+     "answer": 0,
+     "why": "`None` means the argument isn't batched. This is how you share parameters across examples."
+    },
+    {
+     "q": "Is `jax.vmap` a loop under the hood?",
+     "options": [
+      "Yes, a compiled `scan`",
+      "No; it rewrites the function into batched operations",
+      "It launches one kernel per example",
+      "Yes, a Python loop"
+     ],
+     "answer": 1,
+     "why": "vmap transforms each primitive into its batched version (for example matmul into batched matmul), so it runs as one vectorised program."
+    },
+    {
+     "q": "To run an ensemble of 5 models whose parameters are stacked along axis 0, on the same input `x`, use...",
+     "options": [
+      "A Python loop over models only",
+      "`vmap(model, in_axes=(None, 0))(stacked_params, x)`",
+      "`pmap(model)`",
+      "`vmap(model, in_axes=(0, None))(stacked_params, x)`"
+     ],
+     "answer": 3,
+     "why": "Mapping over the parameter axis and broadcasting the input evaluates every ensemble member at once."
+    },
+    {
+     "q": "Nested `vmap(vmap(dist, (None, 0)), (0, None))(A, B)` computes what for `dist(a, b)`?",
+     "options": [
+      "A scalar",
+      "A matrix of `dist(A[i], B[j])` with shape `(len(A), len(B))`",
+      "A 3-D tensor",
+      "The diagonal `dist(A[i], B[i])` only"
+     ],
+     "answer": 1,
+     "why": "The inner map varies `b` over `B` for a fixed `a`; the outer map varies `a` over `A`."
+    },
+    {
+     "q": "Attention for one sequence is written for `(T, d)` inputs. How do you add batch and head axes?",
+     "options": [
+      "Rewrite it with `einsum` only",
+      "Call it in a loop",
+      "Use `pmap` twice",
+      "Wrap it in two `vmap`s, one over heads and one over the batch"
+     ],
+     "answer": 3,
+     "why": "Writing the single-example version and vmapping it keeps the code simple and is as fast as the hand-batched version."
+    },
+    {
+     "q": "What does `out_axes=1` do in `vmap`?",
+     "options": [
+      "Returns only the first output",
+      "Places the mapped axis at position 1 of the output instead of 0",
+      "Removes axis 1",
+      "Maps over axis 1 of the input"
+     ],
+     "answer": 1,
+     "why": "`in_axes` chooses which input axis is mapped; `out_axes` chooses where it appears in the result."
+    },
+    {
+     "q": "Can `vmap` be combined with `grad` and `jit`?",
+     "options": [
+      "No, only one transformation per function",
+      "Only `jit` of `vmap`",
+      "Only `vmap` of `jit`",
+      "Yes, in any order; they are composable transformations"
+     ],
+     "answer": 3,
+     "why": "Composability is JAX's central design: `jit(vmap(grad(f)))` is a common pattern."
+    },
+    {
+     "q": "A key-padding mask for batched attention should be passed to the vmapped function how?",
+     "options": [
+      "As another mapped argument with `in_axes=0`, one mask per example",
+      "With `in_axes=None`, shared by all examples",
+      "It can't be used with vmap",
+      "As a global variable"
+     ],
+     "answer": 0,
+     "why": "Each example has its own padding, so the mask is batched along with the inputs."
+    }
+   ]
+  },
+  {
+   "section": "Pytrees and Optimizers",
+   "questions": [
+    {
+     "q": "What is a pytree in JAX?",
+     "options": [
+      "A special array type",
+      "A compiled graph",
+      "A nested structure of lists, tuples and dicts (and registered classes) whose leaves are arrays",
+      "A tree-structured neural network"
+     ],
+     "answer": 2,
+     "why": "Parameters, gradients and optimiser states are pytrees, and `jax.tree_util.tree_map` applies a function to every leaf."
+    },
+    {
+     "q": "SGD with momentum over a nested parameter dict is written with...",
+     "options": [
+      "`jax.tree_util.tree_map(lambda p, g, v: ..., params, grads, vel)`",
+      "A loop over `params.items()` only",
+      "`jnp.concatenate` of all leaves",
+      "`params - lr * grads`"
+     ],
+     "answer": 0,
+     "why": "`tree_map` walks several pytrees of the same structure in lockstep, so the update stays generic for any model."
+    },
+    {
+     "q": "Global-norm clipping needs the norm over **all** leaves. How is it computed?",
+     "options": [
+      "The norm of the first leaf",
+      "`jnp.linalg.norm(grads)`",
+      "`jnp.sqrt(sum(jnp.sum(g ** 2) for g in jax.tree_util.tree_leaves(grads)))`",
+      "The maximum leaf norm"
+     ],
+     "answer": 2,
+     "why": "Squares are summed across every leaf before the square root. A non-finite guard then skips the update if the norm is NaN or inf."
+    },
+    {
+     "q": "AdamW with a weight-decay mask usually excludes which parameters from decay?",
+     "options": [
+      "Embeddings only",
+      "Nothing; all are decayed",
+      "Biases and normalisation scales",
+      "All weight matrices"
+     ],
+     "answer": 2,
+     "why": "Decaying biases and LayerNorm gains brings little regularisation benefit and can hurt. The mask is a pytree of booleans with the same structure as the parameters."
+    },
+    {
+     "q": "Token-weighted gradient accumulation over micro-batches should divide by...",
+     "options": [
+      "The total number of real tokens across all micro-batches",
+      "The number of micro-batches",
+      "Each micro-batch's own token count, then average",
+      "Nothing"
+     ],
+     "answer": 0,
+     "why": "Accumulate the summed per-token gradients and normalise once by the global token count, so every token has equal weight."
+    },
+    {
+     "q": "Why are optimiser states stored as pytrees with the same structure as the parameters?",
+     "options": [
+      "To save memory",
+      "To enable vmap",
+      "JAX requires it for any array",
+      "So updates can be written with `tree_map` and the state can be sharded and checkpointed like the parameters"
+     ],
+     "answer": 3,
+     "why": "Matching structures make the optimiser generic and let the same sharding rules apply to parameters and their moments."
+    },
+    {
+     "q": "Optax's `optax.chain(optax.clip_by_global_norm(1.0), optax.adamw(1e-3))` applies the transforms in what order?",
+     "options": [
+      "AdamW first, then clipping",
+      "Order depends on the gradient size",
+      "Clipping first, then AdamW",
+      "Both at once on separate copies"
+     ],
+     "answer": 2,
+     "why": "Transforms in a chain are applied in sequence to the update, so gradients are clipped before Adam's moments see them."
+    },
+    {
+     "q": "A `NamedTuple` of arrays is a valid pytree. What does `tree_leaves` return for `State(m=a, v=b)`?",
+     "options": [
+      "`['m', 'v']`",
+      "`[State]`",
+      "`[a, b]`",
+      "`[]`"
+     ],
+     "answer": 2,
+     "why": "NamedTuples are registered pytree nodes, so their fields are traversed and the arrays are leaves."
+    }
+   ]
+  },
+  {
+   "section": "Memory and Numerics",
+   "questions": [
+    {
+     "q": "Why use dynamic loss scaling for fp16 training?",
+     "options": [
+      "To speed up the forward pass",
+      "To make the loss positive",
+      "Small gradients underflow to zero in fp16; scaling the loss up keeps them representable",
+      "bf16 requires it too"
+     ],
+     "answer": 2,
+     "why": "The scale is lowered when an overflow (inf or NaN) appears and raised after a run of stable steps. bf16 has fp32's exponent range and usually doesn't need it."
+    },
+    {
+     "q": "What does `jax.checkpoint` (remat) trade?",
+     "options": [
+      "Memory for compute: activations are recomputed during the backward pass instead of stored",
+      "Accuracy for speed",
+      "Compute for memory",
+      "Nothing; it only saves to disk"
+     ],
+     "answer": 0,
+     "why": "Wrapping each layer of a deep stack (often inside `scan`) cuts activation memory to roughly one layer's worth plus the layer inputs."
+    },
+    {
+     "q": "W8A8 quantised matmul with per-channel weight scales $s_w$ and per-token activation scales $s_a$ dequantises how?",
+     "options": [
+      "Per-tensor scales only",
+      "$Y_{ij} \\approx s_{a,i}\\,s_{w,j}\\sum_k q^a_{ik}q^w_{kj}$",
+      "$Y \\approx (q^aq^w)/(s_as_w)$",
+      "$Y \\approx s_a + s_w$"
+     ],
+     "answer": 1,
+     "why": "The integer accumulation is rescaled by the outer product of the two scale vectors, which works because each scale factors out of its row or column."
+    },
+    {
+     "q": "Why accumulate int8 products in int32?",
+     "options": [
+      "Sums of many int8 products overflow 8 or 16 bits",
+      "int32 is faster than int8",
+      "Hardware only supports int32 inputs",
+      "To convert to float"
+     ],
+     "answer": 0,
+     "why": "Each product fits in 16 bits, and summing thousands of them needs at least 32 bits."
+    },
+    {
+     "q": "Blockwise attention in `lax.scan` keeps what carry per query row?",
+     "options": [
+      "Only the output",
+      "The full attention matrix",
+      "The keys seen so far",
+      "The running max, the running sum of exponentials and the unnormalised output"
+     ],
+     "answer": 3,
+     "why": "That is the online softmax, which processes key blocks one at a time with constant memory per row."
+    },
+    {
+     "q": "bf16 has how many mantissa bits, compared with fp16's 10?",
+     "options": [
+      "10",
+      "7",
+      "3",
+      "23"
+     ],
+     "answer": 1,
+     "why": "bf16 keeps fp32's 8 exponent bits and cuts the mantissa, trading precision for range; fp16 has a 5-bit exponent and more precision."
+    },
+    {
+     "q": "Summing $10^7$ values of 1.0 in float32 sequentially gives...",
+     "options": [
+      "Less than $10^7$",
+      "Always the exact answer",
+      "NaN",
+      "Exactly $10^7$, but summing $10^8$ ones stalls at $2^{24} = 16{,}777{,}216$"
+     ],
+     "answer": 3,
+     "why": "Above $2^{24}$, adding 1 to a float32 is lost to rounding. Reductions use pairwise summation or higher-precision accumulators."
+    },
+    {
+     "q": "A matmul in fp32 on TPU may use bf16 passes by default. Which setting forces full precision?",
+     "options": [
+      "`dtype=jnp.float64`",
+      "`precision=jax.lax.Precision.HIGHEST` (or the default matmul precision config)",
+      "`jax.jit(static_argnums=...)`",
+      "It can't be changed"
+     ],
+     "answer": 1,
+     "why": "TPUs default to faster reduced-precision passes for fp32 matmuls; the precision argument trades speed for accuracy."
+    }
+   ]
+  },
+  {
+   "section": "Inference Building Blocks",
+   "questions": [
+    {
+     "q": "RoPE rotates each pair of dimensions by angle $p\\theta_i$. Why can JAX compute it for arbitrary positions without a cache?",
+     "options": [
+      "JAX caches every position automatically",
+      "RoPE doesn't depend on position",
+      "The angles are a cheap function of the position array, so they're computed on the fly",
+      "It needs a lookup table in JAX"
+     ],
+     "answer": 2,
+     "why": "`cos` and `sin` of `positions[:, None] * freqs[None, :]` are cheap and fuse into the surrounding kernels under jit."
+    },
+    {
+     "q": "Writing a new key into a batched KV cache at per-sequence positions uses...",
+     "options": [
+      "`cache[pos] = k_new`",
+      "`jnp.concatenate([cache, k_new])`",
+      "`cache.at[jnp.arange(B), pos].set(k_new)`",
+      "`cache.at[pos].set(k_new)` with a scalar `pos` for all sequences"
+     ],
+     "answer": 2,
+     "why": "Advanced indexing with a batch index and a position per sequence scatters each new key into its own slot; concatenation would change the shape every step."
+    },
+    {
+     "q": "Top-p (nucleus) sampling with $p = 0.9$ keeps which tokens?",
+     "options": [
+      "90 tokens",
+      "The smallest set of most-likely tokens whose probabilities sum to at least 0.9",
+      "The top 90% of the vocabulary by count",
+      "The tokens with probability above 0.9"
+     ],
+     "answer": 1,
+     "why": "Sort by probability, take the cumulative sum and keep tokens up to where it first reaches $p$; then renormalise."
+    },
+    {
+     "q": "Applying temperature $T$ divides the logits by $T$. What does $T \\to 0$ approach?",
+     "options": [
+      "Uniform sampling",
+      "No change",
+      "Top-p with $p = 1$",
+      "Greedy (argmax) decoding"
+     ],
+     "answer": 3,
+     "why": "Small temperatures sharpen the softmax until all mass sits on the largest logit."
+    },
+    {
+     "q": "In a decode step, grouped-query attention with 32 query heads and 8 KV heads reads how much KV cache compared with full multi-head attention?",
+     "options": [
+      "A quarter",
+      "Half",
+      "The same",
+      "An eighth"
+     ],
+     "answer": 0,
+     "why": "Only 8 key and value heads are stored and read, and each serves 4 query heads."
+    },
+    {
+     "q": "Why does every decode step need a fixed-size KV cache buffer in JAX rather than growing it?",
+     "options": [
+      "Growing arrays change shapes, which would trigger recompilation every step",
+      "KV caches must be powers of two",
+      "To save memory",
+      "Growing is impossible in Python"
+     ],
+     "answer": 0,
+     "why": "Preallocating the maximum length and tracking positions keeps shapes static for jit."
+    },
+    {
+     "q": "A causal mask for a decode step with cache length $L$ and current position $p$ allows attention to which positions?",
+     "options": [
+      "Only $p$",
+      "$0..p$",
+      "$p..L-1$",
+      "All $L$ positions"
+     ],
+     "answer": 1,
+     "why": "Slots after the current position are empty (or stale) and must be masked out."
+    },
+    {
+     "q": "Sampling with a JAX key in a decode loop: what should happen to the key each step?",
+     "options": [
+      "Reuse the same key every step",
+      "Keys aren't needed for sampling",
+      "Create a new key from the step number with `PRNGKey(step)`, ignoring the original seed",
+      "Split it, using one subkey for this step's sample and carrying the other forward"
+     ],
+     "answer": 3,
+     "why": "Reusing a key repeats the same random draws. Splitting in the loop carry gives fresh, reproducible randomness."
+    }
+   ]
+  },
+  {
+   "section": "Decoding Loops",
+   "questions": [
+    {
+     "q": "Batched greedy decoding in `lax.scan` must handle sequences that hit EOS at different steps. How?",
+     "options": [
+      "Remove finished sequences from the batch",
+      "Carry a `done` mask and replace tokens of finished sequences with padding",
+      "Stop the scan early for each sequence",
+      "Run each sequence in its own scan"
+     ],
+     "answer": 1,
+     "why": "Shapes must stay fixed, so finished rows keep running but their outputs are masked."
+    },
+    {
+     "q": "Why can't `lax.scan` stop early when all sequences finish?",
+     "options": [
+      "Its length is fixed at trace time; use `lax.while_loop` for a data-dependent stop",
+      "It stops automatically at EOS",
+      "Early stopping is unnecessary",
+      "It can, with a `break`"
+     ],
+     "answer": 0,
+     "why": "`while_loop` supports dynamic termination but not reverse-mode autodiff, which decoding doesn't need."
+    },
+    {
+     "q": "Decode attention over a paged KV cache gathers keys how?",
+     "options": [
+      "From the model weights",
+      "From one contiguous array per sequence",
+      "By concatenating all sequences",
+      "Through a block table that maps each sequence's logical blocks to physical blocks"
+     ],
+     "answer": 3,
+     "why": "The block table adds one level of indirection, which lets sequences share a memory pool without contiguous reservations."
+    },
+    {
+     "q": "In one beam-search step with beam width $k$ and vocabulary $V$, how many candidate continuations are scored?",
+     "options": [
+      "$k$",
+      "$V$",
+      "$k\\cdot V$",
+      "$k + V$"
+     ],
+     "answer": 2,
+     "why": "Each beam is extended by every token, then the best $k$ of the $kV$ candidates are kept."
+    },
+    {
+     "q": "How should finished beams be treated in a vectorised beam-search step?",
+     "options": [
+      "Extend them normally",
+      "Keep them with their score frozen and allow only a padding continuation",
+      "Remove them",
+      "Reset their score to 0"
+     ],
+     "answer": 1,
+     "why": "Fixed shapes require keeping them. Allowing only one zero-cost continuation preserves their score while unfinished beams compete."
+    },
+    {
+     "q": "In speculative decoding, a draft token with draft probability $q$ and target probability $p$ is accepted with probability...",
+     "options": [
+      "$p$",
+      "$p - q$",
+      "$q$",
+      "$\\min(1, p/q)$"
+     ],
+     "answer": 3,
+     "why": "On rejection, sampling from the normalised $\\max(0, p - q)$ makes the output exactly target-distributed."
+    },
+    {
+     "q": "Why is the whole decode loop usually jitted as one function?",
+     "options": [
+      "It makes the model more accurate",
+      "jit is required for sampling",
+      "It avoids Python overhead and host-device round trips between steps",
+      "To use more memory"
+     ],
+     "answer": 2,
+     "why": "A per-step Python loop pays dispatch overhead every token; compiling the loop keeps everything on the device."
+    },
+    {
+     "q": "How is the KV cache usually threaded through `lax.scan` in a decode loop?",
+     "options": [
+      "Recreated each step from scratch",
+      "As a global variable",
+      "As part of the carry, updated each step with `.at[].set`",
+      "Passed as `xs`"
+     ],
+     "answer": 2,
+     "why": "The carry holds state that changes across iterations: the cache, the current token, positions and `done` flags."
+    }
+   ]
+  },
+  {
+   "section": "Sharding and Parallelism",
+   "questions": [
+    {
+     "q": "With a mesh of axes `('data', 'model')` and `PartitionSpec('data', None)` on a `(B, D)` array, how is it laid out?",
+     "options": [
+      "Columns split across `model`",
+      "Rows split across the `data` axis; columns replicated",
+      "Fully replicated",
+      "Split along both dimensions"
+     ],
+     "answer": 1,
+     "why": "Each entry of the spec names the mesh axis that shards that array dimension; `None` means replicated along it."
+    },
+    {
+     "q": "In data-parallel SGD with `shard_map` or `pmap`, which collective averages gradients across devices?",
+     "options": [
+      "`jax.lax.pmean` (or `psum` divided by the device count)",
+      "None; each device keeps its own gradient",
+      "`jax.lax.ppermute`",
+      "`jax.lax.all_gather`"
+     ],
+     "answer": 0,
+     "why": "Every replica must apply the same update, so gradients are reduced across the data axis before the optimiser step."
+    },
+    {
+     "q": "A Megatron-style tensor-parallel MLP splits the first weight by columns and the second by rows. Where is the communication?",
+     "options": [
+      "One all-reduce after the second matmul",
+      "An all-gather before the first matmul only",
+      "An all-reduce after each matmul",
+      "No communication at all"
+     ],
+     "answer": 0,
+     "why": "Column-splitting the first layer gives each device a slice of the hidden units with no communication; row-splitting the second produces partial sums that one all-reduce combines."
+    },
+    {
+     "q": "A ring all-reduce built from `ppermute` sends data how?",
+     "options": [
+      "Each device broadcasts to all others at once",
+      "Each device passes chunks to its neighbour around a ring, in a reduce-scatter then an all-gather phase",
+      "Only one device participates per step",
+      "Every device sends everything to device 0"
+     ],
+     "answer": 1,
+     "why": "The ring keeps every link busy and moves about $2(N - 1)/N$ times the data size per device, independent of $N$."
+    },
+    {
+     "q": "What does `jax.lax.all_gather` do?",
+     "options": [
+      "Sums shards across devices",
+      "Splits an array into shards",
+      "Sends shards to the next device",
+      "Collects each device's shard so every device gets the full array"
+     ],
+     "answer": 3,
+     "why": "All-gather is the inverse of sharding, as needed when a replicated value is required, for example before a matmul with a sharded input."
+    },
+    {
+     "q": "Under `jit` with sharded inputs, who decides where collectives go?",
+     "options": [
+      "The XLA compiler (GSPMD), from the input and output shardings",
+      "You must insert every collective manually",
+      "The Python interpreter",
+      "The optimiser"
+     ],
+     "answer": 0,
+     "why": "With `jit` and sharding annotations, XLA propagates shardings and inserts communication. `shard_map` is the manual alternative."
+    },
+    {
+     "q": "Fully sharded data parallelism (FSDP or ZeRO-3) shards what?",
+     "options": [
+      "Only the data",
+      "Only the optimiser state",
+      "Only the activations",
+      "Parameters, gradients and optimiser state across the data-parallel devices"
+     ],
+     "answer": 3,
+     "why": "Each device stores a slice of everything and all-gathers parameters just before they are needed."
+    },
+    {
+     "q": "Increasing data-parallel devices from 8 to 16 at a fixed per-device batch does what to the global batch?",
+     "options": [
+      "Keeps it the same",
+      "Halves it",
+      "Doubles it",
+      "Quadruples it"
+     ],
+     "answer": 2,
+     "why": "The global batch is per-device batch times the number of replicas, which may require retuning the learning rate."
+    }
+   ]
+  }
+ ]
+}

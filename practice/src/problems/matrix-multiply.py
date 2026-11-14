@@ -1,5 +1,5 @@
 META = dict(title='Matrix multiplication from scratch', tags=['Linear Algebra'], diff='Easy', runtime='python',
-            lessons=['air-fanout-v1:03.02', 'mlmaths:03.05'], related=['matrix-vector-multiply', 'matrix-transpose', 'matrix-trace'])
+            lessons=['air-fanout-v1:03.02', 'mlmaths:03.33'], related=['matrix-vector-multiply', 'matrix-transpose', 'matrix-trace'])
 
 STATEMENT = r"""
 For $A \in \mathbb{R}^{m\times k}$ and $B \in \mathbb{R}^{k\times n}$, the product $C = AB \in \mathbb{R}^{m\times n}$ has entries

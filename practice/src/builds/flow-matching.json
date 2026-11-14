@@ -1,0 +1,12 @@
+{"id": "flow-matching", "kind": "paper", "group": "Generative models",
+ "title": "Flow Matching for Generative Modeling", "authors": "Lipman et al.", "year": 2022,
+ "url": "https://arxiv.org/abs/2210.02747",
+ "blurb": "Trained continuous normalising flows without simulation by regressing a velocity field onto per-sample target velocities along simple paths from noise to data.",
+ "intro": "Pick a path from each noise sample to a data sample, such as a straight line, and its velocity is known in closed form. Regressing a network onto those conditional velocities learns a field whose ODE moves the whole noise distribution onto the data. Sampling integrates that ODE with a standard solver. The steps build the flow-matching loss, conversions between prediction targets and an ODE sampler; the capstone trains a small velocity model and integrates it with Euler or midpoint steps.",
+ "steps": [
+  {"name": "Conditional flow-matching loss", "problem": "conditional-flow-matching-loss"},
+  {"name": "Converting between noise, data and velocity targets", "problem": "prediction-parameterization", "note": "Links flow matching to diffusion's $\\epsilon$- and $v$-prediction."},
+  {"name": "Euler ODE sampling", "problem": "karras-euler-sampler", "note": "The same integrator, written for a diffusion ODE."}
+ ],
+ "capstone": "flow-matching-train-and-integrate",
+ "lessons": ["dlcore:07.06"]}

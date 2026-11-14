@@ -1,0 +1,13 @@
+{"id": "switch-transformer", "kind": "paper", "group": "Transformers and LLMs",
+ "title": "Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity", "authors": "Fedus, Zoph and Shazeer", "year": 2021,
+ "url": "https://arxiv.org/abs/2101.03961",
+ "blurb": "Simplified mixture-of-experts to top-1 routing with fixed expert capacity and a load-balancing loss, scaling parameter count far beyond compute.",
+ "intro": "Each token's feed-forward computation goes to one of many experts chosen by a learned router, so parameters grow with the number of experts while FLOPs per token stay fixed. Static shapes force a capacity per expert, which means some tokens can be dropped, and an auxiliary loss keeps the router from collapsing onto a few experts. The steps build routing with load statistics, dispatch and combine, and the communication pattern of expert parallelism; the capstone is a full Switch layer.",
+ "steps": [
+  {"name": "Top-k routing with load statistics", "problem": "sparse-moe-top-k-expert-routing"},
+  {"name": "Capacity-limited routing with balance and z-losses", "problem": "top-k-moe-router-with-load-statistics", "note": "The router z-loss comes from the follow-up ST-MoE paper."},
+  {"name": "Dispatch and weighted combine", "problem": "moe-token-dispatch-and-expert-aggregation"},
+  {"name": "Expert parallelism across devices", "problem": "expert-parallel-routing-across-gpus"}
+ ],
+ "capstone": "switch-ffn-layer-top1",
+ "lessons": ["aieng:06.02", "ieng:19.02", "ieng:19.04"]}

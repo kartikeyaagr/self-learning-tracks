@@ -1,0 +1,13 @@
+{"id": "speculative-decoding", "kind": "paper", "group": "Efficient inference",
+ "title": "Fast Inference from Transformers via Speculative Decoding", "authors": "Leviathan, Kalman and Matias", "year": 2022,
+ "url": "https://arxiv.org/abs/2211.17192",
+ "blurb": "Sped up sampling from large language models two to three times, with an identical output distribution, by verifying a small model's guesses in parallel.",
+ "intro": "Decoding is memory-bound, so scoring several positions costs the large model about as much as scoring one. A small draft model proposes a few tokens, the target model scores them all in one pass, and a modified rejection-sampling rule accepts a prefix and corrects the first mismatch so the output follows the target distribution exactly. The steps build ordinary sampling, the acceptance test and residual resampling in numpy and JAX; the capstone runs the complete draft-verify loop with two bigram models.",
+ "steps": [
+  {"name": "Temperature, top-k and top-p sampling", "problem": "text-generation-sampling"},
+  {"name": "Exact speculative sampling", "problem": "perform-exact-speculative-sampling"},
+  {"name": "Verifying draft tokens", "problem": "speculative-decoding-and-token-verification"},
+  {"name": "Accept, reject and resample in JAX", "problem": "speculative-decoding-acceptance"}
+ ],
+ "capstone": "speculative-decoding-loop",
+ "lessons": ["aieng:07.04", "ieng:16.02", "ieng:16.03"]}

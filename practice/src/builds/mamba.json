@@ -1,0 +1,12 @@
+{"id": "mamba", "kind": "paper", "group": "Sequence models and embeddings",
+ "title": "Mamba: Linear-Time Sequence Modeling with Selective State Spaces", "authors": "Gu and Dao", "year": 2023,
+ "url": "https://arxiv.org/abs/2312.00752",
+ "blurb": "Made state-space models input-dependent so they can select what to remember, matching transformers on language modelling with linear-time training and constant-memory decoding.",
+ "intro": "A state-space layer updates a fixed-size hidden state with a linear recurrence. Mamba makes the step size and the input and output projections depend on the current token, which lets the model hold or discard information by content, and computes the recurrence with a hardware-aware parallel scan. The steps build the recurrent and parallel views of linear attention, the selective scan and its Mamba-2 simplification; the capstone is the full gated Mamba block with its causal convolution.",
+ "steps": [
+  {"name": "Linear attention: parallel and recurrent forms", "problem": "parallel-and-recurrent-linear-attention", "note": "The closest attention relative: a fixed-size state updated per token."},
+  {"name": "Selective scan (S6)", "problem": "selective-ssm-scan"},
+  {"name": "Mamba-2 gated state scan", "problem": "mamba-2-gated-state-scan", "note": "The follow-up's scalar-decay form, which links SSMs back to attention."}
+ ],
+ "capstone": "mamba-block-forward",
+ "lessons": []}

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='PCA and ZCA whitening', tags=['Feature Engineering', 'Linear Algebra'], diff='Hard', runtime='numpy',
-            lessons=['mlmaths:11.04', 'mlmaths:05.02'], related=['eigendecomposition', 'mahalanobis-distance', 'pca'])
+            lessons=['mlmaths:11.21', 'mlmaths:05.07'], related=['eigendecomposition', 'mahalanobis-distance', 'pca'])
 
 STATEMENT = r"""
 Whitening transforms data so its features are uncorrelated with unit variance: the sample covariance becomes $I$. With the eigendecomposition of the sample covariance $\Sigma = V\Lambda V^\top$ (`ddof=1`), two standard choices are

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='PCA from the covariance matrix', tags=['Linear Algebra', 'Feature Engineering'], diff='Hard', runtime='numpy',
-            lessons=['mlmaths:08.03', 'mlmaths:05.02'], related=['kmeans-step', 'cosine-similarity-matrix'])
+            lessons=['mlmaths:08.06', 'mlmaths:05.07'], related=['kmeans-step', 'cosine-similarity-matrix'])
 
 STATEMENT = r"""
 Principal component analysis finds the orthogonal directions of greatest variance. Implement it with an eigendecomposition:

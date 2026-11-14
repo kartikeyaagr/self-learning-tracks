@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Column-wise variance and standard deviation', tags=['Probability and Statistics'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:10.04', 'mlmaths:12.01'], related=['mean-median-mode', 'skewness-and-kurtosis'])
+            lessons=['mlmaths:10.15', 'mlmaths:12.01'], related=['mean-median-mode', 'skewness-and-kurtosis'])
 
 STATEMENT = r"""
 For $n$ observations of one feature, the variance with a degrees-of-freedom correction $\delta$ (`ddof`) is

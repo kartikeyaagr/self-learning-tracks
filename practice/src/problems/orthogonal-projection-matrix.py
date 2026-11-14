@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Projection matrix onto a column space', tags=['Linear Algebra'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:06.03', 'mlmaths:08.01'], related=['vector-projection', 'least-squares-solution', 'qr-decomposition'])
+            lessons=['mlmaths:06.13', 'mlmaths:08.01'], related=['vector-projection', 'least-squares-solution', 'qr-decomposition'])
 
 STATEMENT = r"""
 The orthogonal projection onto the column space of a full-column-rank matrix $A \in \mathbb{R}^{m\times n}$ is

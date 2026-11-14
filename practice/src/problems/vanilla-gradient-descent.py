@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Gradient descent on a quadratic bowl', tags=['Optimization', 'Calculus'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:01.04', 'mlmaths:09.03'],
+            lessons=['air-fanout-v1:01.04', 'mlmaths:09.21'],
             related=['minimum-of-axis-aligned-paraboloid', 'classical-momentum', 'learning-rate-sweep'])
 
 STATEMENT = r"""

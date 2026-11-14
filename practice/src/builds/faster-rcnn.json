@@ -1,0 +1,16 @@
+{"id": "faster-rcnn", "kind": "paper", "group": "Vision and detection",
+ "title": "Faster R-CNN: Towards Real-Time Object Detection with Region Proposal Networks", "authors": "Ren et al.", "year": 2015,
+ "url": "https://arxiv.org/abs/1506.01497",
+ "blurb": "Replaced hand-crafted region proposals with a small network on shared convolutional features, making two-stage detection fast and fully learned.",
+ "intro": "A region proposal network slides over the backbone's feature map, scoring and refining a set of anchor boxes at every position. Its top proposals, after NMS, are cropped from the same features and passed to a second head that classifies and refines them. The steps build anchors, IoU and box encodings, RPN training targets, NMS, RoIAlign and the feature pyramid that later versions add; the capstone turns raw RPN outputs into proposals.",
+ "steps": [
+  {"name": "Anchor boxes over a feature map", "problem": "anchor-box-generation"},
+  {"name": "IoU between box sets", "problem": "iou-matrix"},
+  {"name": "Box encoding and decoding", "problem": "box-encode-and-decode"},
+  {"name": "RPN training targets", "problem": "rpn-anchor-target-assignment"},
+  {"name": "Non-maximum suppression", "problem": "non-maximum-suppression"},
+  {"name": "RoIAlign", "problem": "roi-align", "note": "From Mask R-CNN; it replaced the paper's RoI pooling."},
+  {"name": "Feature pyramid fusion", "problem": "fpn-top-down-fusion", "note": "FPN, the standard multi-scale backbone for Faster R-CNN since 2017."}
+ ],
+ "capstone": "rpn-proposals",
+ "lessons": ["dlcore:04.02", "dlcore:04.03"]}

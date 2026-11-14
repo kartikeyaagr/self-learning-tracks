@@ -257,9 +257,17 @@ def main():
              'lessons': by_tag[t]} for i, t in enumerate(TAGS)]
     data = [m for m in data if m['lessons']]               # topics appear as soon as they have a problem
     plans = [load_plan(f, ids) for f in sorted((SRC / 'plans').glob('*.json'))]
+    builds, quizzes, rounds = extras(ids, lessons)
+    qdir = OUT / 'quiz'; qdir.mkdir(exist_ok=True)
+    for f in qdir.glob('*.json'):
+        f.unlink()
+    for pid, q in quizzes.items():                         # fetched by the plan page when opened
+        (qdir / f'{pid}.json').write_text(json.dumps(q, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
+    for pl in plans:
+        pl['quiz'] = [s['section'] for s in quizzes.get(pl['id'], {}).get('sections', [])]
     js = lambda x: json.dumps(x, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/')
     app = (SRC / 'app.html').read_text(encoding='utf-8')
-    app = app.replace('__DATA__', js(data)).replace('__PARTS__', js([pn for pn, _ in PARTS])).replace('__PLANS__', js(plans))
+    app = app.replace('__DATA__', js(data)).replace('__PARTS__', js([pn for pn, _ in PARTS])).replace('__PLANS__', js(plans)).replace('__BUILDS__', js(builds)).replace('__ROUNDS__', js(rounds))
     app = app.replace('__TOTAL__', str(len(probs)))
     (OUT / 'index.html').write_text(app, encoding='utf-8')
 
@@ -274,7 +282,9 @@ def main():
     by_rt = {}
     for p in probs:
         by_rt[p['rt']] = by_rt.get(p['rt'], 0) + 1
-    print(f'{len(probs)} problems verified · {len(data)}/{len(TAGS)} topics · {len(plans)} plans · runtimes {by_rt}')
+    print(f'{len(probs)} problems verified · {len(data)}/{len(TAGS)} topics · {len(plans)} plans · '
+          f'{sum(b["kind"] == "paper" for b in builds)} papers · {sum(b["kind"] == "project" for b in builds)} projects · '
+          f'{len(quizzes)} quizzes · {len(rounds)} rounds · runtimes {by_rt}')
 
 
 def load_plan(path, ids):
@@ -291,6 +301,81 @@ def load_plan(path, ids):
     return plan
 
 
+ROLES = ['Data Scientist', 'ML Engineer', 'Research Engineer', 'GPU Engineer', 'AI Engineer']
+
+
+def load_build(path, ids, lessons):
+    """builds/<id>.json: a paper implementation or a project, as ordered steps that are problems, plus a capstone."""
+    b = json.loads(path.read_text(encoding='utf-8'))
+    where = f'builds/{path.name}:'
+    assert b.get('id') == path.stem, f'{where} id must equal the file name'
+    assert b.get('kind') in ('paper', 'project'), f'{where} kind must be "paper" or "project"'
+    for k in ('group', 'title', 'blurb', 'steps', 'capstone'):
+        assert b.get(k), f'{where} missing {k}'
+    if b['kind'] == 'paper':
+        for k in ('authors', 'year', 'url'):
+            assert b.get(k), f'{where} papers need {k}'
+        assert str(b['url']).startswith('https://'), f'{where} url must be https'
+    assert len(b['steps']) >= 3, f'{where} give at least 3 steps'
+    for st in b['steps']:
+        assert st.get('name') and st.get('problem'), f'{where} each step needs name and problem'
+    slugs = [st['problem'] for st in b['steps']] + [b['capstone']]
+    bad = [x for x in slugs if x not in ids]
+    assert not bad, f'{where} unknown problems {bad}'
+    assert b['capstone'] not in slugs[:-1], f'{where} capstone must be its own problem, not a step'
+    badl = [x for x in b.get('lessons', []) if x not in lessons]
+    assert not badl, f'{where} unknown lessons {badl}'
+    return b
+
+
+def load_quiz(path, plans):
+    """quizzes/<plan id>.json: multiple-choice questions for each section of a study plan."""
+    q = json.loads(path.read_text(encoding='utf-8'))
+    where = f'quizzes/{path.name}:'
+    plan = plans.get(path.stem)
+    assert plan, f'{where} no study plan named {path.stem}'
+    names = [s['name'] for s in plan['sections']]
+    for sec in q['sections']:
+        assert sec.get('section') in names, f'{where} section {sec.get("section")!r} is not in the plan ({names})'
+        assert len(sec.get('questions', [])) >= 5, f'{where} {sec["section"]}: give at least 5 questions'
+        for i, x in enumerate(sec['questions'], 1):
+            assert x.get('q') and x.get('why'), f'{where} {sec["section"]} q{i}: needs q and why'
+            o = x.get('options', [])
+            assert 3 <= len(o) <= 5 and len(set(o)) == len(o), f'{where} {sec["section"]} q{i}: 3-5 distinct options'
+            assert isinstance(x.get('answer'), int) and 0 <= x['answer'] < len(o), f'{where} {sec["section"]} q{i}: answer is the 0-based index of the right option'
+    return q
+
+
+def load_round(path, ids, lessons):
+    """rounds/<id>.json: a timed interview round mixing coding problems and theory questions from course lessons."""
+    r = json.loads(path.read_text(encoding='utf-8'))
+    where = f'rounds/{path.name}:'
+    assert r.get('id') == path.stem, f'{where} id must equal the file name'
+    assert r.get('role') in ROLES, f'{where} role must be one of {ROLES}'
+    for k in ('title', 'blurb', 'minutes'):
+        assert r.get(k), f'{where} missing {k}'
+    assert isinstance(r['minutes'], int) and 10 <= r['minutes'] <= 240, f'{where} minutes must be 10-240'
+    assert r.get('coding') or r.get('theory'), f'{where} needs coding problems, theory questions or both'
+    bad = [x for x in r.get('coding', []) if x not in ids]
+    assert not bad, f'{where} unknown problems {bad}'
+    badl = [x for x in r.get('theory', []) if x not in lessons]
+    assert not badl, f'{where} unknown lessons {badl}'
+    return r
+
+
+def extras(ids, lessons):
+    """All builds, quizzes and rounds, validated. Quizzes are keyed by plan id."""
+    plans = {f.stem: json.loads(f.read_text(encoding='utf-8')) for f in (SRC / 'plans').glob('*.json')}
+    builds = [load_build(f, ids, lessons) for f in sorted((SRC / 'builds').glob('*.json'))]
+    quizzes = {f.stem: load_quiz(f, plans) for f in sorted((SRC / 'quizzes').glob('*.json'))}
+    rounds = [load_round(f, ids, lessons) for f in sorted((SRC / 'rounds').glob('*.json'))]
+    for x in builds:
+        x['lesson_links'] = [lessons[r] for r in x.get('lessons', [])]
+    for x in rounds:
+        x['theory_links'] = {r: lessons[r] for r in x.get('theory', [])}
+    return builds, quizzes, rounds
+
+
 def check(paths):
     """Verify only the given problem/plan files and write nothing, so parallel authors can't clash.
     Related slugs and plan entries may point at any problem file that exists on disk."""
@@ -300,8 +385,17 @@ def check(paths):
         f = Path(raw).resolve()
         try:
             if f.suffix == '.json':
-                plan = load_plan(f, ids)
-                print(f'OK    {f.name}  ({sum(len(x["problems"]) for x in plan["sections"])} problems)')
+                kind = f.parent.name
+                if kind == 'builds':
+                    b = load_build(f, ids, lessons); print(f'OK    {f.name}  ({b["kind"]}, {len(b["steps"])} steps + capstone)')
+                elif kind == 'quizzes':
+                    plans = {g.stem: json.loads(g.read_text(encoding='utf-8')) for g in (SRC / 'plans').glob('*.json')}
+                    q = load_quiz(f, plans); print(f'OK    {f.name}  ({sum(len(x["questions"]) for x in q["sections"])} questions)')
+                elif kind == 'rounds':
+                    r = load_round(f, ids, lessons); print(f'OK    {f.name}  ({len(r.get("coding", []))} coding, {len(r.get("theory", []))} theory)')
+                else:
+                    plan = load_plan(f, ids)
+                    print(f'OK    {f.name}  ({sum(len(x["problems"]) for x in plan["sections"])} problems)')
                 continue
             p = build_one(f, lessons)
             unknown = [r for r in p['related'] if r not in ids]

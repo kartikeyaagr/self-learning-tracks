@@ -1,0 +1,16 @@
+{"id": "resnet", "kind": "paper", "group": "Convolutional networks",
+ "title": "Deep Residual Learning for Image Recognition", "authors": "He et al.", "year": 2015,
+ "url": "https://arxiv.org/abs/1512.03385",
+ "blurb": "Made very deep networks trainable by having each block learn a residual added to an identity shortcut, winning ImageNet 2015 with 152 layers.",
+ "intro": "A residual block computes $x + F(x)$, so its default behaviour is the identity and gradients have a direct path through every block. When a block changes resolution or width, the shortcut becomes a strided 1×1 projection. The steps build convolution, batch norm, pooling and both block types; the capstone stacks a stem, residual stages, global average pooling and a classifier.",
+ "steps": [
+  {"name": "Strided, padded convolution", "problem": "2d-convolution"},
+  {"name": "Batch normalisation (train and eval)", "problem": "batch-normalization"},
+  {"name": "He initialisation", "problem": "weight-initialization", "note": "The initialisation the same authors derived for ReLU networks."},
+  {"name": "Max pooling", "problem": "max-pool-2d"},
+  {"name": "Basic block with a projection shortcut", "problem": "resnet-residual-block"},
+  {"name": "Bottleneck block", "problem": "residual-block", "note": "The 1×1, 3×3, 1×1 block used in ResNet-50 and deeper."},
+  {"name": "Global average pooling", "problem": "adaptive-average-pool-2d"}
+ ],
+ "capstone": "resnet-tiny-forward",
+ "lessons": ["dlcore:03.04", "dlcore:02.01"]}

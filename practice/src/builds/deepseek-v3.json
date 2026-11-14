@@ -1,0 +1,17 @@
+{"id": "deepseek-v3", "kind": "paper", "group": "Transformers and LLMs",
+ "title": "DeepSeek-V3 Technical Report", "authors": "DeepSeek-AI", "year": 2024,
+ "url": "https://arxiv.org/abs/2412.19437",
+ "blurb": "A 671B-parameter mixture-of-experts model with 37B active parameters per token, built on latent attention, fine-grained experts, bias-based load balancing and multi-token prediction.",
+ "intro": "Each DeepSeek-V3 layer pairs multi-head latent attention (MLA), which caches a small latent per token instead of full keys and values, with a DeepSeekMoE feed-forward: one shared expert plus many small routed experts chosen by sigmoid affinities. Load is balanced by adjusting per-expert routing biases instead of an auxiliary loss, and extra modules predict tokens further ahead during training. The steps build MLA, the router and the MoE machinery separately; the capstone assembles one full block.",
+ "steps": [
+  {"name": "Multi-head latent attention", "problem": "multi-head-latent-attention-mla", "note": "Compressed KV plus a decoupled rotary key."},
+  {"name": "KV-cache size: MHA, GQA and MLA", "problem": "kv-cache-memory-for-mha-mqa-gqa-and-mla"},
+  {"name": "Auxiliary-loss-free routing", "problem": "aux-loss-free-moe-routing"},
+  {"name": "Top-k routing with balance statistics", "problem": "top-k-moe-router-with-load-statistics", "note": "The auxiliary-loss approach V3 moved away from, for comparison."},
+  {"name": "Token dispatch and expert combine", "problem": "moe-token-dispatch-and-expert-aggregation"},
+  {"name": "Expert parallelism across GPUs", "problem": "expert-parallel-routing-across-gpus"},
+  {"name": "Multi-token prediction", "problem": "multi-token-prediction-loss"},
+  {"name": "Block-wise FP8 quantization", "problem": "block-wise-fp8-quantization", "note": "V3 trained in FP8 with fine-grained scaling."}
+ ],
+ "capstone": "deepseek-v3-block",
+ "lessons": ["aieng:06.02", "ieng:19.01", "ieng:19.02", "ieng:19.03"]}

@@ -1474,7 +1474,7 @@ function lessonPage(k){
         <p class="q">${esc(l.q)}</p>
         <textarea id="ans-${k}" data-note="${k}" aria-label="Your answer" placeholder="Write your answer first. It saves automatically.">${esc(st.notes[k] || '')}</textarea>
         <div class="arow"><span class="saved" id="saved-${k}"></span>${l.s ? (rv ? `<button type="button" class="btn ghost" id="reveal" style="min-height:38px;font-size:14px">Hide model answer</button>` : `<button type="button" class="btn" id="reveal">Check against model answer</button>`) : ''}</div>
-        ${l.s && rv ? `<div class="sample"><div class="lab">Model answer</div><p>${inl(l.s)}</p></div>
+        ${l.s && rv ? `<div class="sample"><div class="lab">Model answer</div><p>${inl(l.s)}</p></div>${(l.rubric || []).length ? `<div class="sample" style="background:var(--card);border-color:var(--line)"><div class="lab">A strong answer covers</div><ul style="margin:6px 0 0;padding-left:20px">${l.rubric.map(x => `<li>${inl(x)}</li>`).join('')}</ul></div>` : ''}
           <div class="grade"><div class="lab">How did your answer compare?</div><div class="gb">${gbtn(1, 'Missed it')}${gbtn(2, 'Partly')}${gbtn(3, 'Nailed it')}</div></div>` : ''}
       </section>
 

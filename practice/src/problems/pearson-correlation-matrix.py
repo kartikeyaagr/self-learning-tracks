@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Pearson correlation matrix', tags=['Probability and Statistics', 'Linear Algebra'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:11.04'], related=['correlation-significance-test', 'pca-projection', 'cosine-similarity-matrix'])
+            lessons=['mlmaths:11.21'], related=['correlation-significance-test', 'pca-projection', 'cosine-similarity-matrix'])
 
 STATEMENT = r"""
 The Pearson correlation between features $a$ and $b$ is their covariance divided by the product of their standard deviations:

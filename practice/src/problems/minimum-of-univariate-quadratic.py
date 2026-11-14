@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Minimise a batch of 1-D quadratics', tags=['Optimization', 'Calculus'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:09.08', 'air-fanout-v1:01.02'],
+            lessons=['mlmaths:09.52', 'air-fanout-v1:01.02'],
             related=['minimum-of-axis-aligned-paraboloid', 'vanilla-gradient-descent'])
 
 STATEMENT = r"""

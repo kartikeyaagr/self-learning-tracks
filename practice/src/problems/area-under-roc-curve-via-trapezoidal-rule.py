@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='ROC curve and AUC with tied scores', tags=['Metrics & Evaluation', 'Classification'], diff='Medium',
-            runtime='numpy', lessons=['mlmaths:09.06'],
+            runtime='numpy', lessons=['mlmaths:09.39'],
             related=['expected-value-via-numerical-integration', 'precision-recall-at-k'])
 
 STATEMENT = r"""

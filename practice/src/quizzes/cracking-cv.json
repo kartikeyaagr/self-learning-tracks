@@ -1,0 +1,470 @@
+{
+ "plan": "cracking-cv",
+ "sections": [
+  {
+   "section": "Image basics and ops",
+   "questions": [
+    {
+     "q": "Why does the standard RGB-to-grayscale conversion weight green most heavily?",
+     "options": [
+      "Cameras have no green filter",
+      "Green pixels are stored with more bits",
+      "Human perceived brightness is most sensitive to green light",
+      "It keeps the weights summing to more than one"
+     ],
+     "answer": 2,
+     "why": "The luma weights (about 0.299 R, 0.587 G, 0.114 B) follow perceived brightness, which peaks in the green part of the spectrum. A plain average makes blue areas look too bright."
+    },
+    {
+     "q": "An image tensor has shape (N, C, H, W). Over which axes do you average to get per-channel mean and std for normalisation?",
+     "options": [
+      "N and C",
+      "H and W only, separately for each image",
+      "N, H and W",
+      "C only"
+     ],
+     "answer": 2,
+     "why": "You want one statistic per channel, pooled over every pixel of every image in the dataset, so you reduce over batch and both spatial axes and keep C."
+    },
+    {
+     "q": "Why must the normalisation statistics used at test time be the ones computed on the training set?",
+     "options": [
+      "The model was trained on inputs shifted and scaled by those values, so the test inputs must match",
+      "The training statistics are more accurate for every image",
+      "Test-set statistics are always zero",
+      "Computing statistics on the test set is too slow"
+     ],
+     "answer": 0,
+     "why": "Normalisation is part of the model's input contract. Recomputing on the test set changes the input distribution and leaks test information."
+    },
+    {
+     "q": "A 5×5 image is centre-cropped to 3×3. Which rows are kept (0-indexed)?",
+     "options": [
+      "Rows 0, 1 and 2",
+      "Rows 1, 2 and 3",
+      "Rows 2, 3 and 4",
+      "Rows 1, 3 and 5"
+     ],
+     "answer": 1,
+     "why": "The offset is (5 - 3) // 2 = 1, so the crop is rows 1 to 3. When the difference is odd, the convention you pick (floor or ceil) decides which side loses the extra pixel."
+    },
+    {
+     "q": "In bilinear resizing, a target pixel maps to source coordinate (2.25, 3.5). How is its value formed?",
+     "options": [
+      "A weighted average of the four surrounding source pixels, with weights from the fractional parts",
+      "The mean of the whole 3×3 neighbourhood",
+      "A cubic fit through sixteen pixels",
+      "The value of the nearest source pixel"
+     ],
+     "answer": 0,
+     "why": "Bilinear interpolation does linear interpolation along one axis, then the other. The weights are (1 - 0.25, 0.25) and (1 - 0.5, 0.5) for the two axes."
+    },
+    {
+     "q": "What does the \"align corners\" choice in resizing change?",
+     "options": [
+      "Whether the image is flipped",
+      "Whether interpolation is bilinear or nearest",
+      "Whether the aspect ratio is kept",
+      "Whether the corner pixel centres of input and output map exactly onto each other"
+     ],
+     "answer": 3,
+     "why": "With align corners, the scale is (in - 1)/(out - 1) and the corner pixels match exactly. Without it, pixels are treated as unit squares and the scale is in/out with a half-pixel offset. The two give slightly different outputs."
+    },
+    {
+     "q": "The Sobel x-kernel responds most strongly to which feature?",
+     "options": [
+      "Vertical edges, where intensity changes along the horizontal direction",
+      "Uniform regions",
+      "Isolated bright pixels only",
+      "Horizontal edges"
+     ],
+     "answer": 0,
+     "why": "The x-kernel estimates the horizontal derivative, so it fires where brightness changes from left to right, which is a vertical edge. Its centre-weighted rows also smooth a little across the other axis."
+    },
+    {
+     "q": "Why is a 2D Gaussian blur usually implemented as two 1D passes?",
+     "options": [
+      "1D passes give a sharper result",
+      "A 2D Gaussian cannot be written as a matrix",
+      "It avoids the need for padding",
+      "The Gaussian kernel is separable, so two 1D convolutions give the same result for O(k) instead of O(k²) work per pixel"
+     ],
+     "answer": 3,
+     "why": "$G(x, y) = g(x)\\,g(y)$, so convolving rows with $g$ and then columns with $g$ is exact. For a 15-tap kernel that is 30 multiplies per pixel instead of 225."
+    }
+   ]
+  },
+  {
+   "section": "Convolution and pooling",
+   "questions": [
+    {
+     "q": "A 32×32 input goes through a 3×3 convolution with stride 2 and padding 1. What is the output size?",
+     "options": [
+      "32×32",
+      "16×16",
+      "30×30",
+      "15×15"
+     ],
+     "answer": 1,
+     "why": "Output = floor((32 + 2·1 - 3)/2) + 1 = floor(31/2) + 1 = 16."
+    },
+    {
+     "q": "How many weights (excluding bias) does a 3×3 convolution from 64 to 128 channels have?",
+     "options": [
+      "8,192",
+      "589,824",
+      "73,728",
+      "1,152"
+     ],
+     "answer": 2,
+     "why": "Weights = 3 · 3 · 64 · 128 = 73,728. Every output channel has a 3×3 filter over every input channel."
+    },
+    {
+     "q": "What does a dilation of 2 do to a 3×3 kernel?",
+     "options": [
+      "Halves the output resolution",
+      "Spaces its taps one pixel apart, so it covers a 5×5 area with 9 weights",
+      "Applies the kernel twice",
+      "Doubles the number of weights"
+     ],
+     "answer": 1,
+     "why": "The effective size is $k + (k-1)(d-1) = 5$. Dilation grows the receptive field without adding parameters or reducing resolution."
+    },
+    {
+     "q": "A depthwise separable convolution replaces a k×k conv from C_in to C_out with what?",
+     "options": [
+      "A pooling layer and a fully connected layer",
+      "Two k×k convolutions in sequence",
+      "A k×1 conv followed by a 1×k conv on all channels",
+      "A per-channel k×k conv followed by a 1×1 conv mixing channels"
+     ],
+     "answer": 3,
+     "why": "The cost drops from $k^2 C_{in} C_{out}$ to $k^2 C_{in} + C_{in} C_{out}$ per pixel, roughly a factor of $k^2$ when $C_{out}$ is large. MobileNet is built on this."
+    },
+    {
+     "q": "Adaptive average pooling to 1×1 is used before a classifier head. What does it give you?",
+     "options": [
+      "More spatial detail for the classifier",
+      "A fixed-size feature vector regardless of input resolution",
+      "A larger receptive field",
+      "A learned weighting of locations"
+     ],
+     "answer": 1,
+     "why": "It averages each channel over whatever spatial size arrives, so the head sees C numbers whether the image was 224 or 320 pixels wide."
+    },
+    {
+     "q": "What does max pooling give that average pooling doesn't?",
+     "options": [
+      "A smooth gradient to every input in the window",
+      "Exact translation equivariance",
+      "Stronger response to whether a feature is present anywhere in the window, with some tolerance to small shifts",
+      "More parameters to learn"
+     ],
+     "answer": 2,
+     "why": "Max pooling passes on the strongest activation and routes gradient only to it. Average pooling spreads gradient to all inputs and keeps information about how much of the window is active."
+    },
+    {
+     "q": "Transposed convolutions with stride 2 often show checkerboard artifacts. Why?",
+     "options": [
+      "They always use the wrong padding mode",
+      "Transposed convolution has no bias",
+      "When the kernel size isn't divisible by the stride, output pixels receive unequal numbers of contributions",
+      "The weights are initialised to zero"
+     ],
+     "answer": 2,
+     "why": "Overlap is uneven, so some output positions get more contributions than others. Using a kernel size divisible by the stride, or resizing then convolving, avoids it."
+    },
+    {
+     "q": "A transposed convolution with kernel 4, stride 2 and padding 1 maps an H×W input to what size?",
+     "options": [
+      "(2H - 1) × (2W - 1)",
+      "H × W",
+      "(2H + 2) × (2W + 2)",
+      "2H × 2W"
+     ],
+     "answer": 3,
+     "why": "Output = (H - 1)·2 - 2·1 + 4 = 2H. This is the usual setting for exact 2× upsampling."
+    }
+   ]
+  },
+  {
+   "section": "Detection primitives",
+   "questions": [
+    {
+     "q": "Two boxes each of area 100 overlap in an area of 50. What is their IoU?",
+     "options": [
+      "1/2",
+      "2/3",
+      "1/4",
+      "1/3"
+     ],
+     "answer": 3,
+     "why": "Union = 100 + 100 - 50 = 150, so IoU = 50/150 = 1/3."
+    },
+    {
+     "q": "Why do anchor-based detectors use several aspect ratios and scales at each location?",
+     "options": [
+      "So that some anchor starts close to each object's shape, making the regression target small",
+      "To avoid non-maximum suppression",
+      "Because each anchor predicts a different class",
+      "To make the network deeper"
+     ],
+     "answer": 0,
+     "why": "Matching ground-truth boxes to anchors by IoU only works if anchors cover the range of object shapes. The network then learns small offsets from a nearby anchor."
+    },
+    {
+     "q": "Faster R-CNN encodes box width as $t_w = \\log(w/w_a)$. Why use the log?",
+     "options": [
+      "It removes the need for an anchor",
+      "It makes the target scale-invariant and keeps the decoded width positive",
+      "It is cheaper to compute",
+      "It makes the loss convex"
+     ],
+     "answer": 1,
+     "why": "A box twice the anchor width gives $\\log 2$ whatever the anchor size, and decoding with $w_a e^{t_w}$ can never give a negative width."
+    },
+    {
+     "q": "In greedy NMS, what happens to a box whose IoU with an already-kept, higher-scoring box exceeds the threshold?",
+     "options": [
+      "It is kept if its class differs from the background",
+      "It is merged into the kept box",
+      "It is discarded",
+      "Its score is halved"
+     ],
+     "answer": 2,
+     "why": "Standard NMS sorts by score, keeps the top box and removes any remaining box above the IoU threshold, then repeats. Soft-NMS lowers scores instead of discarding."
+    },
+    {
+     "q": "What problem does Soft-NMS address?",
+     "options": [
+      "NMS cannot handle more than one class",
+      "Hard NMS drops correct detections of overlapping objects of the same class",
+      "NMS is too slow on GPUs",
+      "NMS produces boxes outside the image"
+     ],
+     "answer": 1,
+     "why": "In crowds, two true objects can overlap above the threshold. Decaying the lower box's score by its overlap keeps it in the ranked list instead of deleting it."
+    },
+    {
+     "q": "How does a feature pyramid network build its top-down pathway?",
+     "options": [
+      "Upsample the coarser level and add it to a 1×1-projected lateral feature from the backbone",
+      "Concatenate all levels and apply one large conv",
+      "Train a separate network for each scale",
+      "Downsample fine features and multiply them"
+     ],
+     "answer": 0,
+     "why": "High-level semantics flow down by upsampling, and the lateral 1×1 conv aligns channel counts. A 3×3 conv after the sum smooths aliasing from upsampling."
+    },
+    {
+     "q": "What does RoIAlign fix compared with RoIPool?",
+     "options": [
+      "It uses max instead of average",
+      "It works only on square boxes",
+      "It adds more channels per region",
+      "It removes the rounding of box coordinates to the feature grid by sampling with bilinear interpolation"
+     ],
+     "answer": 3,
+     "why": "RoIPool quantises the region and its bins to integer cells, which misaligns features by up to a stride. That hurts mask prediction most. RoIAlign keeps fractional coordinates."
+    },
+    {
+     "q": "Why are boxes often handled in (x1, y1, x2, y2) form for IoU but in (cx, cy, w, h) form for regression?",
+     "options": [
+      "Corners make intersections easy to compute; centre and size give targets that separate position from scale",
+      "Corner form is required by the loss function",
+      "The two forms give different IoU values",
+      "Centre form cannot represent rectangles"
+     ],
+     "answer": 0,
+     "why": "Intersection is max of the left edges to min of the right edges, which is natural in corner form. Regression targets are usually offsets of centre and log ratios of size."
+    }
+   ]
+  },
+  {
+   "section": "Losses and augmentation",
+   "questions": [
+    {
+     "q": "What does the $(1 - p_t)^\\gamma$ factor in focal loss do?",
+     "options": [
+      "Balances classes by their frequency only",
+      "Makes the loss non-differentiable at zero",
+      "Down-weights examples the model already classifies confidently, so the many easy negatives don't dominate",
+      "Increases the loss on easy examples"
+     ],
+     "answer": 2,
+     "why": "When $p_t$ is near 1 the factor is near 0. With $\\gamma = 2$, an example at $p_t = 0.9$ contributes 100 times less than plain cross-entropy would."
+    },
+    {
+     "q": "Why is Dice loss popular for segmentation of small structures?",
+     "options": [
+      "It is the only loss that works with sigmoid outputs",
+      "It measures overlap relative to the size of the prediction and target, so a small foreground isn't swamped by background pixels",
+      "It ignores false positives",
+      "It has a closed-form minimiser"
+     ],
+     "answer": 1,
+     "why": "Per-pixel cross-entropy can reach low loss by predicting background everywhere. Dice is $2|A\\cap B|/(|A| + |B|)$, which is 0 for that prediction."
+    },
+    {
+     "q": "Two boxes don't overlap at all. Why is GIoU loss more useful than 1 - IoU here?",
+     "options": [
+      "IoU is 0 regardless of distance, so it has no gradient; GIoU penalises the empty area of the enclosing box",
+      "GIoU is always larger than IoU",
+      "IoU loss is undefined for non-overlapping boxes",
+      "GIoU ignores box size"
+     ],
+     "answer": 0,
+     "why": "GIoU = IoU - |C \\ (A ∪ B)|/|C|, where C is the smallest enclosing box. It keeps decreasing as the boxes move closer, even before they touch."
+    },
+    {
+     "q": "What does CIoU add on top of DIoU?",
+     "options": [
+      "A penalty on the enclosing box area",
+      "An aspect-ratio consistency term",
+      "A term for the number of boxes",
+      "A class probability term"
+     ],
+     "answer": 1,
+     "why": "DIoU adds the normalised distance between centres. CIoU also adds a term measuring how different the width-to-height ratios are, weighted by a trade-off factor."
+    },
+    {
+     "q": "Mixup with λ = 0.7 combines two examples how?",
+     "options": [
+      "The two images are placed side by side",
+      "Input is 0.7·x₁ + 0.3·x₂ and the label is y₁",
+      "Input is x₁ with 30% of pixels replaced by x₂, and the label is y₁",
+      "Input is 0.7·x₁ + 0.3·x₂ and the label is 0.7·y₁ + 0.3·y₂"
+     ],
+     "answer": 3,
+     "why": "Mixup blends both inputs and one-hot labels with the same weight. λ is usually drawn from a Beta(α, α) distribution."
+    },
+    {
+     "q": "In CutMix, how is the label weight chosen?",
+     "options": [
+      "By the fraction of the image area taken from each source",
+      "By the size of the original images",
+      "Always 0.5 each",
+      "By the model's confidence on each image"
+     ],
+     "answer": 0,
+     "why": "A rectangle from image B is pasted into image A. If it covers 25% of the pixels, the label is 0.75·y_A + 0.25·y_B."
+    },
+    {
+     "q": "Why does DETR use Hungarian matching between predictions and ground truth?",
+     "options": [
+      "It removes the need for a classification loss",
+      "It assigns every prediction to the nearest box",
+      "It is faster than greedy matching",
+      "It gives a one-to-one assignment, so each object is predicted once and NMS isn't needed"
+     ],
+     "answer": 3,
+     "why": "DETR predicts a fixed set of boxes. Solving the minimum-cost bipartite matching makes duplicates costly during training, so the model learns not to produce them."
+    },
+    {
+     "q": "Which augmentation is usually wrong for digit or text recognition?",
+     "options": [
+      "Small random crops",
+      "Brightness jitter",
+      "Horizontal flipping",
+      "Slight rotation"
+     ],
+     "answer": 2,
+     "why": "Flipping changes meaning: a mirrored \"2\" is not a 2, and mirrored text is not readable. Augmentations must preserve the label."
+    }
+   ]
+  },
+  {
+   "section": "Vision transformers and evaluation",
+   "questions": [
+    {
+     "q": "A 224×224 RGB image is split into 16×16 patches. How many tokens does ViT see, before the class token?",
+     "options": [
+      "3,136",
+      "14",
+      "196",
+      "256"
+     ],
+     "answer": 2,
+     "why": "(224/16)² = 14² = 196 patches. Each is flattened to 16·16·3 = 768 values and linearly projected."
+    },
+    {
+     "q": "Patchify followed by a linear layer is equivalent to what operation?",
+     "options": [
+      "A convolution with kernel size and stride equal to the patch size",
+      "A depthwise convolution with stride 1",
+      "A 1×1 convolution",
+      "Global average pooling"
+     ],
+     "answer": 0,
+     "why": "Each output position sees exactly one non-overlapping patch with shared weights, which is what a strided conv with kernel = stride = patch size computes."
+    },
+    {
+     "q": "How is a 2D sinusoidal position embedding usually built?",
+     "options": [
+      "A single 1D embedding over the flattened index",
+      "Half the channels encode the row with 1D sinusoids and the other half encode the column",
+      "The row and column indices are multiplied into one number",
+      "Random vectors fixed at initialisation"
+     ],
+     "answer": 1,
+     "why": "Splitting channels between the two axes gives each position a unique code and keeps the relative-offset structure of 1D sinusoids along each axis."
+    },
+    {
+     "q": "Why does global self-attention in ViT become expensive at high resolution?",
+     "options": [
+      "Softmax is undefined for long sequences",
+      "Position embeddings can't be computed",
+      "Each patch needs its own weights",
+      "The number of tokens grows with image area and attention cost grows with the square of the token count"
+     ],
+     "answer": 3,
+     "why": "Doubling the side length quadruples the tokens and multiplies attention cost by about 16. Window attention (as in Swin) limits each token to a local window."
+    },
+    {
+     "q": "In Swin, why are windows shifted in alternate layers?",
+     "options": [
+      "To create overlapping patches at the input",
+      "So information can cross the boundaries of the fixed windows used in the previous layer",
+      "To make the model rotation invariant",
+      "To reduce the number of windows"
+     ],
+     "answer": 1,
+     "why": "Without shifting, each window would stay isolated forever. Shifting by half a window links neighbouring windows, and a cyclic shift with masks keeps the batch shape fixed."
+    },
+    {
+     "q": "CLIP retrieval ranks images for a text query by what score?",
+     "options": [
+      "Euclidean distance between raw pixel vectors",
+      "The number of matching tokens",
+      "Cosine similarity between the L2-normalised text and image embeddings",
+      "The cross-entropy of the caption"
+     ],
+     "answer": 2,
+     "why": "Both encoders map into a shared space and outputs are normalised, so the dot product is the cosine. Training used a temperature-scaled softmax over these scores."
+    },
+    {
+     "q": "When computing mean IoU for segmentation, how should a class absent from both prediction and ground truth be handled?",
+     "options": [
+      "Given the average of the other classes",
+      "Excluded from the mean, since its IoU is 0/0",
+      "Counted as IoU 0",
+      "Counted as IoU 1 always"
+     ],
+     "answer": 1,
+     "why": "The usual convention skips undefined classes. Counting them as 0 or 1 biases the score depending on which classes appear in the evaluated images."
+    },
+    {
+     "q": "A model has top-1 accuracy 70% and top-5 accuracy 90%. What does the gap tell you?",
+     "options": [
+      "Top-5 is computed on a different set",
+      "20% of the labels are wrong",
+      "For 20% of images the correct class is in the top five but not ranked first",
+      "The model is overfitting"
+     ],
+     "answer": 2,
+     "why": "Top-k counts a prediction correct if the true label is among the k highest scores. A large gap often means confusions among similar classes, such as dog breeds."
+    }
+   ]
+  }
+ ]
+}

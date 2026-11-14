@@ -1,5 +1,5 @@
 META = dict(title='Matrix-vector product by hand', tags=['Linear Algebra'], diff='Easy', runtime='python',
-            lessons=['mlmaths:04.02'], related=['dot-product', 'linear-combination', 'matrix-multiply'])
+            lessons=['mlmaths:04.06'], related=['dot-product', 'linear-combination', 'matrix-multiply'])
 
 STATEMENT = r"""
 For $A \in \mathbb{R}^{m\times n}$ and $x \in \mathbb{R}^n$, the product $y = Ax \in \mathbb{R}^m$ can be read two ways:

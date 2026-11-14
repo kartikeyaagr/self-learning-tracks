@@ -1,0 +1,13 @@
+{"id": "gru", "kind": "paper", "group": "Sequence models and embeddings",
+ "title": "Learning Phrase Representations using RNN Encoder-Decoder for Statistical Machine Translation", "authors": "Cho et al.", "year": 2014,
+ "url": "https://arxiv.org/abs/1406.1078",
+ "blurb": "Proposed the RNN encoder-decoder and the gated recurrent unit, a simpler two-gate alternative to the LSTM.",
+ "intro": "The GRU merges the LSTM's cell and hidden state and uses two gates: an update gate that interpolates between the old state and a candidate, and a reset gate that controls how much of the old state the candidate sees. The same paper introduced the encoder-decoder used for translation. The steps build the cell, the encoder-decoder and masked pooling; the capstone is a bidirectional GRU classifier that handles padding correctly.",
+ "steps": [
+  {"name": "GRU over a sequence", "problem": "gru-cell"},
+  {"name": "Encoder-decoder with teacher forcing", "problem": "sequence-to-sequence-forward-pass"},
+  {"name": "Pad and truncate a batch", "problem": "padding-and-truncation"},
+  {"name": "Masked mean pooling", "problem": "masked-mean-pooling"}
+ ],
+ "capstone": "bigru-text-classifier",
+ "lessons": ["dlcore:05.02", "dlcore:05.03"]}

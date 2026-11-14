@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Best lag by cross-correlation', tags=['Time Series', 'Probability and Statistics'], diff='Hard',
-            runtime='numpy', lessons=['mlmaths:11.04', 'air-fanout-v1:03.06'],
+            runtime='numpy', lessons=['mlmaths:11.21', 'air-fanout-v1:03.06'],
             related=['tile-and-diff', 'sort-and-argsort', 'normalize-columns'])
 
 STATEMENT = r"""

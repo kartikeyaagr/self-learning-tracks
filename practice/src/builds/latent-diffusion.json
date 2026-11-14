@@ -1,0 +1,15 @@
+{"id": "latent-diffusion", "kind": "paper", "group": "Generative models",
+ "title": "High-Resolution Image Synthesis with Latent Diffusion Models", "authors": "Rombach et al.", "year": 2021,
+ "url": "https://arxiv.org/abs/2112.10752",
+ "blurb": "Moved diffusion into the latent space of a pretrained autoencoder and conditioned it through cross-attention, the recipe behind Stable Diffusion.",
+ "intro": "A perceptual autoencoder compresses images to a small latent grid once, and the diffusion model only ever sees latents, which cuts training and sampling cost sharply. Text or other conditions enter the denoiser through cross-attention, with latent positions as queries and condition tokens as keys and values. The steps build the autoencoders, attention over latent positions, cross-attention in a decoder block, classifier-free guidance and the DDIM update; the capstone wires them into a guided sampler that decodes its final latent.",
+ "steps": [
+  {"name": "Autoencoder", "problem": "autoencoder-forward-pass"},
+  {"name": "VAE-regularised latents", "problem": "variational-autoencoder-forward-pass", "note": "The paper's KL-regularised autoencoder keeps latents close to a standard normal."},
+  {"name": "Self-attention over spatial positions", "problem": "spatial-self-attention-block"},
+  {"name": "Cross-attention inside a block", "problem": "transformer-decoder-block", "note": "The same query-from-one-sequence, keys-from-another pattern conditions the denoiser on text."},
+  {"name": "Classifier-free guidance", "problem": "classifier-free-guidance"},
+  {"name": "Deterministic DDIM step", "problem": "ddim-step"}
+ ],
+ "capstone": "latent-diffusion-guided-sampling",
+ "lessons": ["dlcore:07.05", "dlcore:07.07", "ieng:26.08"]}

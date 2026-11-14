@@ -1,0 +1,13 @@
+---
+import Site from '../../layouts/Site.astro';
+import { getCollection } from 'astro:content';
+const courses = await getCollection('courses');
+const lessons = await getCollection('lessons');
+---
+<Site title="Courses">
+  <div class="sh"><h2>All courses</h2><span class="lab">{courses.length} courses · {lessons.length} lessons</span></div>
+  <div class="mods">{courses.sort((a, b) => a.data.layer - b.data.layer).map(c => (
+    <a class="card mcard" href={`/courses/${c.id}/`}><div class="tp"><Fragment set:html={c.data.logo} /></div><h4>{c.data.title}</h4>
+      <p style="margin:0;color:var(--muted);font-size:14px;flex:1">{c.data.description}</p>
+      <div class="ft"><span>Layer {c.data.layer}</span><span>{lessons.filter(l => l.data.course === c.id).length} lessons</span></div></a>))}</div>
+</Site>
