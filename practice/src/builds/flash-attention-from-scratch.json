@@ -1,0 +1,13 @@
+{"id": "flash-attention-from-scratch", "kind": "project", "group": "ML Systems and GPU Programming",
+ "title": "FlashAttention from Scratch",
+ "blurb": "Build exact attention that never materialises the score matrix: safe softmax, online softmax, merging partial results, tiling, causal skipping and memory-traffic counts.",
+ "intro": "FlashAttention computes exact attention tile by tile so the quadratic score matrix never leaves on-chip memory. The steps build the pieces it rests on: a softmax that survives fully masked rows, the online softmax over chunks, the exact merge of two partial attention results by their log-sum-exps, a tiled forward pass, the classification of causal tiles into skip, full and masked, and a count of HBM reads and writes against the standard implementation. The capstone is a tiled causal forward pass with tile skipping that returns the log-sum-exp the backward pass needs.",
+ "steps": [
+  {"name": "Safe softmax with masked rows", "problem": "masked-safe-softmax"},
+  {"name": "Online softmax over chunks", "problem": "online-softmax"},
+  {"name": "Merge two partial attention results", "problem": "merge-partial-attention"},
+  {"name": "Tiled attention forward pass", "problem": "flashattention-with-online-softmax"},
+  {"name": "Which causal tiles can be skipped", "problem": "causal-tile-skipping"},
+  {"name": "Count memory reads and writes", "problem": "attention-hbm-traffic"}
+ ],
+ "capstone": "flash-attention-capstone"}

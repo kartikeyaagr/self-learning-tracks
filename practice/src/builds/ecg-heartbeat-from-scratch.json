@@ -1,0 +1,12 @@
+{"id": "ecg-heartbeat-from-scratch", "kind": "project", "group": "Time Series and Signals",
+ "title": "Detect Heartbeat Problems in ECG",
+ "blurb": "Find every heartbeat in an ECG and flag premature ones: baseline removal, slope energy, adaptive peak picking, beat windows and per-class scores.",
+ "intro": "Automatic ECG analysis starts by finding every beat reliably and only then asks what kind of beat it is. The steps remove baseline wander with a running median, turn the steep QRS complex into a slope-energy signal, pick R peaks with an adaptive threshold, cut a window and RR interval for every beat, and score each beat class by sensitivity and precision. The capstone runs the full pipeline on synthetic recordings with premature beats and reports detection and classification quality separately.",
+ "steps": [
+  {"name": "Remove ECG baseline wander", "problem": "baseline-wander-removal"},
+  {"name": "Slope energy for QRS detection", "problem": "qrs-slope-energy"},
+  {"name": "Pick R peaks with an adaptive threshold", "problem": "adaptive-threshold-peaks"},
+  {"name": "Cut a window around every beat", "problem": "beat-windows"},
+  {"name": "Per-class sensitivity and precision", "problem": "classification-report", "note": "Per-class recall is what ECG papers call sensitivity."}
+ ],
+ "capstone": "ecg-beat-pipeline-capstone"}

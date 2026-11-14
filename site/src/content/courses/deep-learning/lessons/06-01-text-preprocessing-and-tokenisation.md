@@ -4,105 +4,280 @@ course: "deep-learning"
 module: "06"
 slug: "text-preprocessing-and-tokenisation"
 title: "Text preprocessing and tokenisation"
-keyIdeas: ["Every NLP model starts by mapping text to integer ids: normalise, pre-tokenise, split into subwords, look up ids. Each step is a modelling decision, and the model is tied to exactly the pipeline it was trained with.", "Unicode normalisation (NFC, NFKC) makes visually identical strings byte-identical; case-folding and accent stripping are lossy choices that some tasks want and others do not.", "Sentence splitting on '.' fails on abbreviations, decimals and initials. Use rules with exception lists or a trained splitter, and test on your own domain.", "Subword tokenisers sit between words (huge vocabularies, unknown words) and characters (very long sequences). BPE learns merges by pair frequency; WordPiece encodes by greedy longest match with '##' continuations.", "Byte-level BPE starts from the 256 byte values, so any string can be encoded and there is no unknown token."]
-question: "Why can a byte-level BPE tokeniser (GPT-2 style) never produce an unknown token, while BERT's WordPiece can? What does each model actually receive for an emoji that never appeared in tokeniser training?"
-answer: "Byte-level BPE's base vocabulary is all 256 byte values, and merges only combine symbols that already exist, so any UTF-8 string can at worst be encoded byte by byte. An unseen emoji (4 bytes in UTF-8) arrives as up to four byte-level tokens; the model gets the information, though it costs more tokens and the model may have seen those byte sequences rarely. WordPiece's base vocabulary is a fixed set of characters seen in training. Greedy longest-match encoding fails if no vocabulary entry matches a remaining piece of the word, and then the whole word is replaced by [UNK]. So BERT receives [UNK] for the emoji (and for the whole whitespace-delimited word containing it), which erases all information about it."
+keyIdeas: ["Every NLP model starts by mapping text to integer ids: normalise, pre-tokenise, split into subwords, look up ids. Each step is a modelling decision, and the model is tied to exactly the pipeline it was trained with.", "Unicode normalisation (NFC, NFKC) makes visually identical strings byte-identical; lowercasing and accent stripping are lossy choices that help some tasks (small-data classification, search) and hurt others (named entities, accented languages).", "Sentence splitting on full stops fails on abbreviations, decimals and initials. Use rules with exception lists or a trained splitter such as Punkt, and test on your own domain.", "Words leave a long Zipf tail of unknown words, and characters make sequences several times longer. Subword vocabularies of tens of thousands of entries give frequent words one token and build rare words from known pieces.", "BPE learns an ordered list of merges by pair frequency and encodes by replaying them; WordPiece merges by a likelihood score and encodes by greedy longest match with `##` continuations, falling back to `[UNK]` for the whole word.", "Byte-level BPE starts from the 256 byte values, so any string can be encoded and there is no unknown token, but scripts the tokeniser rarely saw cost several tokens per character."]
+question: "Your team trained its own WordPiece tokeniser and a classifier on clean English support tickets. In production, accuracy drops on tickets pasted from PDFs (with ligatures like 'ﬁ' and full-width characters) and on tickets containing emoji and product codes such as 'XR-7b'. Logs show many [UNK] ids, and the same visible word sometimes maps to different ids. Explain each symptom, say what you would check first, and propose fixes. Would switching to a byte-level BPE tokeniser solve everything?"
+answer: "Different ids for the same visible word: the text is not Unicode-normalised. A PDF extractor produces ligatures ('ﬁ' as one code point), full-width letters or combining accents, which are different code points from the clean training text, so the tokeniser splits them differently. Fix: apply NFKC normalisation (plus zero-width character removal and whitespace collapsing) and make sure the exact same normalisation runs at training and serving time; ideally ship the tokeniser and its normaliser as one artefact with the model and add a test that known strings map to known ids. Many [UNK]s: WordPiece encodes by greedy longest match from a base vocabulary of characters seen in training. An emoji (or any unseen character) matches no vocabulary entry, so the whole whitespace-delimited word containing it becomes [UNK] and its information is erased. Product codes may also shatter or hit unseen characters. Check first: measure the [UNK] rate and fertility (tokens per word) on a sample of production tickets and eyeball the splits of the most common product codes; also diff the ids produced by the training and serving pipelines on the same strings. Fixes: normalise, add missing characters (or common emoji and code prefixes) to the vocabulary and retrain the tokeniser and model, or pre-extract product codes with a regex into a placeholder or a separate feature. Byte-level BPE would remove [UNK] entirely, because its base vocabulary is the 256 byte values and any string encodes at worst byte by byte; an emoji arrives as up to four byte tokens. But it would not fix inconsistent normalisation (two spellings still give different byte sequences), rare scripts and symbols would cost several tokens each, and changing tokeniser means retraining at least the embedding layer, since every id changes meaning."
 sources: [{"title": "Neural Machine Translation of Rare Words with Subword Units (Sennrich et al., 2016)", "url": "https://arxiv.org/abs/1508.07909", "note": "The BPE-for-NLP paper; the merge algorithm fits in a dozen lines in section 3.2."}, {"title": "Hugging Face LLM Course, chapter 6: Tokenizers", "url": "https://huggingface.co/learn/llm-course/chapter6/1", "note": "Normalisation, pre-tokenisation, and BPE, WordPiece and Unigram side by side with code."}, {"title": "SentencePiece (Kudo and Richardson, 2018)", "url": "https://arxiv.org/abs/1808.06226", "note": "Language-independent subword tokenisation treating whitespace as a symbol."}, {"title": "Python unicodedata", "url": "https://docs.python.org/3/library/unicodedata.html", "note": "NFC, NFD, NFKC and NFKD normalisation forms and what each folds."}]
 practice: ["byte-pair-encoding", "subword-tokenization", "text-normalization", "sentence-segmentation", "regex-patterns-for-nlp"]
 tags: ["tokenisation", "BPE", "WordPiece"]
 tools: ["Python"]
 ---
 
-## Where this module sits
+## What you will learn
 
-Module 05 built the architectures that read sequences. This module is about text specifically: how raw strings become token ids, the classical counting models that still serve as baselines and features, word embeddings, token-level tasks, pretrained encoders, and how generated text is decoded and scored. It ends where the AI Engineering and AI Research courses pick up with large language models.
+- What happens to a string before a network sees it: normalise, split, cut into subwords, look up ids.
+- How Unicode normalisation, lowercasing and whitespace cleaning work, and what each one throws away.
+- How regex pre-tokenisation and sentence splitting work, and the classic ways they break.
+- Why modern models use **subwords** rather than whole words or single characters, measured on real text.
+- How to train byte-pair encoding (BPE) by hand, how WordPiece and byte-level BPE differ, and how to check a tokeniser.
+
+*Before you start:* you should be comfortable with Python strings, lists and dictionaries, and know what an embedding layer does (it turns an integer id into a vector; module 05 used one in every sequence model). No maths beyond counting is needed until "Going deeper".
+
+## Where this module starts
+
+Module 05 built networks that read sequences of vectors. Those networks never see letters: they see integers, one per **token**, which an embedding table turns into vectors. This module is about text. It starts with the step that produces those integers (this lesson), then covers counting models (06.02, 06.03), word embeddings (06.04), token-level tasks (06.05), pretrained encoders (06.06), and decoding and evaluation (06.07).
+
+The whole lesson follows one pipeline:
 
 ~~~dg-flow Each stage is a choice the model is then locked into: the same text must go through the same stages at training and serving time.
 Raw text -(NFKC, lowercase?)-> Normalised -(regex split)-> Pre-tokens -(BPE / WordPiece)-> *Subwords -(vocab lookup)-> Ids + offsets
 ~~~
 
-## Normalisation
+## The idea in one picture
 
-Unicode allows the same visible text to have several byte sequences. "é" can be one code point (U+00E9) or "e" followed by a combining accent (U+0065 U+0301). NFC composes these into a canonical form; NFKC additionally folds compatibility characters, so the ligature "ﬁ" becomes "fi" and full-width "Ａ" becomes "A". Without normalisation the same word gets different ids depending on which keyboard or PDF extractor produced it.
+Take one sentence: "The tokeniser splits unbelievably long words." It has 45 characters and 6 words. Here are three ways to cut it into tokens. The subword row is the real output of a byte-level BPE tokeniser with 8,256 entries, trained for this lesson on about 530,000 characters of English (the docstrings of Python's standard library).
 
-Other common steps, each with a cost:
+| Granularity | Tokens produced | Count
+| --- | --- | --- |
+| Whole words | `The` `tokeniser` `splits` `unbelievably` `long` `words` `.` | 7
+| Characters | `T` `h` `e` `␣` `t` `o` `k` ... `s` `.` | 45
+| Subwords (BPE) | `The` `␣token` `is` `er` `␣splits` `␣un` `be` `li` `e` `v` `ably` `␣long` `␣words` `.` | 14
 
-- **Lowercasing** merges "Apple" and "apple": good for small-data classifiers, bad for named-entity recognition, where case is a strong signal. BERT ships both cased and uncased models for this reason.
-- **Accent stripping** helps English search, hurts French and Vietnamese.
-- **Whitespace and control characters**: collapse runs of spaces, remove zero-width characters, normalise line endings.
+(`␣` marks a space kept inside the token.) Common words stay whole; the rarer "unbelievably" breaks into pieces seen often, such as `un` and `ably`. Nothing is ever unknown: at worst a word falls apart into single bytes.
+
+~~~dg-fig 06.01-tradeoff.svg
+Tokens per word on held-out text against vocabulary size. Characters (left) need a tiny vocabulary but 6.6 tokens per word; whole words need one token each but 4.3% of new words are missing from the vocabulary. BPE slides between the two as it learns more merges.
+~~~
+
+A **vocabulary** is the fixed list of tokens a model knows, each with an integer id. A small vocabulary makes sequences long. A word vocabulary makes them short but leaves holes: any word not in the list becomes the **unknown token** `[UNK]` and its meaning is gone. **Subword tokenisation** picks a point in between: here, 8,256 entries and 1.70 tokens per word (counting all tokens, including spaces and punctuation, divided by the number of words).
+
+## Step 1: normalise the characters
+
+Computers store text as **code points** (Unicode's numbered characters), and the same visible text can have several code-point spellings. "café" can end in one code point, `é` (U+00E9), or in two, `e` followed by a combining accent (U+0301). The two strings look identical on screen but compare as different, so without care they would get different token ids.
+
+**Unicode normalisation** rewrites text into one canonical spelling:
+
+- **NFC** composes letter-plus-accent pairs into single code points where possible. Both spellings of "café" become the 4-code-point form.
+- **NFKC** does that and also folds *compatibility* characters: the ligature "ﬁ" becomes "fi", full-width "ＡＢＣ" becomes "ABC", superscript "x²" becomes "x2". It is the usual choice for model input. Note it is lossy: x² and x2 now look the same.
+
+Text from PDFs and web pages is full of these variants, plus invisible characters such as the zero-width space (U+200B). In Python, `unicodedata.normalize("NFKC", s)`, then deleting zero-width characters and collapsing whitespace with `re.sub(r"\s+", " ", s)`, covers most of it.
+
+Other normalisation steps are real modelling choices, each with a cost:
+
+- **Lowercasing** merges "Apple" and "apple". It helps small-data classifiers and hurts named-entity recognition, where capitals are a strong clue. BERT is published in cased and uncased versions for this reason.
+- **Accent stripping** helps English search ("resume" finds "résumé") and destroys meaning in French or Vietnamese.
+- **Whitespace collapsing** is safe for prose and wrong for code, where indentation matters.
+
+## Step 2: split into sentences (when you need them)
+
+Translation, summarisation and building bounded-length training examples work sentence by sentence. Splitting after `.`, `!` or `?` followed by a space turns "Dr. Smith paid $3.50 for it. Then he left! U.S. troops arrived." into five pieces, including the fragments "Dr." and "U.S.". The decimal survives only because no space follows its point.
+
+Practical splitters combine a candidate rule (full stop, whitespace, capital letter) with a list of exceptions (Dr., e.g., U.S.). The **Punkt** algorithm learns the abbreviations from unlabelled text: they are short and almost always followed by a full stop. Legal citations, chat messages and clinical notes break general-purpose splitters in different ways, so test on your own data.
+
+## Step 3: pre-tokenise with a regular expression
+
+Before subword splitting, most tokenisers cut the text into rough chunks: runs of letters, runs of digits, runs of punctuation. This **pre-tokenisation** guarantees that later merges never glue the end of one word to the start of the next. GPT-2's pattern also splits off English contractions (`'s`, `'re`) and keeps a leading space attached to each word, so " the" and "the" are different tokens and the original spacing can be rebuilt exactly. A simplified version:
 
 ```python
-import unicodedata, re
-def normalise(s):
-    s = unicodedata.normalize("NFKC", s)
-    s = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", s)   # zero-width characters
-    return re.sub(r"\s+", " ", s).strip()
+PAT = re.compile(r''''s|'t|'re|'ve|'m|'ll|'d| ?[^\W\d_]+| ?\d+| ?[^\s\w]+|\s+(?!\S)|\s+''')
+PAT.findall("We're testing 3.14 tokenisers!")
+# ['We', "'re", ' testing', ' 3', '.', '14', ' tokenisers', '!']
 ```
 
-## Regular expressions and pre-tokenisation
+Read it as alternatives: a contraction, or optional space plus letters (`[^\W\d_]` is "a word character that is not a digit or underscore"), digits, symbols, or whitespace. Notice "3.14" became three chunks.
 
-Before subword splitting, most tokenisers pre-split text into words, numbers and punctuation with a regex, so merges never cross a word boundary. GPT-2's pattern, for instance, separates contractions ("'s", "'re"), runs of letters, runs of digits and runs of other symbols, and keeps a leading space attached to the word. Regexes are also the workhorse for extracting URLs, e-mail addresses, mentions and hashtags before they are mangled by later steps.
+Regexes also extract URLs, e-mail addresses, @mentions and product codes before later steps chop them apart.
 
-Two failure modes to know: greedy quantifiers that swallow too much (`.+` vs `.+?`), and nested quantifiers like `(a+)+` that cause catastrophic backtracking on adversarial input, which can hang a server.
+## Step 4: why words and characters both fail
 
-## Sentence splitting
+Why not just use whole words as tokens? Because word frequencies are extremely uneven.
 
-"Splitting on full stops" breaks on "Dr. Smith", "3.14", "U.S. troops" and "e.g. this". Practical splitters combine rules (a full stop followed by whitespace and a capital letter is a candidate boundary) with exception lists of abbreviations, or learn abbreviations from unlabelled text, as the Punkt algorithm does. Domain matters: legal text, chat messages and clinical notes all break general-purpose splitters in different ways, so evaluate on a sample of your own data.
+~~~dg-fig 06.01-zipf.svg
+Left: on a log-log plot, word counts fall almost in a straight line with rank, and 1,794 of the 5,229 distinct words appear only once. Right: even a vocabulary holding every training word misses 4.3% of the words in new text.
+~~~
 
-## Why subwords
+The left panel shows **Zipf's law**: a word's count is roughly proportional to one over its rank. A few words ("the", "of") are everywhere; a long tail of names, typos and inflections appears once or twice. On the right, keeping the 1,000 most common words leaves 16.9% of new words unknown, and keeping all 5,229 still leaves 4.3%. On web-scale text the tail never ends.
 
-A word-level vocabulary for English web text needs millions of entries to cover names, typos and inflections, and anything unseen becomes `[UNK]`. A character-level model has no unknowns but makes sequences about 4-5× longer, which hurts attention cost (quadratic in length) and makes the model learn spelling from scratch. Subword vocabularies of 30k to 100k units give frequent words a single token and split rare words into meaningful pieces. English text averages about 4 characters, or roughly 0.75 words, per token with typical LLM tokenisers.
+Characters fix the unknown-word problem (our corpus has only 103 distinct characters), but every word costs about 6.6 tokens. Self-attention cost grows with the square of sequence length, and the model must learn to spell before it learns meaning.
 
-## BPE and WordPiece
+Subwords give frequent words one token and build rare words from frequent pieces. Production vocabularies hold 30,000 to 100,000 entries; as published values, BERT-base uses 30,522 WordPiece tokens and GPT-2 uses 50,257 byte-level BPE tokens. A common rule of thumb for English is about 4 characters, or 0.75 words, per token.
 
-**Byte-pair encoding** (Sennrich et al., 2016) learns a merge list from a corpus:
+## Step 5: train BPE by counting pairs
 
-1. Start with each word as a sequence of characters (or bytes), with word counts.
-2. Count every adjacent symbol pair, weighted by word frequency.
-3. Merge the most frequent pair into a new symbol, record the merge.
-4. Repeat until the vocabulary reaches the target size.
+**Byte-pair encoding (BPE)**, adapted to NLP by Sennrich et al. (2016), builds the vocabulary bottom up. Each **merge** glues one frequent pair of adjacent symbols into a new symbol:
 
-Encoding a new word replays the merges in the order they were learned.
+1. Count the words in the training corpus. Write each word as a sequence of characters (or bytes), with an end-of-word marker `_`.
+2. Count every pair of adjacent symbols, weighting by how often the word occurs.
+3. Merge the most frequent pair everywhere into one new symbol, and record the merge.
+4. Repeat until the vocabulary reaches the target size (base symbols plus number of merges).
+
+The output is an ordered **merge list**.
 
 <div class="ex">
 <div class="lab">Worked example</div>
 
-**the first BPE merges**
+**the first BPE merges, by hand**
 
-Corpus: low ×5, lower ×2, newest ×6, widest ×3, with `_` marking word end.
+Corpus: "low" ×5, "lower" ×2, "newest" ×6, "widest" ×3. As symbols: `l o w _`, `l o w e r _`, `n e w e s t _`, `w i d e s t _`. Total: $4 \times 5 + 6 \times 2 + 7 \times 6 + 7 \times 3 = 20 + 12 + 42 + 21 = 95$ symbols.
 
-Pair counts include e s = 9, s t = 9, t _ = 9, w e = 8, l o = 7, o w = 7. Three pairs tie at 9; with first-seen tie-breaking the first merge is e+s → es.
+Pair counts: `e s` appears in newest (6) and widest (3), so $6 + 3 = 9$. Likewise `s t` $= 9$ and `t _` $= 9$. Next, `w e` appears in lower (2) and newest (6), $= 8$. Then `l o` $= 5 + 2 = 7$ and `o w` $= 7$.
 
-Then es+t → est (9) and est+_ → est_ (9), so "newest" and "widest" share a suffix token. Next come l+o and lo+w (7 each), giving the frequent stem "low".
+Merge 1: three pairs tie at 9. With "first seen wins" tie-breaking, `e s` becomes `es`. Newest and widest each lose one symbol: $95 - 6 - 3 = 86$.
+
+Merge 2: `es t` now counts 9, so `est` (86 → 77). Merge 3: `est _` counts 9, so `est_` (77 → 68). "newest" and "widest" now share one suffix token.
+
+Merges 4 and 5: `l o` (7) and then `lo w` (7) give the stem `low` (68 → 61 → 54).
+
+Encode the unseen word "lowest" by replaying the merges in order: `l o w e s t _` → `l o w es t _` → `l o w est _` → `l o w est_` → `lo w est_` → `low est_`. Two known tokens, no `[UNK]`.
 
 </div>
 
+~~~dg-fig 06.01-bpe.svg
+Left: pair counts on the toy corpus at the start; three pairs tie at 9 and the first one seen is merged. Right: the number of symbols needed to write the corpus falls from 95 to 36 over eight merges. Compression is what BPE optimises, one greedy step at a time.
+~~~
+
+Encoding new text never re-counts; it replays the merges in learned order, so the merge list is part of the tokeniser.
+
+## Step 6: WordPiece, byte-level BPE and unigram
+
+Three variants dominate in practice.
+
+**WordPiece** (BERT) changes both training and encoding. Training picks the pair that most increases the likelihood of the corpus, which works out to roughly $\text{score}(a, b) = \frac{\text{count}(ab)}{\text{count}(a)\,\text{count}(b)}$, where $\text{count}(ab)$ is how often the pair occurs and the denominator is how often each part occurs at all. The score favours pairs whose parts rarely appear apart. Encoding is **greedy longest-match-first**: take the longest vocabulary entry that starts the word, then the longest `##`-marked continuation that starts the rest, and so on. "unaffable" becomes `un ##aff ##able`. If some remainder matches nothing, the *whole word* becomes `[UNK]`.
+
+**Byte-level BPE** (GPT-2 and most later generative models) runs BPE over UTF-8 bytes instead of characters. The base vocabulary is the 256 possible byte values, so every string in every script, including emoji, has an encoding and there is no unknown token at all. Rare characters simply cost several tokens.
+
+**Unigram** (Kudo, 2018), in the SentencePiece library, starts from a large candidate vocabulary and prunes the pieces whose removal hurts corpus likelihood least. SentencePiece treats whitespace as an ordinary symbol (`▁`), so it suits languages written without spaces, such as Chinese and Japanese.
+
+The final step is lookup: each token maps to its row number in the vocabulary, the input to the embedding layer. Also keep **offsets**, each token's start and end character in the original text; token-level tasks (06.05) need them to map predictions back to what the user wrote.
+
+## Tokenisation in code
+
+BPE and WordPiece in plain Python. Production libraries (Hugging Face `tokenizers`, `tiktoken`, SentencePiece) do the same in fast native code.
+
 ```python
 from collections import Counter
-def bpe_step(words):                          # words: {tuple_of_symbols: count}
-    pairs = Counter()
-    for w, c in words.items():
-        for a, b in zip(w, w[1:]): pairs[a, b] += c
-    best = max(pairs, key=pairs.get)          # ties: first seen wins
-    merged = {}
-    for w, c in words.items():
-        out, i = [], 0
-        while i < len(w):
-            if i + 1 < len(w) and (w[i], w[i + 1]) == best: out.append(w[i] + w[i + 1]); i += 2
-            else: out.append(w[i]); i += 1
-        merged[tuple(out)] = c
-    return best, merged
+
+def train_bpe(word_counts, n_merges):
+    words = {tuple(w) + ("_",): c for w, c in word_counts.items()}
+    merges = []
+    for _ in range(n_merges):
+        pairs = Counter()
+        for w, c in words.items():
+            for p in zip(w, w[1:]): pairs[p] += c
+        if not pairs: break
+        best = max(pairs, key=pairs.get)              # ties: first seen wins
+        merges.append(best)
+        new = {}
+        for w, c in words.items():
+            out, i = [], 0
+            while i < len(w):
+                if i + 1 < len(w) and (w[i], w[i + 1]) == best:
+                    out.append(w[i] + w[i + 1]); i += 2
+                else:
+                    out.append(w[i]); i += 1
+            new[tuple(out)] = c
+        words = new
+    return merges
+
+def encode(word, merges):                             # replay merges in learned order
+    sym = list(word) + ["_"]
+    for a, b in merges:
+        i = 0
+        while i < len(sym) - 1:
+            if sym[i] == a and sym[i + 1] == b: sym[i:i + 2] = [a + b]
+            else: i += 1
+    return sym
+
+merges = train_bpe({"low": 5, "lower": 2, "newest": 6, "widest": 3}, 10)
+print(merges[:5])  # [('e','s'), ('es','t'), ('est','_'), ('l','o'), ('lo','w')]
+print(encode("lowest", merges))   # ['low', 'est_']
+print(encode("slowly", merges))   # ['s', 'low', 'l', 'y', '_']
+
+def wordpiece(word, vocab):                           # greedy longest match
+    pieces, start = [], 0
+    while start < len(word):
+        end = len(word)
+        while end > start:
+            piece = word[start:end] if start == 0 else "##" + word[start:end]
+            if piece in vocab: break
+            end -= 1
+        if end == start: return ["[UNK]"]             # nothing matched: whole word lost
+        pieces.append(piece); start = end
+    return pieces
+
+vocab = {"un", "##aff", "##able", "##a", "##ble", "play", "##ing", "[UNK]"}
+print(wordpiece("unaffable", vocab))  # ['un', '##aff', '##able']
+print(wordpiece("player", vocab))     # ['[UNK]']  (no piece for "er")
+
+print(list("🙂".encode("utf-8")))   # [240, 159, 153, 130]: 4 byte tokens, never [UNK]
 ```
 
-**WordPiece** (BERT) differs in two ways. Training picks the pair that most increases corpus likelihood, roughly $\text{count}(ab) / (\text{count}(a)\,\text{count}(b))$, which favours pairs whose parts rarely appear apart. Encoding is greedy longest-match-first: take the longest vocabulary entry that prefixes the word, mark continuation pieces with `##`, repeat. "unaffable" becomes `un ##aff ##able`. If some remainder matches nothing, the whole word becomes `[UNK]`.
+WordPiece loses "player" entirely although "play" is known; BPE's "slowly" degrades gracefully into known pieces.
 
-**Byte-level BPE** (GPT-2 onward) runs BPE over UTF-8 bytes rather than characters. The base vocabulary is the 256 byte values, so every string, including emoji and any script, has an encoding and there is no unknown token; rare characters simply cost several tokens. SentencePiece's unigram model is a third option, which prunes a large candidate vocabulary by likelihood and treats whitespace as an ordinary symbol, which suits languages without spaces.
+## Checking a tokeniser
 
-Keep character offsets for every token. Token-level tasks (lesson 06.05) need them to map predictions back to the original text.
+A tokeniser can be "working" and still be quietly wrong. Run these checks on a sample of your own data:
+
+- **Round trip.** `decode(encode(text)) == text` (after normalisation). A failure points to a lossy normaliser or a broken pre-tokeniser.
+- **Unknown rate.** The share of `[UNK]` ids should be near zero; a few percent means characters the vocabulary never saw.
+- **Fertility.** Tokens per word. Much higher than on the training domain means your effective context window shrinks.
+- **Eyeball the splits** of the 50 most frequent domain terms. If each shatters into five pieces, consider a domain tokeniser.
+
+Fertility differs most sharply across languages. Our tokeniser was trained only on English, and it shows:
+
+~~~dg-fig 06.01-scripts.svg
+The same sentence in seven languages. Our English-trained byte-level BPE needs 19 tokens for English and 26 to 27 for French and German, but 85 to 112 for Russian, Greek and Hindi: it has no merges for those scripts and falls back to one token per UTF-8 byte.
+~~~
+
+A Cyrillic or Greek letter takes 2 bytes in UTF-8 and a Devanagari or Chinese character 3, so with no learned merges tokens equal bytes. Multilingual tokenisers narrow this gap but rarely close it, so users of some languages pay more per sentence.
+
+## What goes wrong
+
+| Symptom | Likely cause | Fix
+| --- | --- | --- |
+| Same word, different ids; accuracy drops on text pasted from PDFs | No Unicode normalisation; ligatures, full-width or combining characters | Apply NFKC (or the model's own normaliser) in both training and serving
+| Model works in the notebook, fails in production | Serving pipeline differs (lowercased, stripped, different tokeniser version) | Ship the tokeniser files with the model; test that ids match
+| Many `[UNK]` for emoji, rare scripts or symbols | WordPiece or word vocabulary lacks those characters | Byte-level BPE, or add characters to the base vocabulary
+| Sentences cut at "Dr." or "U.S." | Naive full-stop splitting | Exception lists or a trained splitter such as Punkt; test on your domain
+| Server hangs on one odd input | Regex with nested quantifiers backtracking | Rewrite the pattern; set input length limits or timeouts
+| Predicted spans land on the wrong characters | Token offsets lost or computed on normalised text | Keep offsets into the original string
+
+The regex row deserves a picture, because it surprises people:
+
+~~~dg-fig 06.01-regex.svg
+Matching `(a+)+$` against "aaa...a!" (which almost matches) takes time that roughly doubles with each extra "a": under 1 ms at 14 characters and close to 2 seconds at 24, measured with Python's `re` on this machine. The equivalent `a+$` stays under a microsecond.
+~~~
+
+The nested pattern has exponentially many ways to divide the a's between the inner and outer `+`, and a backtracking engine tries them all. Avoid nested quantifiers over the same characters, and prefer explicit character classes or lazy `.+?` over greedy `.+`, which swallows too much.
+
+## Going deeper
+
+**What BPE optimises.** Each merge reduces the symbols needed to write the corpus by exactly the merged pair's count (right panel of the BPE figure), so BPE is greedy compression. It is not guaranteed to find the best-compressing vocabulary of a given size. Recounting all pairs after every merge costs (merges) × (corpus size); real implementations keep an index from each pair to the words containing it and update only those. With that trick, 8,000 merges over our corpus took about 5 seconds in pure Python.
+
+**WordPiece's score is a likelihood gain.** If symbols are drawn independently, merging $a$ and $b$ changes corpus log-likelihood by roughly $\text{count}(ab)\,\big(\log p(ab) - \log p(a) - \log p(b)\big)$: pairs that co-occur more than chance predicts win. That is pointwise mutual information, which returns in 06.04.
+
+**Unigram tokenisation is probabilistic.** Each segmentation gets the product of its pieces' probabilities, and encoding picks the most likely one by dynamic programming (Viterbi). Sampling other segmentations in training, **subword regularisation**, makes models robust to spelling noise; **BPE-dropout** (Provilkov et al., 2020) does the same for BPE by randomly skipping merges.
+
+**The tokeniser shapes what the model can learn.** Irregular number chunks make arithmetic harder, which is why some models split every digit. "Hello" and " Hello" are different tokens. Spelling questions are hard because the model sees ids, not letters. And changing the tokeniser means retraining at least the embedding layer, since every id changes meaning.
+
+## Key terms
+
+| Term | Meaning
+| --- | --- |
+| Token | One unit of text the model sees, represented by an integer id
+| Vocabulary | The fixed list of tokens a model knows; its size sets the embedding table's rows
+| Unicode normalisation (NFC / NFKC) | Rewriting text into one canonical code-point spelling; NFKC also folds look-alike characters
+| Pre-tokenisation | A regex split into words, numbers and punctuation before subword splitting
+| Byte-pair encoding (BPE) | Learns an ordered list of merges of the most frequent adjacent pairs
+| WordPiece | BERT's subword method: likelihood-based merges, greedy longest-match encoding, `##` continuations
+| Byte-level BPE | BPE over UTF-8 bytes; 256 base tokens, so no unknown token is possible
+| `[UNK]` | The unknown token: a placeholder that erases whatever it replaced
+| Fertility | Average number of tokens per word; higher means longer sequences
+| Offsets | Character start and end positions of each token in the original text
 
 <div class="take">
 <div class="lab">Key takeaway</div>
 
-tokenisation is part of the model. Normalise deliberately, pre-split with a regex, and use a subword tokeniser so vocabulary stays bounded and unknown words decompose into known pieces; byte-level BPE removes unknowns entirely.
+tokenisation is part of the model. Normalise deliberately, pre-split with a regex, and use a subword tokeniser so the vocabulary stays bounded and rare words decompose into known pieces; byte-level BPE removes unknown tokens entirely, and the exact same pipeline must run at training and serving time.
 
 </div>

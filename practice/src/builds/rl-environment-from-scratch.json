@@ -1,0 +1,12 @@
+{"id": "rl-environment-from-scratch", "kind": "project", "group": "Reinforcement Learning",
+ "title": "Build an RL Environment",
+ "blurb": "Write a grid world an agent can learn in: moves and walls, rewards, termination versus truncation, the learning target, safe reward shaping and honest reporting across seeds.",
+ "intro": "Most reinforcement learning bugs live in the environment and the bookkeeping around it, not in the algorithm. The steps build a grid world's movement rules, its rewards with separate termination and truncation flags, the TD target that treats those flags correctly, a potential-based progress bonus that an agent cannot farm, and a summary of results across seeds that does not flatter the method. The capstone solves the grid world exactly with value iteration and checks the answer by rolling out the greedy policy in the same environment code.",
+ "steps": [
+  {"name": "Move an agent on a grid", "problem": "gridworld-step"},
+  {"name": "Decide the reward and whether the episode ended", "problem": "reward-and-termination"},
+  {"name": "Compute the learning target", "problem": "td-target-terminal-vs-truncated"},
+  {"name": "Score a path with a safe progress bonus", "problem": "potential-based-shaping"},
+  {"name": "Summarise runs across seeds", "problem": "summarize-across-seeds"}
+ ],
+ "capstone": "gridworld-value-iteration-capstone"}

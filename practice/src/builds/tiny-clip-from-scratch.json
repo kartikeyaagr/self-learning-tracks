@@ -1,0 +1,13 @@
+{"id": "tiny-clip-from-scratch", "kind": "project", "group": "Multimodal AI",
+ "title": "Train a Tiny CLIP from Scratch",
+ "blurb": "Put images and captions in one embedding space: similarity matrix, symmetric contrastive loss, retrieval, zero-shot classification, hard negatives and the sigmoid loss.",
+ "intro": "CLIP trains an image encoder and a text encoder so that matching pairs land close together and everything else in the batch is pushed apart. The steps build the temperature-scaled similarity matrix, the symmetric contrastive loss, recall@K retrieval, zero-shot classification from written prompts, hard negative captions that stop the model matching on nouns alone, and the pairwise sigmoid loss that scores each pair on its own. The capstone trains the two projection heads for one step with hand-written gradients and checks whether retrieval improved.",
+ "steps": [
+  {"name": "Build the scaled similarity matrix", "problem": "cosine-similarity-matrix"},
+  {"name": "Write the symmetric contrastive loss", "problem": "symmetric-clip-contrastive-loss"},
+  {"name": "Measure retrieval with recall at K", "problem": "clip-cosine-retrieval"},
+  {"name": "Classify with prompts, zero-shot", "problem": "clip-zero-shot-classifier"},
+  {"name": "Add hard negatives to the loss", "problem": "clip-loss-hard-negatives"},
+  {"name": "Write the pairwise sigmoid loss", "problem": "siglip-pairwise-loss"}
+ ],
+ "capstone": "tiny-clip-capstone"}

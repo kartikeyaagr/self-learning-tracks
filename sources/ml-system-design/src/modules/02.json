@@ -1,0 +1,211 @@
+{
+ "n": "02",
+ "name": "Data and labels",
+ "lessons": [
+  {
+   "id": "02.01",
+   "t": "Logging training examples",
+   "n": [
+    "The best training data for a deployed model is a log of what it saw and did: the request, the features as served, the prediction, what was shown, and later the outcome.",
+    "Log at **prediction time** with a stable request ID, then join outcomes to that ID later. Do not reconstruct features afterwards if you can avoid it.",
+    "Log what was **shown**, including position and the candidates that were not chosen. Without it you cannot correct for exposure bias or train rankers.",
+    "Logs need a schema, a retention policy and privacy rules. A field that silently stops being logged corrupts every model trained afterwards."
+   ],
+   "a": "## Your system is your data source\nFor a model already in production, the richest training data is its own history: every request it received, what it predicted, what the user saw and what happened next. This data matches the serving distribution by construction and keeps growing. Designing the logging well is often the most valuable thing you can do for the next version of the model.\n\n%%flow Serving logs and outcome events are joined later by request ID to produce labelled examples.\nRequest -(request_id)-> Serving log: features + scores + shown items -(join on request_id, item_id)-> *Labelled examples -(train)-> Next model\nClient events: impressions, clicks, purchases -(join)-> Labelled examples\n%%\n\n## What to log\n| Field | Why\n| request ID, timestamp | join key and prediction time\n| entity IDs (user, item, query) | grouping, splits, debugging\n| features as served | removes training/serving skew\n| model and feature versions | know which model made which prediction\n| prediction and score | calibration checks, counterfactual evaluation\n| what was shown, with position | exposure and position bias\n| candidates not shown (sampled) | negatives for retrieval, off-policy evaluation\n| outcomes, with timestamps | labels and attribution windows\n\nLogging served features costs storage, but it is the single most effective defence against skew. The alternative, recomputing features later from raw tables, risks using values that changed after the prediction.\n\n## When to log\nLog the prediction-side record when the prediction is made, before anything else happens. Log outcomes as separate events with the same keys. Join them in a batch job with explicit **attribution windows**: how long after the impression a click or purchase still counts. The window is a design choice. Too short and you miss real conversions; too long and you attribute unrelated actions.\n\n! Example: the missing impression log\n! A news app logged clicks but not impressions. The team tried to train a click-through model from clicks alone, with random articles as negatives. The model learned which articles were popular, not which ones a user would click when shown. Adding an impression log, with position, let them train on real shown-but-not-clicked negatives and correct for position, and offline AUC became predictive of online gains.\n\n## Sampling and volume\nLogs grow fast: 200M impressions a day at 2 KB each is 400 GB a day. Common tactics:\n- keep all positives and a random sample of negatives, storing the sampling rate so you can reweight;\n- log full feature vectors for a sample of traffic and IDs only for the rest;\n- compress and partition by date so old data can be dropped or archived.\n\nWhatever you sample, record how. A model trained on downsampled negatives predicts inflated probabilities unless you correct for the rate (02.03).\n\n## Schema and quality\nTreat the log as an API with a versioned schema. Check every batch: required fields present, types correct, null rates within expected ranges, categorical values from a known set. Alert when a field's null rate jumps from 0.1% to 40%, which usually means an upstream change. The Machine Learning course's \"Reproducible data\" lesson (mlcore 09.02) covers snapshotting and versioning these tables.\n\n## Privacy\nLogs contain personal data. Decide what you need and drop the rest: hash or pseudonymise identifiers, avoid storing raw text where a derived feature is enough, set retention limits, and honour deletion requests across both raw logs and derived training sets. Privacy rules are requirements (01.04), and they sometimes rule out a feature entirely.\n\n## Logging for models that do not exist yet\nLog a little more than today's model needs. If the next model might use the time a user spent on the previous page, or which filters they applied, that has to be in the log now: you cannot add history later. Agree a small set of generic context fields with the product team early, and review the schema whenever a new surface launches.\n\n## Logging in an interview\nIn a design interview, logging is often skipped, and mentioning it early is an easy way to stand out. Say what you log, where the join key comes from, which attribution window you use and how you sample. Then connect it to later parts of the design: the same log feeds training, offline evaluation, calibration checks and drift monitoring. One well-designed log serves all four.\n\n> Takeaway: log each prediction with a request ID, the features as served, the model version and what was shown, join outcomes later inside explicit attribution windows, and protect the log with a schema check, a sampling record and privacy rules.",
+   "q": "Design the logging for a search ranking system so that next month's ranker can be trained from it. What fields do you log, at what point, and how do you attach clicks and purchases that happen later?",
+   "s": "At serving time, log one record per search with a unique request ID, timestamp, user ID (or a pseudonymous key), query text and normalised query, device and locale, the model and feature versions, and for each of the top N results shown: item ID, position, the feature vector as served and the model score. Also log a sample of candidates that were retrieved but not shown, for training retrieval and for counterfactual evaluation. Client events (impressions actually rendered, clicks, add-to-basket, purchases, dwell time) are logged separately with the same request ID and item ID. A daily job joins events to the serving log within a fixed attribution window (for example clicks within 30 minutes, purchases within 7 days) to produce labels. Validate the schema on every batch, monitor null rates per field, and keep raw logs immutable so examples can be rebuilt.",
+   "r": [
+    [
+     "Google, Rules of Machine Learning, Rule 29",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "\"The best way to make sure that you train like you serve is to save the set of features used at serving time.\""
+    ],
+    [
+     "Google Cloud, MLOps: continuous delivery and automation pipelines",
+     "https://cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning",
+     "Where logged data enters the training pipeline."
+    ],
+    [
+     "Chip Huyen, Machine Learning Systems Design (free notes)",
+     "https://huyenchip.com/machine-learning-systems-design/toc.html",
+     "Data pipelines and logging for ML."
+    ]
+   ],
+   "k": [
+    "logging",
+    "training data"
+   ],
+   "x": [],
+   "p": [
+    "training-serving-skew",
+    "record-schema-validation",
+    "point-in-time-feature-join",
+    "hashed-dataset-split"
+   ]
+  },
+  {
+   "id": "02.02",
+   "t": "Labels and delayed outcomes",
+   "n": [
+    "Labels come from three places: **natural outcomes** (clicks, purchases, chargebacks), **human annotation**, and **heuristics or weak supervision**. Each has its own cost, delay and bias.",
+    "Many outcomes arrive late. Chargebacks can take 60 days, and churn is only known at the end of a period, so the most recent examples have incomplete labels.",
+    "Training on recent data with immature labels teaches the model that recent examples are negative. Wait for labels to mature, or model the delay.",
+    "Annotation needs clear guidelines, quality checks such as agreement rates and gold examples, and a plan for ambiguous cases."
+   ],
+   "a": "## Where labels come from\n| Source | Examples | Delay | Typical bias\n| Natural outcomes | click, purchase, chargeback, churn | seconds to months | only observed for what the system showed\n| Human annotation | content review, relevance ratings | days | annotator disagreement and guideline drift\n| Heuristics, weak supervision | keyword rules, user reports | instant | systematic errors of the rule\n| Implicit signals | dwell time, returns, skips | minutes to weeks | noisy proxy for satisfaction\n\nNatural labels are cheap and plentiful but are tied to what the system did: you only learn whether users click on items you showed them. Human labels are expensive but can cover cases the system never acted on. Most systems combine both.\n\n## The delay problem\nSome outcomes take a long time. A chargeback can take 60 days; a loan default months; a subscription churn is only known when the renewal date passes. At any moment the newest examples have incomplete labels.\n\n%%flow Label maturity. Examples to the right of the cut-off still have many positives missing.\nTransaction -(day 0)-> Early signals: disputes, analyst flags -(days 1-14)-> Most chargebacks -(days 15-60)-> *Mature label\n%%\n\nIf you train on everything up to yesterday and treat \"no chargeback yet\" as negative, recent fraud is mislabelled. The model learns that recent patterns are safe, which is the opposite of what you want when fraudsters change tactics.\n\nOptions:\n- **Wait**: only use examples older than the label maturity window. Simple and unbiased, but the model is always weeks behind.\n- **Use faster proxies**: early signals such as disputes, analyst decisions or user reports arrive sooner and correlate with the final label.\n- **Model the delay**: estimate the delay distribution $P(\\text{reported by } t)$ and weight or reinterpret recent negatives accordingly, as in the delayed-feedback models of Chapelle (2014) and later work.\n- **Two models**: a fast model on early signals and a slower, more accurate one on mature labels.\n\n## Evaluating with delayed labels\nEvaluation suffers too. A model's precision measured on last week's data looks great because few frauds have been reported yet. Always evaluate on periods whose labels have matured, and report metrics as of a fixed label age. The Machine Learning course's monitoring lesson (mlcore 09.03) covers proxy metrics while labels mature.\n\n## Human annotation\nWhen you need labels the system can't produce, such as \"is this post hateful?\" or \"is this result relevant?\", you need annotators:\n- write guidelines with clear definitions and worked edge cases;\n- measure agreement between annotators (for example Cohen's $\\kappa$) and treat low agreement as a sign the task or guideline is unclear;\n- seed queues with gold examples of known answers to monitor quality;\n- route ambiguous items to experts, and feed their decisions back into the guideline.\n\nSample items for annotation deliberately: random samples estimate prevalence, while samples near the model's decision boundary (active learning) improve the model fastest.\n\n! Example: labels that drifted\n! A content-moderation team updated its hate-speech policy to include a new category of slurs. Old labels were not revisited, so training data contained the same kind of post labelled both ways depending on its date. Precision on the new category was poor until the team relabelled a sample of old data under the new guideline and versioned labels by policy version.\n\n## Weak supervision\nWhen annotation is too slow, write labelling functions (keyword rules, heuristics, outputs of other models) and combine them. Tools like Snorkel learn how accurate each function is and produce probabilistic labels. This gets a first model off the ground and can be refined with a small set of human labels.\n\n## Label noise\nAll labels are noisy. A mislabelled 1% of examples rarely matters for a large model, but systematic noise does: every chargeback filed by a forgetful customer is a \"fraud\" label on a real purchase. Estimate noise by having experts re-review a sample, and report how often their labels disagree with the source.\n\n## Choosing among label sources\nIn practice you pick a primary label for training and keep others for evaluation and guardrails. A shopping recommender might train on purchases, evaluate against purchases and returns, and use annotator relevance ratings on a fixed query set as a regression test. Writing down which label serves which purpose avoids a common confusion: a model that improves the training label while the evaluation label, which is closer to the goal, gets worse.\n\n> Takeaway: know where each label comes from, how late it arrives and how it is biased; train and evaluate only on matured labels or model the delay, and run annotation with guidelines, agreement checks and gold examples.",
+   "q": "A card-fraud model is retrained weekly on the last 90 days of transactions, labelled fraud if a chargeback has been filed. Chargebacks arrive up to 60 days after the transaction. What goes wrong, and give two ways to fix it.",
+   "s": "For transactions in the last 60 days, many frauds have not been reported yet, so they are labelled legitimate. The most recent third of the training data has a fraud rate that is too low, and those false negatives look exactly like the newest fraud patterns, so the model learns to under-score them. Calibration also drifts downwards. Fix 1: only train on transactions old enough for labels to have matured (for example older than 60 days, or older than the 95th percentile of chargeback delay), accepting staler data. Fix 2: use faster partial signals as additional labels, such as customer dispute calls, analyst decisions or issuer fraud flags, which arrive in days. Fix 3: model the delay explicitly by weighting recent negatives by the probability that a fraud would already have been reported by now, using the empirical delay distribution.",
+   "r": [
+    [
+     "Yoshikawa and Imai, A Nonparametric Delayed Feedback Model for Conversion Rate Prediction (2018)",
+     "https://arxiv.org/abs/1802.00255",
+     "Modelling the delay between click and conversion, building on Chapelle (2014)."
+    ],
+    [
+     "Ratner et al., Snorkel: Rapid Training Data Creation with Weak Supervision (2017)",
+     "https://arxiv.org/abs/1711.10160",
+     "Combining noisy labelling functions into training labels."
+    ],
+    [
+     "Google, Rules of Machine Learning",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "Rules on objectives and labels."
+    ]
+   ],
+   "k": [
+    "labels",
+    "delayed feedback"
+   ],
+   "x": [],
+   "p": [
+    "delayed-label-monitoring",
+    "point-in-time-feature-join",
+    "expected-calibration-error"
+   ]
+  },
+  {
+   "id": "02.03",
+   "t": "Rare events and class imbalance",
+   "n": [
+    "Many important tasks have rare positives: fraud at 0.1%, ad conversions at 1%, harmful content at under 0.5%. Accuracy is meaningless there; use precision, recall and PR curves at the operating point.",
+    "**Negative downsampling** cuts training cost and focuses the model on positives, but shifts predicted probabilities. Correct them if the score is used as a probability.",
+    "**Class weights** and **focal loss** change the loss instead of the data; resampling and reweighting have similar effects for well-specified models.",
+    "Imbalance is often less of a problem than too few positives in absolute terms. Getting more positives (better labels, longer windows) usually beats clever resampling."
+   ],
+   "a": "## Why rare events are hard\nWhen positives are 0.1% of data, a model that always predicts \"negative\" is 99.9% accurate and useless. The real difficulty is not the ratio itself but the absolute number of positives: 1,000 frauds in a million transactions is little to learn from, whatever you do with the 999,000 negatives. So the first question is always whether you can get more positives, for example from a longer time window, related labels or annotation.\n\n## Metrics first\nPick metrics that ignore the easy negatives:\n- **precision and recall** at the threshold you will actually use;\n- the **precision-recall curve** and average precision, which react to improvements on the rare class far more than ROC AUC does;\n- **cost-weighted error**: false negatives × cost + false positives × cost, using the business costs from 01.04.\n\nThe Machine Learning course covers these in \"Imbalanced data\" (mlcore 06.06); here the focus is the system-level choices.\n\n## Sampling the training data\n| Method | What it does | When to use\n| Negative downsampling | keep all positives, sample a fraction $w$ of negatives | huge datasets, to cut cost\n| Positive upsampling | repeat positives | small datasets; risks overfitting duplicates\n| Class weights | weight each class's loss | keep all data, shift the decision boundary\n| Focal loss | down-weight easy examples in the loss | dense tasks with many trivial negatives\n| Hard negative mining | train more on negatives the model finds hard | retrieval and detection\n\nDownsampling is the workhorse in large systems. If you train on 1% of 10 billion negatives, training is 100 times cheaper with little quality loss, because most negatives are easy and redundant.\n\n## Correcting probabilities\nDownsampling negatives at rate $w$ multiplies the odds by $1/w$. To recover the true probability $q$ from the model's output $p$:\n$$q = \\frac{p}{p + (1 - p)/w}$$\nRankings do not change, since the map is monotonic. But any use of the score as a probability needs the correction: expected-value calculations, auction pricing, thresholds shared across models, or combining scores from several models.\n\n%%flow Train on a downsampled set, then correct the scores before anything treats them as probabilities.\nAll positives + w × negatives -(train)-> Model -(score p)-> *Correct: q = p / (p + (1-p)/w) -(calibrate on true distribution)-> Probability\n%%\n\nAfter correction, check calibration on an untouched holdout with the true class ratio, using a reliability diagram or expected calibration error.\n\n! Example: two models, one threshold\n! A trust team ran two spam models, one trained with 10% negative sampling and one with 50%. Both used the threshold 0.5 to block messages. The first blocked five times as many messages, because its scores were inflated by more. Correcting both to true probabilities and choosing thresholds from the business cost fixed the inconsistency.\n\n## Choosing the operating point\nWith rare events the threshold matters more than the model. Plot precision and recall against the threshold on a recent holdout and choose the point that meets the business constraint: \"flag at most 0.5% of transactions for review, which is the analysts' capacity\" or \"keep precision above 90% for automatic blocking\". Many systems use two thresholds: block above a high one, send to human review between two, allow below.\n\n## Evaluation sets for rare events\nA random 10,000-example test set may contain only 10 positives, which is far too few to measure recall reliably. Stratify the test set to contain enough positives, then reweight metrics back to the true prevalence. Report confidence intervals; with 50 positives, a recall of 0.80 has a 95% interval of roughly 0.67 to 0.90.\n\n## Getting more positives\nBefore tuning sampling, try to enlarge the positive set. Lengthen the time window, add related positive signals (a dispute as well as a chargeback), label a stratified sample of high-scoring unlabelled cases, or pool data across markets with a feature for the market. Each of these usually helps more than a cleverer loss, because the model's limit is the variety of positive examples it has seen.\n\n> Takeaway: with rare positives, measure precision, recall and cost at the operating point, downsample negatives to save compute but correct and recheck the probabilities, and make sure the test set holds enough positives to measure anything.",
+   "q": "An ads team trains a click model on all positives and 5% of negatives. The model predicts p = 0.20 for an impression. What is the calibrated click probability, and why does it matter for ad auctions?",
+   "s": "With negatives kept at rate w = 0.05, the model's odds are inflated by 1/w. The corrected probability is q = p / (p + (1 - p)/w) = 0.20 / (0.20 + 0.80/0.05) = 0.20 / 16.2 ≈ 0.0123, so about 1.2%. It matters because ad auctions rank by bid × predicted click probability and charge based on it; uncalibrated probabilities inflate expected value, misprice ads, and break comparisons between campaigns or between models trained with different sampling rates. Rankings within one model are unchanged by the correction (it is monotonic), but any use of the score as a probability needs it.",
+   "r": [
+    [
+     "imbalanced-learn user guide",
+     "https://imbalanced-learn.org/stable/user_guide.html",
+     "Resampling methods and their trade-offs, with code."
+    ],
+    [
+     "He et al., Practical Lessons from Predicting Clicks on Ads at Facebook (2014)",
+     "https://quinonero.net/Publications/predicting-clicks-facebook.pdf",
+     "Negative downsampling and the calibration correction."
+    ],
+    [
+     "Lin et al., Focal Loss for Dense Object Detection (2017)",
+     "https://arxiv.org/abs/1708.02002",
+     "Down-weighting easy negatives in the loss."
+    ]
+   ],
+   "k": [
+    "class imbalance",
+    "sampling"
+   ],
+   "x": [],
+   "p": [
+    "balanced-dataloader",
+    "stratified-sampling",
+    "sigmoid-focal-loss",
+    "precision-recall-curve-and-average-precision",
+    "expected-calibration-error"
+   ]
+  },
+  {
+   "id": "02.04",
+   "t": "Data splits and leakage",
+   "n": [
+    "A split must mimic deployment: the model will predict the future for new requests, often for new users or items, so test on later data and, where relevant, on unseen entities.",
+    "**Leakage** is any information in training features that would not be available at prediction time, or test examples that are too similar to training ones. It inflates offline metrics.",
+    "Common leaks: features computed after the prediction time, target-derived features computed on the full dataset, duplicates across splits, and the same user in train and test.",
+    "Assign splits **deterministically** (for example by hashing an entity ID) so they are stable across rebuilds and between teams."
+   ],
+   "a": "## A split is a simulation of deployment\nA test set answers one question: how well will the model do on the data it will see in production? So it must be built the way production data arrives. In most products that means three things: predictions are about the future, many inputs come from users or items the model has not seen, and the model is retrained periodically on data up to some date.\n\n## Choosing a split\n| Split | When it fits | What it measures\n| Random by row | i.i.d. data with no time or entity structure (rare in products) | interpolation\n| Time-based | almost every product system | performance on future data\n| Grouped by entity | users, items, patients, sessions repeat | generalisation to new entities\n| Time + entity | new users arrive over time | the hardest, most honest case\n\nFor a recommender, a common choice is to train on interactions before day $T$ and test on interactions after it, reporting separately for existing and new users. The Machine Learning course's \"Train, validation and test splits\" lesson (mlcore 01.03) covers the basics; this lesson focuses on what goes wrong in real pipelines.\n\n%%flow A time-based split with a gap. The gap stops features with a look-back window from straddling the boundary.\nTrain: days 1-60 -(gap: 7 days)-> Validation: days 68-75 -(gap)-> *Test: days 76-90\n%%\n\n## The usual leaks\n**Future information in features.** Aggregates such as \"user's total purchases\" computed over the whole dataset include purchases after the prediction time. Fix with point-in-time features (01.03).\n\n**Target leakage.** A feature that is a consequence of the label: \"account status = closed\" for churn, \"refund issued\" for fraud. Ask of every feature: would we know this value at the moment we predict?\n\n**Preprocessing on the full dataset.** Fitting a scaler, a vocabulary or target encoding on all data before splitting lets test statistics leak into training. Fit them inside the training fold only.\n\n**Duplicates and near-duplicates.** The same image, product listing or document appears in train and test. Deduplicate before splitting, or split by a group key that keeps duplicates together.\n\n**Entity overlap.** The same user in train and test lets the model memorise user-specific patterns, which is fine if those users will be scored in production and misleading if the product mostly serves new users.\n\n! Example: a 0.99 AUC that wasn't real\n! A model to detect fake product reviews hit 0.99 AUC. Investigation found reviews were split randomly while reviewers wrote dozens of near-identical reviews each. The model had learned to recognise individual reviewers. Splitting by reviewer brought AUC to 0.83, which is what the moderation team saw when the model met new accounts.\n\n## Deterministic assignment\nAssign each entity to a split by hashing its ID: `split = \"test\" if hash(user_id) % 100 < 10 else \"train\"`. This is stable when the data is rebuilt, consistent across teams and tables, and needs no stored list. Combine it with a time cut-off when both matter.\n\n## Detecting leaks\n- Look for features with suspiciously high importance or near-perfect univariate AUC.\n- Compare offline and online metrics; a large gap is a leak until proven otherwise.\n- Retrain with a stricter split (by time, by entity); if the metric drops a lot, the easy split was leaking.\n- Inspect a few high-confidence correct predictions and ask why the model knew.\n\n## Validation sets for tuning\nHyperparameters and thresholds must be chosen on a validation set that sits between train and test in time. Choosing them on the test set leaks test information into model selection and makes the reported number optimistic. If you tune heavily, keep a final holdout that is used once.\n\n## Splits for retrained models\nIf production retrains weekly on a sliding window, evaluate the same way: a rolling backtest that trains on weeks 1 to 8 and tests on week 9, then trains on 2 to 9 and tests on 10, and so on. The spread of results across weeks shows how stable the model is, and a sudden bad week often points to a data problem rather than a modelling one.\n\n> Takeaway: build splits that simulate deployment, usually by time and often by entity, compute every feature as of the prediction time and fit preprocessing on training data only; a large offline-online gap means a leak until proven otherwise.",
+   "q": "A model predicts which support tickets will escalate. Engineers split tickets randomly 80/20 and get 0.95 AUC; in production it is 0.78. Features include the ticket text, the customer's total tickets, and the agent's average handling time. Name three likely leaks and a split that would expose them.",
+   "s": "(1) Temporal leakage: \"customer's total tickets\" and \"agent's average handling time\" were probably computed over the whole dataset, including tickets after the one being scored, so they encode future escalations. (2) Entity leakage: the same customer appears in train and test with near-identical tickets, so the model memorises customers rather than learning signals that generalise. (3) Post-hoc text: if the ticket text field includes later replies or notes added after escalation (\"escalated to tier 2\"), it leaks the label. A better split trains on tickets before a cut-off date and tests on tickets after it, with all features computed as of each ticket's creation time; additionally hold out a set of customers entirely to measure performance on new customers. AUC should drop toward the production number.",
+   "r": [
+    [
+     "Wikipedia, Leakage (machine learning)",
+     "https://en.wikipedia.org/wiki/Leakage_(machine_learning)",
+     "Types of leakage with references, including Kaufman et al. (2011)."
+    ],
+    [
+     "Kapoor and Narayanan, Leakage and the Reproducibility Crisis in ML-based Science (2022)",
+     "https://arxiv.org/abs/2207.07048",
+     "How common leakage is across published work."
+    ],
+    [
+     "scikit-learn, Cross-validation of time series data",
+     "https://scikit-learn.org/stable/modules/cross_validation.html#time-series-split",
+     "Time-ordered cross-validation."
+    ]
+   ],
+   "k": [
+    "data splits",
+    "leakage"
+   ],
+   "x": [],
+   "p": [
+    "hashed-dataset-split",
+    "point-in-time-feature-join",
+    "k-fold-cross-validation",
+    "training-serving-skew"
+   ]
+  },
+  {
+   "id": "02.05",
+   "t": "People who adapt to the model",
+   "n": [
+    "In fraud, spam, abuse and ranking manipulation, people change their behaviour in response to the model. Past data describes attackers who have already moved on.",
+    "Defences combine fast-updating models, features that are costly to fake, human review, rules for known attacks and anomaly detection for unknown ones.",
+    "The model's own decisions shape its future labels: blocked transactions never get chargebacks, so they need a separate labelling path such as a small random holdout.",
+    "Treat the system as a contest. Monitor attack patterns, keep some defences undisclosed, and plan for frequent retraining."
+   ],
+   "a": "## When the data fights back\nMost ML assumes the world stays roughly the same between training and serving. That fails when people benefit from fooling the model. Spammers rewrite messages, fraudsters change merchants and devices, sellers stuff keywords, and bot operators mimic human timing. Each time the model improves, the cheapest attacks stop working and new ones appear. Past data then describes attackers who have already changed tactics.\n\n%%flow The adversarial loop. Every defence changes the data that the next model is trained on.\nAttackers -(try tactics)-> Requests -(score)-> *Model -(block / allow)-> Outcomes -(only allowed ones get labels)-> Training data -(retrain)-> Model\nModel -(blocked tactics stop working)-> Attackers\n%%\n\n## How adaptation shows up\n- **Recall decays** on new attacks while precision on old ones stays high.\n- **Feature importance shifts** as signals the model relied on stop separating classes.\n- **Probing**: bursts of slightly varied attempts, looking for the decision boundary.\n- **Campaigns**: sudden spikes from coordinated accounts that share infrastructure.\n\n## Defences in layers\n| Layer | Role | Update speed\n| Rules and blocklists | stop known attacks immediately | minutes\n| Supervised model | generalise from labelled attacks | days to weeks\n| Anomaly detection | flag behaviour unlike normal users | continuous\n| Graph and link analysis | connect accounts sharing devices, IPs or payment methods | hours\n| Human review | judge ambiguous cases, produce labels | hours to days\n| Friction | step-up checks (CAPTCHA, one-time codes) for medium risk | instant\n\nNo single layer is enough. Rules are fast but brittle; models generalise but lag; anomaly detectors catch new patterns but produce false alarms; humans are accurate but expensive.\n\n## Features that are hard to fake\nPrefer signals that cost an attacker real money or time: account age and history, device and payment reputation built over months, graph connections to known bad actors, behaviour across many sessions. Signals that are free to change, such as user-agent strings or message wording, are useful but decay fast.\n\n## The model labels its own data\nIf a model blocks a transaction, you never learn whether it was fraud. Over time, training data contains only attacks the model missed, so it slowly forgets what it used to catch. Fixes:\n- **holdout traffic**: let a small random fraction of would-be-blocked cases through a softer check (step-up authentication, delayed fulfilment) to keep observing outcomes;\n- **analyst review** of a sample of blocked cases to label them;\n- **keep old positives** in training even if the pattern has become rare, with sensible weighting.\n\n! Example: a spam filter that was taught to fail\n! A forum's spam classifier learned that messages containing links to a new domain were spam. Spammers switched to image text and URL shorteners within a week. Because the filter deleted spam before anyone saw it, there were few new labelled examples. Adding a \"report spam\" button and a small review queue of borderline messages restored a labelled stream and recall recovered over two retraining cycles.\n\n## Operating the contest\n- **Retrain often** and monitor recall on the newest labelled attacks, not just overall metrics.\n- **Keep some defences quiet**: do not reveal exact thresholds or which signal triggered a block.\n- **Measure attack cost**: how many attempts an attacker needs to succeed. Raising that cost is the real goal.\n- **Plan for incidents**: a playbook for active campaigns, with rules analysts can ship in hours, a way to roll them back, and a review a week later to fold the rule into the model or retire it so that rules do not pile up unexamined.\n\n## Measuring success\nOverall precision and recall are not enough in an adversarial setting. Track recall on attacks first seen in the last week, the time from a new campaign starting to it being blocked, and losses per thousand transactions or messages. These measure how quickly the system adapts, which is what decides who wins. A model with slightly lower overall AUC but a faster update loop is often the better choice.\n\n> Takeaway: when people adapt to the model, past data goes stale and the model's decisions hide its own labels; combine fast rules, regularly retrained models, anomaly detection, costly-to-fake features and a holdout or review stream that keeps outcomes observable.",
+   "q": "Your account-takeover model blocks risky logins. Six months after launch, recall on newly labelled attacks has dropped from 85% to 55%, even though the model is retrained monthly. Give three reasons this happens and three changes to the system.",
+   "s": "Reasons: (1) attackers adapted, for example by using residential proxies or warming up accounts, so the features the model relied on no longer separate attacks; (2) feedback loop on labels: blocked logins never become confirmed takeovers, so the only attacks in new training data are the ones the model missed, and the model under-weights patterns it used to catch; (3) monthly retraining is too slow compared with how quickly campaigns change. Changes: keep a small random holdout of borderline logins that are challenged with a step-up check instead of blocked, so you still observe outcomes; add features that are costly for attackers to fake (device history, behavioural signals, graph features linking accounts and IPs) and an unsupervised anomaly detector for new patterns; and update faster, with rules analysts can deploy within hours for active campaigns plus more frequent or online model updates.",
+   "r": [
+    [
+     "Biggio and Roli, Wild Patterns: Ten Years After the Rise of Adversarial Machine Learning (2018)",
+     "https://arxiv.org/abs/1712.03141",
+     "Evasion, poisoning and the arms race with attackers."
+    ],
+    [
+     "Wikipedia, Adversarial machine learning",
+     "https://en.wikipedia.org/wiki/Adversarial_machine_learning",
+     "Overview of evasion and poisoning attacks."
+    ],
+    [
+     "Sculley et al., Hidden Technical Debt in Machine Learning Systems (2015)",
+     "https://papers.nips.cc/paper_files/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html",
+     "Feedback loops and the model affecting its own data."
+    ]
+   ],
+   "k": [
+    "adversarial ML",
+    "feedback"
+   ],
+   "x": [],
+   "p": [
+    "isolation-forest",
+    "population-stability-index",
+    "two-sample-ks-drift",
+    "text-deduplication-minhash"
+   ]
+  }
+ ]
+}

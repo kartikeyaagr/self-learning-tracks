@@ -1,0 +1,13 @@
+{"id": "diffusion-from-scratch", "kind": "project", "group": "Computer Vision",
+ "title": "Generate Images with Diffusion and Rectified Flow",
+ "blurb": "Build the maths of diffusion models: noise schedules, one-jump noising, the training loss, reverse steps, rectified-flow sampling and sampling with fewer steps.",
+ "intro": "Diffusion models learn to undo gradual noising, and generate by running that reversal from pure noise. The steps turn a noise schedule into signal levels, noise data to any step in one jump, compute the noise-prediction training loss, take one reverse DDPM step, sample a rectified flow with Euler steps, and respace a schedule to sample in far fewer steps. The capstone samples a 2-D dataset with the exact optimal denoiser and shows what cutting the number of steps does to fidelity and diversity.",
+ "steps": [
+  {"name": "Turn a noise schedule into signal levels", "problem": "cosine-noise-schedule"},
+  {"name": "Jump straight to noise step t", "problem": "forward-diffusion-sample"},
+  {"name": "Compute the DDPM training loss", "problem": "noise-prediction-loss"},
+  {"name": "Take one reverse diffusion step", "problem": "ddpm-ancestral-step"},
+  {"name": "Sample a rectified flow with Euler steps", "problem": "flow-matching-train-and-integrate"},
+  {"name": "Sample a DDPM with only K steps", "problem": "respaced-ddpm-schedule"}
+ ],
+ "capstone": "diffusion-sampling-capstone"}

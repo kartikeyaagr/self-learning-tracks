@@ -1,0 +1,216 @@
+{
+ "n": "06",
+ "name": "Serving and scale",
+ "lessons": [
+  {
+   "id": "06.01",
+   "t": "Batch, online and streaming inference",
+   "n": [
+    "**Batch** inference precomputes predictions for known entities on a schedule; **online** inference computes per request; **streaming** inference reacts to events as they arrive.",
+    "Choose by freshness needs, whether inputs are only known at request time, the number of entities, the latency budget and cost.",
+    "Hybrid designs are the norm: batch-computed embeddings or candidate lists, streaming-updated features, and a light online model that adds request context.",
+    "Each mode has its own failure: batch goes stale or misses new entities, online adds latency and dependency risk, streaming adds operational complexity and ordering issues."
+   ],
+   "a": "## Three ways to produce a prediction\nThe Machine Learning course introduced batch and online inference (mlcore 09.01). Here we look at the choice as a design decision with streaming as a third option.\n\n| Mode | When it runs | Latency at use | Freshness | Coverage | Typical uses\n| Batch | on a schedule | lookup, ~1 ms | as old as last run | entities known at run time | churn scores, daily recommendations, forecasts\n| Online | per request | model time, 5-100 ms | current request | any input | search ranking, fraud at authorisation, ETA at checkout\n| Streaming | per event | seconds after the event | near real time | entities with events | updating features, alerting, trending detection\n\n## How to choose\nAsk these questions:\n- **Is the input only known at request time?** A search query, a basket or a transaction amount forces online inference.\n- **How fresh must the prediction be?** If yesterday's answer is fine, batch is simplest and cheapest.\n- **How many entities, and how many are actually requested?** Scoring 100M users nightly is wasteful if 5M visit; online scoring follows actual traffic.\n- **What is the latency budget?** Heavy models that take 200 ms can only run in batch for interactive surfaces.\n- **What does it cost?** Batch uses cheap, schedulable compute; online needs capacity for peak traffic.\n\n%%flow A common hybrid. Batch does the heavy work, streaming keeps features fresh, online adds the request.\nNightly batch -(embeddings, candidate lists)-> Key-value store\nEvent stream -(windowed counts, session state)-> Online feature store\nRequest -(lookup + fetch)-> *Online ranker -(top items)-> Response\n%%\n\n## Streaming in practice\nA stream processor (Flink, Kafka Streams, Spark Structured Streaming) consumes events and maintains state: counts over sliding windows, the last N items a user viewed, running averages. It writes results to an online store that serving reads. Streaming brings freshness without computing everything at request time, but it adds real complexity:\n- **late and out-of-order events**: choose watermarks and decide how late data updates windows;\n- **exactly-once semantics**: duplicate events double-count unless processing is idempotent;\n- **backfills**: replaying history to build training data must use the same logic;\n- **operations**: another always-on system to monitor and scale.\n\nUse streaming when the freshness gain is measurable, for example fraud velocity features or session-aware recommendations, and batch otherwise.\n\n## Failure modes\n| Mode | What breaks | Mitigation\n| Batch | job fails or is late, so scores are stale; new entities have no score | alert on freshness; fallback for missing keys\n| Online | slow features or model raise p99; dependency outages | timeouts, defaults, caching, fallbacks (06.04)\n| Streaming | lag builds up; state is lost on restart | lag monitoring, checkpoints, replayable sources\n\n! Example: a batch job that served yesterday's world\n! A travel site precomputed hotel rankings per city nightly. During a large event, prices and availability changed hourly, and the top results were often sold out. Adding an online re-ranking step that fetched live availability and price for the top 100 batch candidates, and removed or demoted unavailable hotels, fixed the problem without making the whole ranking online.\n\n## Request-time features\nEven mostly batch systems usually add some request context online: time of day, device, current page, location. These are cheap because they come with the request. Make sure training data has them too, by logging them at serving time, so the model learns how to use them.\n\n## Cost comparison\nFor 100M users, a nightly batch job that scores 500 items per user does 50 billion scores a day on cheap batch capacity. If only 10M users visit and each visit scores 500 items online, that is 5 billion scores, but on capacity sized for peak traffic. The cheaper choice depends on the active fraction and the price difference between batch and serving compute.\n\n## Mixing modes over time\nMany systems start batch and move parts online as the product matures. A sensible order is to keep heavy candidate generation in batch, add request-time context first (it is cheap), then add streaming features only where an experiment shows the freshness pays. Each step is easy to measure on its own, and the batch output remains a natural fallback if the fresher path fails.\n\n> Takeaway: choose batch when yesterday's answer is good enough, online when the input exists only at request time, and streaming when freshness matters within seconds; most production systems combine all three and plan for each mode's failure.",
+   "q": "An e-commerce site wants \"customers who viewed this also viewed\" on every product page (20M products, 5,000 page views per second) and a \"recommended for you\" rail on the home page that reflects what the user browsed in the last few minutes. Choose batch, online or streaming for each and justify.",
+   "s": "\"Also viewed\" depends only on the product, not the user, and co-view patterns change slowly, so compute it in batch: a nightly or hourly job over co-view sessions produces the top 20 related products per product, stored in a key-value store. Serving is a lookup in about 1 ms, cheap at 5,000 QPS, with a fallback to same-category bestsellers for new products. The home rail needs the last few minutes of browsing, so it needs fresh input: a streaming job updates each user's recent-items list and session embedding within seconds; at request time an online service retrieves candidates (from batch-computed related-item lists of recently viewed products plus the user's long-term embedding) and ranks a few hundred with a light model using the session features. Batch provides the heavy candidate generation, streaming the freshness, online the final context-aware ranking.",
+   "r": [
+    [
+     "Chip Huyen, Real-time machine learning: challenges and solutions (2022)",
+     "https://huyenchip.com/2022/01/02/real-time-machine-learning-challenges-and-solutions.html",
+     "Online prediction and streaming features."
+    ],
+    [
+     "Google Cloud, MLOps: continuous delivery and automation pipelines",
+     "https://cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning",
+     "Batch and online serving within a pipeline."
+    ],
+    [
+     "Apache Flink documentation: stateful stream processing",
+     "https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/stateful-stream-processing/",
+     "How streaming features keep windowed state."
+    ]
+   ],
+   "k": [
+    "batch inference",
+    "online inference",
+    "streaming"
+   ],
+   "x": [],
+   "p": [
+    "dynamic-request-batching",
+    "training-serving-skew",
+    "point-in-time-feature-join",
+    "p50-p95-and-p99-inference-latency"
+   ]
+  },
+  {
+   "id": "06.02",
+   "t": "Retrieval and ranking pipelines",
+   "n": [
+    "Large-scale recommendation and search use **multi-stage pipelines**: candidate generation from millions of items, a light ranker, a heavy ranker, then re-ranking for business rules and diversity.",
+    "**Candidate generation** combines several sources (embedding retrieval, co-occurrence, popularity, follows, recent interactions) to get high recall cheaply.",
+    "Each stage has a compute budget per request. Stage sizes (for example 2,000 → 500 → 100 → 20) follow from the latency and cost estimates.",
+    "Re-ranking applies constraints the model does not learn well: diversity, freshness, deduplication, fairness of exposure and policy filters."
+   ],
+   "a": "## Why stages\nScoring every item with the best model for every request is impossible at scale: 500M videos × 10,000 requests per second is far beyond any budget. Instead, systems narrow the set in stages, spending little compute per item early and more later.\n\n%%flow A typical multi-stage pipeline. Counts and budgets are illustrative.\nCorpus: 100M+ items -(candidate sources, ~40 ms)-> ~2,000 candidates -(filters)-> ~1,500 -(light ranker, ~15 ms)-> ~300 -(heavy ranker, ~50 ms)-> *~50 -(re-rank, ~5 ms)-> 10-20 shown\n%%\n\n## Candidate generation\nThe first stage needs high recall, low cost and variety. Most systems merge several sources:\n| Source | What it captures | Cost\n| Embedding retrieval (two-tower + ANN) | personalised similarity | one query embedding plus ANN search\n| Item co-occurrence (\"viewed together\") | short-term intent from recent items | batch-precomputed neighbour lists\n| Social graph | follows, friends' activity | graph lookups\n| Popularity and trending | what is hot in a region or category | cheap, cached\n| Recent interactions | items the user engaged with or saved | lookup\n| Exploration pool | new or under-exposed items | small, sampled\n\nMerging sources protects against any one failing and gives the ranker a diverse set to choose from. Track recall per source: if the ranker rarely picks items from a source, it may be wasting budget.\n\n## Filtering\nBefore ranking, remove what must never be shown: policy violations, items the user blocked or already purchased, out-of-stock or region-restricted items. Filters are rules, not models, and they are cheap. Applying them early saves ranking compute.\n\n## Ranking stages\nThe **light ranker** uses cheap features and a small model to cut thousands to hundreds; it is often distilled from the heavy ranker. The **heavy ranker** uses rich features (user history sequences, cross features, content embeddings) and multi-task heads (04.02). Its compute per item is the main cost in the pipeline, so its input size is set by the latency and cost budget.\n\nTrain each ranker on the distribution it will see. A heavy ranker trained only on items that were shown to users never learns to score the kind of candidates retrieval produces but the old ranker rejected. Logging a sample of non-shown candidates (02.01) helps.\n\n## Re-ranking\nThe final step applies things that are hard to learn or that encode policy:\n- **diversity**: avoid ten near-identical items; maximal marginal relevance picks items that are relevant but dissimilar to those already chosen;\n- **freshness and exploration**: boost new items to meet an exposure target (03.04);\n- **business rules**: ad slots, sponsored placements, legal requirements;\n- **fairness of exposure**: limits on concentration per creator or seller.\n\nMMR picks the next item $i$ to maximise $\\lambda \\cdot \\text{rel}(i) - (1 - \\lambda) \\max_{j \\in S} \\text{sim}(i, j)$ over items not yet selected, where $S$ is the set already chosen.\n\n! Example: a ranker blamed for a retrieval problem\n! A music app's new heavy ranker gave no online gain despite strong offline results. Analysis showed that 85% of the songs users later saved were never in the candidate set: retrieval drew only from the user's top genres. Adding a co-listening source and an embedding source raised candidate recall from 15% to 45%, and the ranker's improvement then showed up online.\n\n## Evaluating the pipeline\nMeasure each stage: recall of candidate generation (05.02), the light ranker's recall of the heavy ranker's top items, the heavy ranker's NDCG, and the effect of re-ranking on diversity and engagement. Then measure the whole pipeline online. A change in any stage can shift what later stages see.\n\n## Budgets and parallelism\nCandidate sources run in parallel, so their cost is the slowest source, not the sum. Feature fetching for the rankers is batched. The pipeline should degrade gracefully: if a source times out, continue with the rest; if the heavy ranker is slow, return the light ranker's order (06.04).\n\n## Caching across stages\nParts of the pipeline can be cached. Candidate lists for a user change slowly and can be reused for a few minutes across page loads; item features and embeddings can be cached in the ranking service's memory; only the final ranking needs per-request computation. Caching candidates cuts the cost of the most expensive fan-out step and smooths latency, at the price of slightly staler results.\n\n> Takeaway: serve large catalogues through stages that spend more compute per item as the set shrinks: multi-source candidate generation for recall, light and heavy rankers for precision, and rule-based re-ranking for diversity, freshness and policy, each measured on its own.",
+   "q": "Design the serving pipeline for a short-video feed with 500M videos and a 150 ms budget for the whole request. Give the stages, how many items each handles, what model each uses, and where business rules apply.",
+   "s": "Stage 1, candidate generation (about 40 ms, parallel sources): two-tower embedding retrieval over an ANN index of recent, eligible videos (1,000 candidates); videos from followed creators (300); co-engagement neighbours of the user's last 20 watched videos (300); trending in the user's region and language (200); a small exploration pool of new videos (100). Merge and deduplicate to about 1,500. Filter policy-violating, already-watched and region-blocked videos. Stage 2, light ranker (about 15 ms): a small model or gradient-boosted trees on cached features scores 1,500 to keep 300. Stage 3, heavy ranker (about 50 ms on GPU or optimised CPU): a multi-task neural model predicting watch completion, like, share, follow and report, combined into a value score, keeping 50. Stage 4, re-ranking (about 5 ms): diversity across creators and topics, freshness boost, limit on consecutive similar videos, insertion of ads or promoted content at allowed positions; return 10 to 20 for the next page. Remaining budget covers feature fetching and network.",
+   "r": [
+    [
+     "Covington, Adams and Sargin, Deep Neural Networks for YouTube Recommendations (2016)",
+     "https://research.google/pubs/deep-neural-networks-for-youtube-recommendations/",
+     "Two-stage candidate generation and ranking."
+    ],
+    [
+     "Eksombatchai et al., Pixie: A System for Recommending 3+ Billion Items to 200+ Million Users in Real-Time (2018)",
+     "https://arxiv.org/abs/1711.07601",
+     "Graph-based candidate generation."
+    ],
+    [
+     "Carbonell and Goldstein, The Use of MMR, Diversity-Based Reranking (1998)",
+     "https://www.cs.cmu.edu/~jgc/publication/The_Use_MMR_Diversity_Based_LTMIR_1998.pdf",
+     "Maximal marginal relevance."
+    ]
+   ],
+   "k": [
+    "multi-stage ranking",
+    "candidate generation"
+   ],
+   "x": [],
+   "p": [
+    "in-batch-softmax-logq",
+    "ndcg-at-k",
+    "mmr-diversity-rerank",
+    "item-item-cf-scores",
+    "cosine-similarity-matrix"
+   ]
+  },
+  {
+   "id": "06.03",
+   "t": "Latency, throughput and cost",
+   "n": [
+    "Latency is set at a percentile (usually p99); throughput is requests or items per second per machine; cost is what that capacity costs. Optimising one often hurts another.",
+    "Batching raises throughput, especially on GPUs, but adds waiting time. Choose the maximum batch size and wait time from the latency budget.",
+    "The usual levers are smaller or compressed models (distillation, quantisation, pruning), caching, precomputation, cascades, feature-fetch optimisation and hardware choice.",
+    "Measure where time goes before optimising. Feature fetching and network often cost more than the model."
+   ],
+   "a": "## Three quantities that pull against each other\n- **Latency**: how long one prediction takes, reported at p50, p95 and p99. Users feel the tail.\n- **Throughput**: predictions per second per machine or GPU.\n- **Cost**: compute, memory and network per prediction or per month.\n\nA bigger batch raises throughput and lowers cost per prediction but makes each request wait. A bigger model raises quality and cost. Caching lowers both latency and cost but serves stale results. Design means picking a point that meets the service level objective (SLO) at acceptable cost.\n\n## Where the time goes\nProfile the whole request, not just the model:\n| Stage | Typical share | Levers\n| Network and serialisation | 5-20% | co-locate services, compact formats\n| Feature fetching | 20-50% | batch lookups, cache hot keys, precompute\n| Preprocessing (tokenising, resizing) | 5-30% | fast libraries, move to accelerator\n| Queueing | 0-60% | capacity, autoscaling, batch-wait tuning\n| Model inference | 10-50% | smaller model, quantisation, batching\n| Post-processing and rules | 1-10% | simplify\n\nOften the model is not the bottleneck. A 2 ms model behind three sequential 20 ms feature calls is a feature problem.\n\n## Queueing and utilisation\nAs utilisation approaches 100%, queueing delay grows without bound. Running servers at 60-70% of capacity at peak keeps the tail under control. Little's law, $L = \\lambda W$, links requests in flight $L$, arrival rate $\\lambda$ and time in system $W$, and is useful to size concurrency limits.\n\n## Batching\nGPUs process a batch of 32 inputs almost as fast as 1, so batching multiplies throughput. Dynamic batching waits up to a maximum time to fill a batch:\n%%flow Dynamic batching. The maximum wait sets the extra latency; the batch size sets throughput.\nRequests -(queue)-> Batcher -(full batch or max wait reached)-> *Model on GPU -(split results)-> Responses\n%%\nAt 2,000 requests per second, a 5 ms wait collects about 10 requests. Choose the maximum wait so that wait plus model time fits within the p99 budget.\n\n## Making the model cheaper\n| Technique | Typical gain | Risk\n| Distillation to a smaller model | 2-10× faster | some quality loss; needs training\n| Quantisation (int8, fp16, 4-bit) | 1.5-4× faster, less memory | accuracy loss, especially at 4-bit\n| Pruning and sparsity | varies with hardware support | needs fine-tuning\n| Shorter inputs (sequence length, image size) | roughly linear or quadratic savings | lose information\n| Caching outputs for repeated inputs | large for skewed traffic | staleness, memory\n| Cascades | heavy model only on hard cases | routing errors\n\nAlways re-check quality after each change on the same evaluation set and slices.\n\n## Tail latency at scale\nWhen a request fans out to many backends, the slowest dominates. If each of 100 shards has a 1% chance of being slow, about 63% of requests hit at least one slow shard. Mitigations: hedged requests (send a duplicate after a short delay and take the first response), timeouts with partial results, and reducing fan-out.\n\n! Example: cost cut by caching\n! A product-description classifier ran on every page view, though descriptions changed rarely. Caching predictions by a hash of the description, with invalidation on edit, served 97% of requests from cache. GPU use fell by a factor of 20 and p99 latency dropped from 45 ms to 4 ms for cached items.\n\n## Hardware choices\nCPUs are cheap and flexible for small models and trees. GPUs win for large neural models with batching. For very high volume, specialised accelerators or optimised runtimes (ONNX Runtime, TensorRT) can cut cost further. Choose by cost per prediction at the required latency, measured on your model, not by peak FLOPs.\n\n## Autoscaling\nTraffic changes through the day, so fixed capacity sized for peak wastes money at night. Scale replicas on a signal that tracks load, such as requests per second or queue depth, rather than CPU alone, and keep a warm minimum so a sudden spike does not wait for new machines to load the model. For GPU models, start-up can take minutes, which makes scaling on predicted traffic worthwhile.\n\n> Takeaway: set a p99 SLO, profile the whole request before touching the model, keep utilisation below saturation, tune batching to the budget, and cut cost with smaller or quantised models, caching and cascades, checking quality after each change.",
+   "q": "A text classifier on GPU serves 2,000 requests per second with p99 latency of 180 ms; the budget is 100 ms, and the GPU bill is too high. Profiling shows 60 ms in tokenisation and feature fetch on CPU, 15 ms model time per batch, and the rest queueing. What would you change, in what order?",
+   "s": "First reduce queueing, which is most of the tail: check the dynamic batcher's maximum wait and batch size; with 2,000 RPS a 5 ms wait already gives batches of about 10, so a long wait or an oversized max batch only adds delay. Add capacity or autoscaling if utilisation is near saturation, since queueing grows sharply near 100%. Second, attack the 60 ms of CPU work: parallelise or move tokenisation to a fast library, cache features for repeated inputs, fetch features in one batched call, and run these concurrently with other work. Third, make the model cheaper: distil to a smaller model, quantise to int8 or fp16 with a quality check, and use a shorter maximum sequence length if inputs allow. This cuts GPU time per request so fewer GPUs are needed, lowering cost. Re-measure p99 after each change; also consider whether a cascade (a tiny model handles easy requests, the large one only uncertain ones) can cut GPU load further.",
+   "r": [
+    [
+     "Google SRE Book, Service Level Objectives",
+     "https://sre.google/sre-book/service-level-objectives/",
+     "Choosing latency targets and percentiles."
+    ],
+    [
+     "Dean and Barroso, The Tail at Scale (CACM 2013)",
+     "https://research.google/pubs/the-tail-at-scale/",
+     "Why fan-out makes tail latency worse, and how to reduce it."
+    ],
+    [
+     "NVIDIA Triton Inference Server: dynamic batching",
+     "https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/user_guide/batcher.html",
+     "Configuring batch size and queue delay."
+    ]
+   ],
+   "k": [
+    "latency",
+    "throughput",
+    "cost optimisation"
+   ],
+   "x": [],
+   "p": [
+    "p50-p95-and-p99-inference-latency",
+    "dynamic-request-batching",
+    "int8-symmetric-quantize",
+    "optimize-throughput-and-cost-under-latency-slo",
+    "estimate-model-memory-and-minimum-gpu-count"
+   ]
+  },
+  {
+   "id": "06.04",
+   "t": "Fallbacks and model rollouts",
+   "n": [
+    "Every ML call needs a defined behaviour when it is slow or failing: timeouts with defaults, cached or batch predictions, a simpler model, or a heuristic.",
+    "Missing features are the most common partial failure. Decide per feature whether to impute, fall back, or skip the model, and make sure training saw the same defaults.",
+    "Deploy models like code: versioned artifacts, shadow and canary stages, automatic rollback on health and guardrail checks.",
+    "Keep the previous model warm and the feature schema backward compatible so rollback takes minutes."
+   ],
+   "a": "## Failure is normal\nML systems depend on more moving parts than ordinary services: feature stores, embedding indexes, model servers, upstream data pipelines. Some part is always slow, stale or broken somewhere. Design decides whether that means a slightly worse result or an outage. The Inference Engineering course covers health checks and draining for large-model servers (ieng 22, 24); this lesson covers fallback design for any model.\n\n## A fallback ladder\n%%flow Each rung is cheaper and less personalised than the one above. Requests fall to the next rung on timeout or error.\nFull model + live features -(feature timeout)-> Full model + defaults -(model down)-> Cached or batch prediction -(no cache)-> Simple model or rules -(nothing)-> *Safe default\n%%\n| Rung | Example for recommendations | Example for fraud\n| Full model | personalised ranking | real-time risk score\n| Defaults for missing features | ranking without session features | score without device reputation\n| Cached or batch prediction | yesterday's top-50 list for this user | last known account risk\n| Simple model or rules | popular in region and category | amount and velocity rules\n| Safe default | editorial picks | allow with step-up check\n\nDefine the ladder per surface. A safe default for recommendations is harmless; for fraud, \"allow everything\" may not be.\n\n## Missing features\nPartial failure is more common than total failure. If a feature is missing at serving time, the model receives whatever default the code supplies. If training never saw that default, predictions can be wild. Two habits make this safe:\n- train with the same default, and randomly mask important features during training so the model learns to cope;\n- monitor the missing rate per feature, and treat a jump as an incident.\n\n## Timeouts and circuit breakers\nGive each dependency a timeout well inside the overall budget, and fail fast. A **circuit breaker** stops calling a dependency after repeated failures and retries it after a cool-down, so a broken service does not slow every request.\n\n## Deploying models safely\nTreat a new model like a code release:\n- **versioned artifact** from the registry (04.04), with its feature schema;\n- **shadow mode**: run alongside production, compare outputs and latency without serving them;\n- **canary**: a small slice of traffic, with automatic rollback if errors, latency or ML guardrails break (prediction rate, block rate, score distribution);\n- **ramp**: increase in steps while watching dashboards;\n- **rollback**: switch traffic back to the previous version, which stays loaded.\n\nML-specific health checks matter as much as error rates: a model can return 200 OK for every request while blocking every payment.\n\n! Example: a silent model failure\n! A recommendation model was deployed with a feature-name mismatch: the server sent `user_country` but the model expected `country`. Every request used the default, so all users got the same generic list. Error rates stayed at zero. A canary check comparing the diversity of recommendations across users with the previous version would have caught it in minutes; it was found two days later from an engagement drop.\n\n## Compatibility\nRollback only works if the old model can still run. Keep feature changes backward compatible: add new features rather than changing the meaning of old ones, and keep old features available until no deployed model needs them. Version feature schemas together with models.\n\n## Testing fallbacks\nFallbacks that are never exercised tend to be broken when needed. Inject failures on purpose in staging, and occasionally in production during quiet hours: time out a feature service, stop a model server, empty a cache. Check that each rung of the ladder engages, that latency stays within budget and that quality drops by the expected amount. Record the quality of each rung so the team knows what a degraded mode costs.\n\n## Monitoring the fallbacks\nCount how often each rung is used, per minute and per surface. A rise in \"defaults for missing features\" or \"cached prediction\" is often the first visible sign of an upstream incident, appearing before engagement metrics move. Alert on these rates as well as on errors, and include them in the canary checks for new models.\n\n> Takeaway: define a fallback ladder per surface, from full model to safe default, handle missing features with trained-in defaults, protect calls with timeouts and circuit breakers, and deploy models through shadow, canary and ramp with ML-aware automatic rollback.",
+   "q": "Your checkout fraud model calls three feature services and a model server, with a 60 ms budget. Design the behaviour when (a) one feature service times out, (b) the model server is down, and (c) a new model version starts blocking twice as many payments as usual.",
+   "s": "(a) Each feature call has its own timeout (for example 15 ms). If the device-reputation service times out, use the default value the model saw in training for \"unknown\" (trained explicitly by randomly masking the feature during training), log the event, and continue. If several critical features are missing, use a rule-based score instead. (b) A circuit breaker detects model-server failures and routes to a fallback: a small model embedded in the checkout service, or rules (amount over a limit from a new device triggers step-up authentication). Payments are not blocked solely because the model is down, unless the risk is very high. (c) Monitor block rate per minute against an expected band per model version; the canary stage receives 2% of traffic, and an automatic rollback fires if its block rate or the share of challenged customers deviates beyond a threshold compared with control. Rollback switches routing to the previous version, which stays loaded, within minutes.",
+   "r": [
+    [
+     "Google SRE Workbook, Canarying Releases",
+     "https://sre.google/workbook/canarying-releases/",
+     "Canary design and automatic rollback."
+    ],
+    [
+     "Google, Rules of Machine Learning",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "Rules on heuristics as fallbacks and on launch processes."
+    ],
+    [
+     "Martin Fowler, Circuit Breaker",
+     "https://martinfowler.com/bliki/CircuitBreaker.html",
+     "Stopping calls to failing dependencies."
+    ]
+   ],
+   "k": [
+    "reliability",
+    "graceful degradation"
+   ],
+   "x": [],
+   "p": [
+    "canary-mann-whitney",
+    "consecutive-breach-alerts",
+    "population-stability-index",
+    "p50-p95-and-p99-inference-latency"
+   ]
+  },
+  {
+   "id": "06.05",
+   "t": "LLM serving and RAG",
+   "n": [
+    "LLM serving cost and latency are driven by tokens: prompt length sets prefill time (time to first token) and output length sets decode time. Continuous batching and KV-cache management set throughput.",
+    "**Retrieval-augmented generation (RAG)** grounds answers in your documents: chunk and embed documents, retrieve relevant passages per query, and pass them in the prompt.",
+    "RAG quality depends mostly on retrieval: chunking, hybrid search (keyword plus embeddings), re-ranking and filtering by permissions and freshness.",
+    "Production LLM systems need routing between model sizes, caching, guardrails on inputs and outputs, and evaluation and monitoring designed for generated text."
+   ],
+   "a": "## What makes LLM serving different\nA classifier produces one output per request in a fixed time. A language model produces tokens one at a time, so latency and cost scale with both the prompt and the answer. Two numbers matter to users: **time to first token** (TTFT), dominated by processing the prompt (prefill), and **time per output token**, dominated by decoding. Throughput depends on batching many sequences and managing the KV cache that stores attention state for each one. The Inference Engineering course covers this machinery in depth (ieng 03, 07, 08, 10); here we look at system design.\n\n## Cost model\nFor hosted or self-served models, cost is roughly proportional to tokens: input tokens × input price + output tokens × output price. A RAG prompt with 8 passages of 300 tokens adds 2,400 input tokens to every question. Halving the passages, using a smaller model for easy questions, or caching repeated prefixes often cuts cost more than any infrastructure change.\n\n## RAG architecture\n%%flow Retrieval-augmented generation. Most quality problems start in the retrieval half.\nDocuments -(parse, chunk, embed)-> Index: vectors + keywords + metadata\nQuestion -(rewrite, embed)-> Hybrid retrieval -(permission filter)-> Re-ranker -(top passages)-> *Prompt builder -(LLM)-> Answer with citations\n%%\n\nKey design choices:\n- **Chunking**: chunks of a few hundred tokens, split on structure (headings, paragraphs), with the document title and section prepended so each chunk makes sense alone.\n- **Hybrid retrieval**: keyword search (BM25) catches exact names, codes and rare terms; embeddings catch paraphrases. Combine both.\n- **Re-ranking**: a cross-encoder scores query-passage pairs more accurately than embeddings, applied to the top 50 to 100.\n- **Filtering**: enforce access controls at retrieval time, never by asking the model to ignore documents; prefer fresh versions of documents.\n- **Prompting**: instruct the model to answer only from the passages, cite them, and say when the answer is not there.\n\n## Routing and caching\nNot every question needs the largest model. A router (rules or a small classifier) sends simple or frequent questions to a smaller model and hard ones to a larger model. Caches help at several levels: exact-match answer caching for frequent questions, embedding caches, and prefix caching for shared system prompts so their KV cache is reused across requests.\n\n## Guardrails\n- **Input**: detect prompt injection, sensitive data, out-of-scope requests.\n- **Output**: check for unsupported claims, policy violations and leaked personal data; require citations.\n- **Fallbacks**: if retrieval finds nothing relevant, say so instead of guessing.\n\n! Example: retrieval was the bottleneck\n! An internal help bot gave wrong answers about expense limits about 30% of the time. Evaluation showed retrieval recall of the correct policy section was only 55%: chunks were split mid-table and lost the heading that said which country they applied to. Re-chunking on section boundaries with headings prepended, plus keyword search for policy codes, raised recall to 88% and halved wrong answers without changing the model.\n\n## Evaluation and monitoring\nEvaluate retrieval (recall of supporting passages) and generation (faithfulness, correctness) separately, as in 05.03. In production, track TTFT and total latency at p95, tokens and cost per request, refusal and \"no answer\" rates, user feedback, and a weekly human review sample.\n\n## When not to use RAG\nIf the knowledge is small and stable, putting it directly in the prompt may be simpler. If the task needs a consistent style or format rather than facts, fine-tuning may fit better. If answers must be exact (prices, balances), call the system of record through a tool rather than retrieving text about it.\n\n## Freshness and updates\nDocuments change, so the index must too. Feed it from change events rather than periodic full rebuilds, delete chunks when their document is deleted or its permissions change, and record the document version each chunk came from so citations point to the right text. Monitor index lag: the time between a document changing and the change being searchable. Stale answers about policies or prices are a common and avoidable RAG failure.\n\n> Takeaway: LLM serving is governed by tokens, with prefill setting time to first token and decoding setting speed; RAG quality comes mostly from chunking, hybrid retrieval, re-ranking and permission filtering, and cost comes down through routing, shorter prompts and caching.",
+   "q": "A company wants an internal assistant that answers questions over 2 million documents (wikis, tickets, PDFs) with access controls, a p95 time-to-first-token under 2 seconds and a budget of $0.01 per question. Sketch the architecture and the main levers for quality, latency and cost.",
+   "s": "Ingestion: parse documents, split into chunks of a few hundred tokens with titles and section headers attached, embed each chunk, and index both embeddings (ANN) and text (BM25), storing access-control lists and timestamps as metadata; update incrementally from change feeds. Query path: rewrite the question if needed, run hybrid retrieval filtered by the user's permissions (about 50 chunks), re-rank with a cross-encoder to the top 5 to 10, and build a prompt with instructions and cited passages. Generation: route simple questions to a smaller, cheaper model and complex ones to a larger model; stream tokens; cache answers for frequent questions and reuse KV cache for the shared system prompt. Levers: chunking and hybrid retrieval drive quality; prompt length (number of passages) drives prefill latency and cost; model choice and routing drive cost per question. Add guardrails (refuse when retrieval finds nothing relevant, cite sources), evaluate retrieval recall and answer faithfulness offline, and monitor cost per question, latency, feedback and unanswered rates.",
+   "r": [
+    [
+     "Lewis et al., Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks (2020)",
+     "https://arxiv.org/abs/2005.11401",
+     "The original RAG formulation."
+    ],
+    [
+     "Kwon et al., Efficient Memory Management for Large Language Model Serving with PagedAttention (2023)",
+     "https://arxiv.org/abs/2309.06180",
+     "KV-cache paging and continuous batching in vLLM."
+    ],
+    [
+     "Anthropic, Introducing Contextual Retrieval (2024)",
+     "https://www.anthropic.com/news/contextual-retrieval",
+     "Improving chunk retrieval with added context and hybrid search."
+    ]
+   ],
+   "k": [
+    "LLM serving",
+    "retrieval-augmented generation"
+   ],
+   "x": [],
+   "p": [
+    "ttft-tpot-itl-and-token-throughput",
+    "kv-cache-memory-for-mha-mqa-gqa-and-mla",
+    "prefix-cache-matching-and-reuse",
+    "document-ranking",
+    "mmr-diversity-rerank"
+   ]
+  }
+ ]
+}

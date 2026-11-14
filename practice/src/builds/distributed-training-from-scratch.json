@@ -1,0 +1,13 @@
+{"id": "distributed-training-from-scratch", "kind": "project", "group": "ML Systems and GPU Programming",
+ "title": "Distributed Training from Scratch",
+ "blurb": "Implement the communication and sharding schemes behind large-scale training and check each one against single-device results.",
+ "intro": "Distributed training splits the batch, the parameters or the layers across devices, and every split must reproduce single-device training. The steps compare ring all-reduce with parameter servers, simulate ring collectives, account ZeRO memory by stage, schedule a pipeline and measure its bubble, split an MLP with tensor parallelism, and take a DiLoCo outer step that communicates only every few hundred steps. The capstone implements data, tensor and ZeRO parallelism on a small MLP, checks each to round-off, and runs one DiLoCo round.",
+ "steps": [
+  {"name": "Bytes on the wire: ring or parameter server", "problem": "ring-vs-parameter-server-bytes"},
+  {"name": "Simulate ring collectives", "problem": "simulate-distributed-collectives"},
+  {"name": "ZeRO memory per worker", "problem": "account-for-zero-memory-by-stage"},
+  {"name": "Schedule a pipeline and measure the bubble", "problem": "measure-pipeline-bubble-utilization"},
+  {"name": "Split an MLP with tensor parallelism", "problem": "tensor-parallel-mlp"},
+  {"name": "The DiLoCo outer step", "problem": "diloco-outer-step"}
+ ],
+ "capstone": "data-parallel-equivalence-capstone"}

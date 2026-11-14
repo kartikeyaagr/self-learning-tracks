@@ -1,0 +1,414 @@
+{
+ "n": "11",
+ "name": "Case studies: large-scale and generative systems",
+ "lessons": [
+  {
+   "id": "11.01",
+   "t": "Case study: distributed LLM training",
+   "n": [
+    "Planning a large training run starts from arithmetic: compute ($\\approx 6ND$ FLOPs), memory per GPU, and the time budget decide model size, token count and cluster size.",
+    "Training state does not fit on one GPU, so the design combines data parallelism with sharded optimiser state, tensor parallelism within a node and pipeline parallelism across nodes.",
+    "At thousands of GPUs, failures are routine; frequent asynchronous checkpoints and fast restart matter as much as kernel speed.",
+    "The data pipeline (deduplication, filtering, mixing, tokenisation) and evaluation during training decide quality as much as the model architecture."
+   ],
+   "a": "## Requirements\nClarify the budget and goal: a 70B dense model, 15T tokens, about a month of wall-clock time, on a cluster of GPUs with 80 GB each, 8 GPUs per node with fast links inside the node and a slower network between nodes. Ask whether the architecture is fixed (assume a standard decoder-only transformer) and what evaluations define success.\n\n## Compute and cluster size\nTraining FLOPs are about $6ND$, where $N$ is parameters and $D$ tokens:\n$6 \\times 7\\times10^{10} \\times 1.5\\times10^{13} \\approx 6.3\\times10^{24}$.\nAssume about 40% model FLOPs utilisation on a GPU with roughly 1 PFLOP/s bf16 peak, so 400 TFLOP/s achieved. GPU-seconds are $6.3\\times10^{24} / 4\\times10^{14} \\approx 1.6\\times10^{10}$, about 4.4 million GPU-hours. On 8,192 GPUs that is about 22 days, leaving margin for failures and evaluations within a month.\n\nIs 15T tokens sensible? The compute-optimal ratio from scaling-law work is roughly 20 tokens per parameter, which would be 1.4T for 70B. Training far longer than that costs more per unit of quality during training but produces a smaller model that is cheaper to serve, which is usually the right call when the model will serve heavy traffic.\n\n## Memory and parallelism\nMixed-precision training with Adam keeps bf16 weights and gradients, fp32 master weights and two fp32 moments: about 16 bytes per parameter, or 1.1 TB for 70B, before activations. One 80 GB GPU cannot hold it.\n\n- Tensor parallelism (TP) of 8 splits each layer's matrices across the GPUs of a node, using the fast intra-node links for its frequent communication.\n- Pipeline parallelism (PP) of 4 to 8 splits layers across nodes. Use enough micro-batches that the pipeline bubble, roughly $(p-1)/m$ for $p$ stages and $m$ micro-batches, stays small.\n- Data parallelism (DP) over the remaining factor (8,192 / (8 × 8) = 128 replicas), with optimiser state sharded across replicas (ZeRO stage 1 or 2).\n- Activation checkpointing recomputes activations in the backward pass to save memory, at the cost of roughly one extra forward pass, about a third more compute per step.\n\nThe global batch is chosen from small-scale runs (a few million tokens per step is typical at this size), with a warmup and a cosine or warmup-stable-decay schedule.\n\n! Example: a plan that ignored topology\n! A team placed tensor-parallel groups across nodes to balance memory. Every layer then sent large activations over the inter-node network, and throughput fell to under half of the estimate. Regrouping so that each tensor-parallel group sat inside one node, and moving the cross-node split to pipeline stages, recovered the expected utilisation without changing the model.\n\n## Data pipeline\nDeduplicate (exact and near-duplicate with MinHash), filter by quality classifiers and safety rules, remove benchmark contamination, and assign mixture weights per source (web, code, books, maths). Tokenise ahead of time into shards. The loader must be deterministic and resumable: after a restart, it continues from the exact sample, so no data is skipped or repeated.\n\n## Failures and checkpointing\nWith thousands of GPUs, hardware failures are expected several times a day. A checkpoint of full training state is over 1 TB; write it asynchronously (copy to host memory, then upload) every 30 to 60 minutes. Health checks detect failed GPUs or slow nodes; a controller swaps in spare nodes and restarts from the latest checkpoint automatically. Track \"goodput\": the fraction of wall-clock time spent on useful training.\n\n## Monitoring and stability\n%%flow Training loop with the main control points.\nTokenised shards -(deterministic loader)-> *Training step on 8,192 GPUs -(loss, grad norm, throughput)-> Metrics and alerts\nTraining step on 8,192 GPUs -(every 30-60 min, async)-> Checkpoint store -(on failure)-> Restart on spare nodes\nCheckpoint store -(every few thousand steps)-> Evaluation jobs\n%%\nWatch loss, gradient norm, per-layer activation scales and throughput. Loss spikes are common at scale; responses include skipping the bad batch, rolling back to a checkpoint with a lower learning rate, or architectural safeguards such as QK normalisation. Evaluate on held-out loss and a small benchmark suite regularly to catch regressions early.\n\n## Likely follow-up questions\n- \"How do you choose hyperparameters without trying them at full size?\" Fit scaling curves on small models (learning rate, batch size, loss versus compute) and extrapolate.\n- \"What if the cluster is shared and nodes come and go?\" Use elastic data parallelism and make the parallel plan reconfigurable from a checkpoint.\n- \"How do you know the run is healthy at day 10?\" Compare its loss curve with the scaling-law prediction and with small-run evaluations at the same tokens.\n\n## Trade-offs\n- Parameters versus tokens: compute-optimal versus inference-optimal.\n- Checkpoint frequency versus lost work and I/O overhead.\n- Pipeline depth versus bubble and memory.\n\n> Takeaway: plan from arithmetic (6ND, bytes per parameter, utilisation), place tensor parallelism within nodes and pipeline and data parallelism across them, make data loading deterministic and checkpoints asynchronous, and treat failures and loss spikes as routine events with automated responses.",
+   "q": "Design the system to pre-train a 70-billion-parameter language model on 15 trillion tokens within about a month. Estimate compute and cluster size, choose a parallelism plan, and describe the data pipeline, checkpointing, failure handling and evaluation during training.",
+   "s": "Compute is about $6ND = 6 \\times 7\\times10^{10} \\times 1.5\\times10^{13} \\approx 6.3\\times10^{24}$ FLOPs. At about 400 TFLOP/s achieved per GPU (40% of a 1 PFLOP/s bf16 peak), that is about 4.4 million GPU-hours, so roughly 8,000 GPUs for 22 days plus margin. Training state with Adam in mixed precision is about 16 bytes per parameter, 1.1 TB, so shard it: tensor parallelism of 8 within each node, pipeline parallelism of 4 to 8 across nodes, and data parallelism with sharded optimiser state over the rest, plus activation checkpointing. Data: deduplicate, filter for quality and safety, mix sources by weight, tokenise ahead of time and stream shards deterministically so restarts resume exactly. Checkpoint asynchronously every 30 to 60 minutes; detect failed nodes, replace from spares and restart automatically. Monitor loss, gradient norm, throughput and MFU, and run small evaluations every few thousand steps. Trade-offs: model size versus tokens, and checkpoint frequency versus overhead.",
+   "rubric": [
+    "Estimates total FLOPs with 6ND and converts to GPU-hours and cluster size with a realistic utilisation",
+    "Estimates memory per parameter for training state and concludes sharding is required",
+    "Chooses a parallelism plan matched to the network topology (tensor within node, pipeline and data across)",
+    "Mentions activation checkpointing and the pipeline bubble trade-off",
+    "Designs the data pipeline: deduplication, filtering, mixing and deterministic resumable streaming",
+    "Plans frequent asynchronous checkpoints, failure detection and automatic restart",
+    "Monitors loss spikes, gradient norms and throughput, with a plan for instabilities",
+    "Runs evaluations during training and uses small-scale runs to choose settings"
+   ],
+   "r": [
+    [
+     "Hoffmann et al., Training Compute-Optimal Large Language Models (2022)",
+     "https://arxiv.org/abs/2203.15556",
+     "How to split compute between parameters and tokens."
+    ],
+    [
+     "Narayanan et al., Efficient Large-Scale Language Model Training on GPU Clusters Using Megatron-LM (2021)",
+     "https://arxiv.org/abs/2104.04473",
+     "Combining tensor, pipeline and data parallelism."
+    ],
+    [
+     "Rajbhandari et al., ZeRO: Memory Optimizations Toward Training Trillion Parameter Models (2019)",
+     "https://arxiv.org/abs/1910.02054",
+     "Sharding optimiser state, gradients and parameters."
+    ],
+    [
+     "Chen et al., Training Deep Nets with Sublinear Memory Cost (2016)",
+     "https://arxiv.org/abs/1604.06174",
+     "Activation checkpointing."
+    ]
+   ],
+   "k": [
+    "LLM pre-training",
+    "parallelism",
+    "checkpointing",
+    "data pipeline"
+   ],
+   "x": [],
+   "p": [
+    "transformer-training-flop-estimator",
+    "mixed-precision-training-memory-accountant",
+    "choose-topology-aware-parallel-plan",
+    "measure-pipeline-bubble-utilization"
+   ]
+  },
+  {
+   "id": "11.02",
+   "t": "Case study: blurring faces and licence plates in street imagery",
+   "n": [
+    "Privacy blurring is a detection problem where recall matters most: a missed face is a privacy failure, while an extra blur on a sign is a small cost.",
+    "Street imagery has very small, distant, partly hidden and angled faces and plates, so the detector, input resolution and tiling must target small objects.",
+    "The system runs as a large batch pipeline over billions of images, so cost per image and throughput drive model and hardware choices.",
+    "Evaluation needs a carefully labelled test set with object size and conditions recorded, plus a process for user reports of missed blurs."
+   ],
+   "a": "## Requirements\nClarify the constraint: nothing is published until it is blurred. Faces and licence plates must be blurred irreversibly; other personal items (house numbers) may be added later. Assume 50 million panoramas a month (about 19 per second on average), each 8,000 by 4,000 pixels, processed in batch within a day or two of capture.\n\n## Metrics\nRecall is primary, measured on a labelled test set and broken down by object size, occlusion, angle, lighting and region (plate formats differ by country). A target might be 99% recall on faces at least 10 pixels tall and 98% on plates. Precision matters less, but too many false blurs damage the product, so track false blur rate per image as a guardrail.\n\n## Data and labels\nSample tiles across countries, seasons, times of day and road types. Annotators draw boxes on faces (including side and back-of-head views, people in vehicles and on posters, which policy may also require blurring) and plates (including partial ones). Record size and occlusion so that evaluation can be sliced. Hard negatives (faces on billboards, signs that resemble plates) help precision.\n\n## Handling small objects\nIn an 8,000-pixel-wide panorama, a pedestrian across the road may have a face 12 pixels tall. Downscaling the panorama would erase it. Instead:\n- Project the panorama into cube faces or split into overlapping tiles (for example 1,024 by 1,024 with 128 pixels of overlap), keeping full resolution.\n- Use a detector with feature pyramids and small anchor sizes, or a two-stage model, trained on tiles.\n- Merge detections across tile overlaps with non-maximum suppression.\n\n! Example: the faces at the edge of the tile\n! An early version used non-overlapping tiles. Faces cut by a tile boundary were split into two halves that each looked unlike a face, and recall on those was under 70%. Adding 128-pixel overlaps and merging detections across tiles raised recall at boundaries to match the rest of the image, at the cost of about 25% more tiles.\n\n## Model and operating point\nTrain face and plate classes together or as two heads. Set thresholds per class and per size bucket to meet recall targets; this usually means accepting false positives such as statues, mannequins and printed faces. A second-stage classifier may remove false positives only when very confident, and only for large, clear detections. Expand each box by a margin before blurring, and use a strong blur or pixelation that cannot be reversed.\n\n## Serving as a batch pipeline\n%%flow Blurring pipeline. Nothing reaches publication without passing through the detector and blur step.\nNew panoramas -(projection and tiling)-> Tiles -(batched GPU inference)-> *Face and plate detector -(NMS across tiles)-> Boxes -(expand, blur)-> Blurred panoramas -(publish)-> Public imagery\nUser reports -(manual fix)-> Blurred panoramas\nUser reports -(new labels)-> Training data\n%%\nWith about 50 tiles per panorama, the system processes 2.5 billion tiles a month, about 1,000 per second on average. A mid-sized detector at a few milliseconds per tile per GPU needs a few dozen GPUs running constantly, with headroom for re-processing when the model improves.\n\n## Monitoring\nTrack detections per panorama by region (a sudden drop suggests a camera or pipeline issue), user reports of missed blurs per million panoramas, and recall on a fixed test set after each model update. Re-process older imagery when a much better model ships.\n\n## Likely follow-up questions\n- \"Can you un-blur false positives like shop signs?\" Only with strong evidence and preferably a second model plus review, because the risk is asymmetric.\n- \"Should original images be kept?\" Keep unblurred originals only under strict access controls and retention limits, or not at all, depending on law and policy.\n- \"How do you handle new countries with different plates?\" Collect and label local samples before launch, and test recall per format.\n\n## Trade-offs\n- Recall versus false blurs: set heavily towards recall.\n- Tile size and overlap versus cost.\n- A larger model improves recall on small objects but raises the cost of each re-processing pass.\n\n> Takeaway: treat privacy blurring as recall-first detection of small objects, tile at full resolution with overlaps, set per-size thresholds for recall targets, run it as a cost-aware batch pipeline, and close the loop with user reports.",
+   "q": "Design a system that blurs faces and licence plates in panoramic street imagery before publication. The pipeline processes 50 million new panoramas a month, each about 8,000 by 4,000 pixels. Explain the detection approach, operating point, evaluation, cost and handling of misses.",
+   "s": "Split each panorama into overlapping tiles (or project to cube faces) at full resolution, because many faces and plates are only 10 to 20 pixels tall. Run a detector trained for small objects (single-stage with feature pyramids, or a two-stage model) with separate face and plate classes, then merge detections across tiles with non-maximum suppression. Choose a low threshold for very high recall (for example 99% on faces taller than 10 pixels) and accept extra blurs on signs and statues; optionally a second, more accurate classifier removes obvious false positives only when very confident. Blur generously (expand boxes, irreversible blur). Labels: annotators mark faces and plates in diverse sampled tiles, with size, occlusion and region recorded. Evaluate recall by size bucket, region and condition. Run as a batch pipeline on GPUs with tiling and batching; at about 50 tiles per panorama this is 2.5 billion tiles a month. Users can report missed blurs; fixes are applied quickly and become training data.",
+   "rubric": [
+    "States that recall is the priority and explains the asymmetric costs",
+    "Handles small objects with tiling or full-resolution processing and a suitable detector",
+    "Merges detections across overlapping tiles with non-maximum suppression",
+    "Sets the threshold for a recall target by object size and accepts false positives",
+    "Builds a labelled test set stratified by size, occlusion, region and plate formats",
+    "Estimates batch throughput and cost, and designs the pipeline accordingly",
+    "Applies irreversible, generously sized blurs before publication",
+    "Provides a user report path and feeds misses back into training"
+   ],
+   "r": [
+    [
+     "Frome et al., Large-scale Privacy Protection in Google Street View (2009)",
+     "https://research.google/pubs/large-scale-privacy-protection-in-google-street-view/",
+     "A reference design for face and plate blurring at scale."
+    ],
+    [
+     "Deng et al., RetinaFace: Single-stage Dense Face Localisation in the Wild (2019)",
+     "https://arxiv.org/abs/1905.00641",
+     "A face detector that handles small and varied faces."
+    ],
+    [
+     "Ren et al., Faster R-CNN: Towards Real-Time Object Detection with Region Proposal Networks (2015)",
+     "https://arxiv.org/abs/1506.01497",
+     "Two-stage detection, a strong baseline."
+    ],
+    [
+     "Wikipedia, Face detection",
+     "https://en.wikipedia.org/wiki/Face_detection",
+     "Background on approaches and difficulties."
+    ]
+   ],
+   "k": [
+    "object detection",
+    "privacy",
+    "recall-first",
+    "large-scale batch inference"
+   ],
+   "x": [],
+   "p": [
+    "non-maximum-suppression",
+    "iou-matrix",
+    "gaussian-blur-2d",
+    "anchor-box-generation"
+   ]
+  },
+  {
+   "id": "11.03",
+   "t": "Case study: retrieval-augmented generation",
+   "n": [
+    "A RAG system answers questions by retrieving relevant passages and having a language model answer from them, so answer quality is limited by retrieval quality.",
+    "Chunking, hybrid retrieval (keyword plus dense embeddings) and a cross-encoder re-ranker usually matter more than the choice of generator.",
+    "Answers must be grounded in the retrieved text, with citations and a way to say \"I don't know\"; access control must apply at retrieval time.",
+    "Evaluate retrieval and generation separately, with a labelled question set, automated judges checked against humans, and online feedback."
+   ],
+   "a": "## Requirements\nClarify the corpus, users and risks. Assume 5 million documents of mixed formats, updated continuously, with permissions per document; 100,000 questions a day; answers within 5 seconds; and answers that must cite sources. Leaking a document a user may not see is a serious failure, and so is a confident wrong answer about a policy.\n\n## Metrics\nRetrieval: recall at k (did the top k chunks contain the needed information?) and MRR on a labelled set. Generation: correctness, groundedness (every claim supported by the cited chunks) and abstention quality (says \"not found\" when it is). Online: thumbs up and down, citation clicks, follow-up questions that rephrase the same need, and escalations to humans. Cost and latency per query.\n\n## Ingestion\n- Parse each format (HTML, PDF, slides, tickets) into clean text, keeping headings, tables and lists.\n- Split into chunks of 200 to 500 tokens, along section boundaries, with a little overlap; prepend the document title and section heading to each chunk.\n- Store metadata: source URL, last updated, author, and the access-control list.\n- Embed chunks with a text embedding model and index them in a vector store; index the same chunks in a keyword index.\n- Update incrementally from change feeds; delete chunks promptly when documents are deleted or permissions change.\n\n## Retrieval\nKeyword search finds exact terms (product codes, error messages, names) that embeddings blur; dense retrieval finds paraphrases. Use both, filter by the user's permissions inside the search, and merge (reciprocal rank fusion is simple and robust). A cross-encoder re-ranker scores each question-chunk pair jointly and is much more accurate than either retriever, at higher cost, so apply it to the top 50 to 100 only.\n\n! Example: retrieval was the problem\n! An internal assistant answered 61% of test questions correctly. Analysis showed that for most wrong answers, the needed passage was not in the top 5 chunks. Adding keyword retrieval for error codes and part numbers, and a cross-encoder re-ranker, raised recall at 5 from 64% to 86%, and answer correctness to 79%, without changing the generator.\n\n## Generation\nGive the generator the question and the top chunks, each with an ID. Instruct it to answer only from these, cite IDs after each claim, and say clearly when the context does not contain the answer. Put the most relevant chunks first and keep the context short; long contexts can bury relevant passages. Post-check that every cited ID exists and was in the context.\n\n## Serving\n%%flow RAG request. Permissions are applied inside retrieval, before any text reaches the generator.\nDocuments -(parse, chunk, embed)-> Keyword index + vector index\nQuestion -(rewrite, permission filter)-> Keyword index + vector index -(top 50 each, fuse)-> *Cross-encoder re-ranker -(top 5-10 chunks)-> Generator -(answer with citations)-> User\n%%\n\n## Evaluation\nBuild a labelled set of a few hundred real questions with the documents that answer them and reference answers. Measure retrieval and generation separately so that you know which part to fix. An LLM judge can score groundedness and correctness at scale, but calibrate it against human ratings on a sample and re-check after changes.\n\n## Monitoring\nTrack feedback rates, unanswered rates by topic (they reveal missing documentation), latency and cost per query, index lag behind source systems, and any permission-filter errors (which should be zero, and tested).\n\n## Likely follow-up questions\n- \"Why not put all documents into a long context?\" Five million documents do not fit, cost scales with context, and accuracy falls when relevant text is buried.\n- \"How do you handle questions that need several documents?\" Decompose into sub-questions, retrieve for each, then answer; or let the model issue further searches.\n- \"How do you stop prompt injection inside documents?\" Treat retrieved text as data, separate it clearly in the prompt, and restrict what actions the assistant can take.\n\n## Trade-offs\n- Chunk size: small chunks retrieve precisely but lose context; large chunks do the reverse.\n- Retrieval depth and re-ranking versus latency and cost.\n- Abstaining more often reduces wrong answers but frustrates users.\n\n> Takeaway: in RAG, retrieval sets the ceiling: chunk well, combine keyword and dense retrieval under permission filters, re-rank with a cross-encoder, make the generator cite and abstain, and evaluate retrieval and generation separately.",
+   "q": "Design a question-answering assistant for a company's internal documents: 5 million documents (wikis, tickets, PDFs, policies) with per-document access permissions. Employees ask about 100,000 questions a day. Answers must cite sources and respect permissions. Cover ingestion, retrieval, generation, evaluation and monitoring.",
+   "s": "Ingest documents through parsers per format, split into chunks of a few hundred tokens with headings kept, and store each chunk with metadata (source, date, permissions). Index chunks in both a keyword index (BM25) and a vector index of dense embeddings. At query time, optionally rewrite the question, retrieve about 50 chunks from each index filtered by the user's permissions, merge them, and re-rank with a cross-encoder to the top 5 to 10. The generator receives the question and these chunks with instructions to answer only from them, cite chunk IDs and say when the answer is not found. Evaluate retrieval with recall at k on a labelled question set, and answers with groundedness and correctness, using an LLM judge calibrated against human ratings. Online, track thumbs up and down, citation clicks and unanswered rates. Monitor index freshness and permission errors. Trade-offs: chunk size, retrieval depth versus latency and cost, and answer coverage versus hallucination risk.",
+   "rubric": [
+    "Describes ingestion with parsing, chunking and metadata including permissions",
+    "Uses hybrid retrieval (keyword and dense) and explains why",
+    "Adds a re-ranking stage before generation",
+    "Enforces access control at retrieval time, not after generation",
+    "Instructs the generator to ground answers, cite sources and abstain when unsupported",
+    "Evaluates retrieval and generation separately with a labelled set and calibrated judges",
+    "Keeps the index fresh with incremental updates and handles deletions",
+    "Monitors feedback, unanswered questions and cost and latency per query"
+   ],
+   "r": [
+    [
+     "Lewis et al., Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks (2020)",
+     "https://arxiv.org/abs/2005.11401",
+     "The original RAG formulation."
+    ],
+    [
+     "Karpukhin et al., Dense Passage Retrieval for Open-Domain Question Answering (2020)",
+     "https://arxiv.org/abs/2004.04906",
+     "Dual-encoder retrieval for question answering."
+    ],
+    [
+     "Liu et al., Lost in the Middle: How Language Models Use Long Contexts (2023)",
+     "https://arxiv.org/abs/2307.03172",
+     "Why passage order and context length matter."
+    ],
+    [
+     "Gao et al., Retrieval-Augmented Generation for Large Language Models: A Survey (2023)",
+     "https://arxiv.org/abs/2312.10997",
+     "A survey of RAG components and evaluation."
+    ]
+   ],
+   "k": [
+    "RAG",
+    "hybrid retrieval",
+    "re-ranking",
+    "grounding",
+    "evaluation"
+   ],
+   "x": [],
+   "p": [
+    "sentence-embeddings",
+    "document-ranking",
+    "hit-rate-and-mrr",
+    "ndcg-at-k"
+   ]
+  },
+  {
+   "id": "11.04",
+   "t": "Case study: cost-optimised LLM inference",
+   "n": [
+    "LLM inference has two phases: prefill (processing the prompt, compute-bound) and decode (one token at a time, memory-bandwidth-bound), with different optimisations.",
+    "Throughput and cost are dominated by batching and KV-cache memory: continuous batching and paged KV caches keep GPUs busy without wasting memory.",
+    "Quantisation, prefix caching, speculative decoding and routing easy requests to smaller models reduce cost further, each with a quality check.",
+    "The design target is cost per request under latency objectives (time to first token and time per output token), measured at realistic traffic."
+   ],
+   "a": "## Requirements\nClarify traffic and targets. Assume 2,000 requests per second at peak, average prompts of 1,500 tokens and outputs of 300 tokens, time to first token (TTFT) under 1 second at p95, and time per output token (TPOT) under 30 ms. The objective is cost per request while meeting these, with no measurable quality loss on an evaluation set.\n\n## Load in tokens\n- Prompt tokens: $2{,}000 \\times 1{,}500 = 3$ million per second (prefill).\n- Output tokens: $2{,}000 \\times 300 = 600{,}000$ per second (decode).\n- Concurrent sequences: each request decodes for about $300 \\times 0.03 = 9$ seconds, so about 18,000 sequences are in flight at peak.\n\n## Prefill and decode\nPrefill processes all prompt tokens in parallel and is compute-bound. Decode generates one token per sequence per step; each step reads all the weights and the KV cache, so it is memory-bandwidth-bound and benefits from large batches, because many sequences share each weight read.\n\n## KV-cache memory\nPer token, the KV cache holds $2 \\times L \\times h_{kv} \\times d \\times b$ bytes. For a 70B model with 80 layers, 8 KV heads (grouped-query attention), head size 128 and 16-bit values, that is $2 \\times 80 \\times 8 \\times 128 \\times 2 \\approx 330$ KB per token. A sequence of 1,800 tokens needs about 590 MB. With 18,000 sequences in flight, the cache totals about 10 TB across the fleet, which sets the number of replicas as much as compute does. Quantising the KV cache to 8 bits halves this.\n\n## Batching and memory management\n- Continuous batching: at each decode step, finished sequences leave and new ones join, so the batch stays full.\n- Paged KV cache: allocate cache in small blocks on demand rather than reserving the maximum length per sequence, so far more sequences fit.\n- Chunked prefill, or separate prefill and decode pools, so a long prompt does not stall every sequence's next token.\n\n! Example: the long prompts that hurt everyone\n! A service saw TPOT jump from 25 ms to 120 ms whenever a few users sent 30,000-token documents. Each long prefill ran inside the shared batch and blocked decoding for everyone on that replica. Splitting prefill into 2,000-token chunks interleaved with decode steps brought TPOT back under 35 ms at p99, with a modest increase in TTFT for the long requests only.\n\n## Model optimisations\n- Weight quantisation to 8 or 4 bits shrinks memory and speeds decode; check quality on the evaluation set.\n- Prefix caching: many requests share a long system prompt; reuse its KV cache instead of recomputing it.\n- Speculative decoding: a small draft model proposes several tokens and the large model verifies them in one pass; it helps most at low batch sizes and when acceptance is high.\n- Routing: a classifier sends simple requests to a smaller model; sample both paths for quality review.\n\n## Serving\n%%flow Inference service. Routing and prefix caching cut work before the expensive model runs.\nRequests -(router: size, priority)-> Small model pool\nRequests -(router)-> Prefix cache lookup -(new tokens only)-> Prefill (chunked) -(KV blocks)-> *Decode with continuous batching -(tokens, streamed)-> Clients\n%%\n\n## Capacity planning\nLoad-test one replica with realistic prompt and output length distributions and find the highest throughput at which p95 TTFT and TPOT still meet targets. Divide peak load by that and add headroom (30% is common) for spikes and failures. Autoscale on queue depth and KV-cache use, since GPU utilisation alone hides memory pressure.\n\n## Monitoring\nTrack TTFT and TPOT percentiles, tokens per second per GPU, KV-cache utilisation and evictions, router decisions, cost per thousand tokens, and quality scores on a fixed evaluation set after each optimisation.\n\n## Likely follow-up questions\n- \"Is a bigger batch always cheaper?\" Up to the point where TPOT breaks the target or the KV cache runs out; beyond that, latency rises sharply.\n- \"When does disaggregating prefill and decode pay off?\" When prompts are long and varied, so that prefill interference dominates decode latency.\n\n## Trade-offs\n- Batch size versus per-token latency.\n- Quantisation and routing versus quality.\n- Headroom versus idle cost.\n\n> Takeaway: size LLM serving in tokens and KV-cache bytes, keep decode batches full with continuous batching and paged caches, protect decode from long prefills, and cut cost with quantisation, prefix caching, speculative decoding and routing, each checked against quality.",
+   "q": "Design an inference service for a 70-billion-parameter chat model that handles 2,000 requests per second at peak, with average prompts of 1,500 tokens and responses of 300 tokens. Targets: time to first token under 1 second at p95 and 30 ms per output token. Minimise cost. Explain batching, memory, model optimisations, routing and capacity planning.",
+   "s": "Estimate load: 600,000 output tokens per second and 3 million prompt tokens per second. Serve the model in 8-bit or 4-bit weights with tensor parallelism across a few GPUs per replica. Use continuous batching so new requests join at each decode step, and a paged KV cache so memory is not reserved for the maximum length; KV memory per token (layers times 2 times KV heads times head size times bytes) decides how many sequences fit. Separate or chunk prefill so long prompts do not stall decoding. Cache shared prefixes such as system prompts. Add speculative decoding with a small draft model where acceptance is high. Route simple requests to a smaller model using a classifier, with quality checked on a sample. Plan capacity from a load test of tokens per second per replica at the latency targets, plus headroom, with autoscaling on queue depth. Monitor TTFT, TPOT, GPU utilisation, KV-cache usage, cost per thousand tokens and quality on a fixed evaluation set.",
+   "rubric": [
+    "Separates prefill and decode and explains their different bottlenecks",
+    "Computes token throughput and KV-cache memory per sequence from the numbers given",
+    "Uses continuous batching and paged KV caches",
+    "Handles long prompts with chunked or disaggregated prefill to protect decode latency",
+    "Applies quantisation, prefix caching and speculative decoding with quality checks",
+    "Routes requests across model sizes with a quality safeguard",
+    "Plans capacity from load tests at the latency objectives, with autoscaling",
+    "Monitors latency percentiles, utilisation, cost per token and output quality"
+   ],
+   "r": [
+    [
+     "Kwon et al., Efficient Memory Management for Large Language Model Serving with PagedAttention (2023)",
+     "https://arxiv.org/abs/2309.06180",
+     "Paged KV caches and continuous batching."
+    ],
+    [
+     "Leviathan, Kalman and Matias, Fast Inference from Transformers via Speculative Decoding (2022)",
+     "https://arxiv.org/abs/2211.17192",
+     "Using a small draft model to speed up decoding."
+    ],
+    [
+     "Frantar et al., GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers (2022)",
+     "https://arxiv.org/abs/2210.17323",
+     "Weight quantisation with small quality loss."
+    ],
+    [
+     "Hugging Face, Text Generation Inference: PagedAttention",
+     "https://huggingface.co/docs/text-generation-inference/conceptual/paged_attention",
+     "A practical explanation of paged KV caches."
+    ]
+   ],
+   "k": [
+    "LLM serving",
+    "batching",
+    "KV cache",
+    "quantisation",
+    "routing"
+   ],
+   "x": [],
+   "p": [
+    "plan-kv-cache-capacity",
+    "simulate-continuous-batching",
+    "optimize-throughput-and-cost-under-latency-slo",
+    "speculative-decoding-acceptance"
+   ]
+  },
+  {
+   "id": "11.05",
+   "t": "Case study: similar items for music",
+   "n": [
+    "\"Similar tracks\" and \"similar artists\" combine collaborative signals (co-listening in sessions and playlists) with content signals (audio and metadata).",
+    "Co-listening embeddings learned like word embeddings, with playlists or sessions as sentences, capture taste well for popular items.",
+    "Audio embeddings place new and long-tail tracks in the same space, solving cold start for items nobody has played yet.",
+    "Similarity must be filtered and diversified (no duplicates, versions or the same artist repeated) and evaluated with both offline proxies and listening tests."
+   ],
+   "a": "## Requirements\nClarify the uses: a \"fans also like\" list on track and artist pages, and radio stations that play an endless sequence starting from a seed track. Assume 100 million tracks (most with few plays), 400 million users, tens of thousands of new tracks a day, and radio requests needing the next tracks within 200 ms.\n\n## Metrics\nOnline: skip rate on radio (especially skips within 30 seconds), saves and playlist adds, listening time per station, and clicks on similar-item lists. Offline: next-track hit rate in held-out sessions, completion of held-out playlists, and human similarity ratings on a sample.\n\n## Signals\n- Playlists: user-made playlists are strong evidence that tracks fit together.\n- Sessions: tracks played in sequence without skips.\n- Audio: spectrogram-based embeddings capture tempo, timbre, instrumentation and mood.\n- Metadata: genre tags, release year, label, language, credits.\n\n## Collaborative embeddings\nTreat each playlist or session as a sentence and each track as a word, and train skip-gram with negative sampling: tracks that appear near each other get similar vectors. Down-sample very popular tracks, as word2vec down-samples frequent words, so that every track is not similar to the top hits. Exclude plays skipped within a few seconds. Matrix factorisation on the user-track matrix is an alternative with similar results.\n\n## Audio embeddings and cold start\nA new track has no plays and therefore no collaborative embedding. Train an audio model (on spectrograms, with self-supervised contrastive learning or supervised on tags), then train a mapping from audio embeddings to collaborative embeddings on tracks that have both. A new track can then be placed by its audio alone on release day. Blend the two as plays accumulate: $e = \\alpha\\, e_{\\text{audio}} + (1-\\alpha)\\, e_{\\text{collab}}$, with $\\alpha$ falling as play count rises.\n\n! Example: new releases nobody heard\n! A service's similar-tracks lists used only co-listening embeddings, so new releases never appeared until they were already popular elsewhere. Small artists' first tracks got almost no radio plays. Adding audio-based placement for tracks with fewer than 1,000 plays, plus a small exploration share on radio, raised first-month plays for new tracks from small artists by about 40% with no change in overall skip rate.\n\n## Retrieval, filtering and sequencing\nRetrieve the top 200 neighbours from an approximate nearest-neighbour index. Then:\n- Remove duplicates, live and remastered versions of the seed, karaoke and cover versions (unless wanted).\n- Cap tracks per artist.\n- Apply licensing and region availability.\n\nFor radio, sequence tracks: start close to the seed, then drift gently, mixing familiar tracks (which the user has played) with discoveries, and adapt to skips within the session.\n\n## Serving\n%%flow Similar tracks and radio. Embeddings and neighbours are precomputed; radio sequencing reacts to skips.\nPlaylists and sessions -(skip-gram training)-> Collaborative embeddings\nAudio -(audio model + mapping)-> Audio embeddings\nCollaborative embeddings + audio embeddings -(blend)-> ANN index -(top 200)-> *Filter and sequence -(skips update session)-> Radio queue\n%%\n\n## Monitoring\nTrack skip rate per station type, catalogue coverage (share of tracks ever recommended), the share of plays going to the top 1% of tracks, and new-release reach. Rebuild embeddings weekly and audio placements daily.\n\n## Likely follow-up questions\n- \"How do you handle a track that appears on many unrelated playlists, like a wedding song?\" Weight co-occurrences by playlist coherence and downweight very long or mixed playlists.\n- \"Similar to what, exactly?\" Ask; \"similar sound\" and \"same fans\" differ. Audio similarity serves the first, co-listening the second; the blend weight is a product choice.\n\n## Trade-offs\n- Familiarity versus discovery: too much discovery raises skips; too little makes radio stale.\n- Popularity bias versus long-tail exposure and artist fairness.\n- Audio similarity versus taste similarity.\n\n## A numeric sanity check\n\nEmbeddings for 100 million tracks at 128 dimensions in 8-bit form take about 13 GB, so the nearest-neighbour index fits on one machine and can be replicated freely. Precomputing the top 200 neighbours for every track is 20 billion pairs, too much to store cheaply for a catalogue where most tracks are rarely seeded; precompute for the few million most-played tracks and query the index live for the rest. A radio station needs only a handful of new tracks every few minutes, so per-request cost is small.\n\n> Takeaway: learn track embeddings from co-listening, place new tracks with audio embeddings mapped into the same space, filter versions and repeated artists, and sequence radio to balance familiarity with discovery, judged by skips and saves.",
+   "q": "Design a \"similar tracks\" feature for a music streaming service with 100 million tracks and 400 million users. It powers a \"fans also like\" list and automatic radio stations seeded from a track. Explain the signals, embeddings, cold start for new tracks, filtering and evaluation.",
+   "s": "Learn track embeddings from co-occurrence in user-made playlists and listening sessions (skip-gram with negative sampling, or matrix factorisation), down-weighting very popular tracks and ignoring skipped plays. Learn audio embeddings with a model trained on spectrograms, aligned to the collaborative space so that new tracks can be placed by audio alone; combine both with weights that shift towards collaborative as play counts grow. Retrieve nearest neighbours with an approximate index, then filter out duplicates, alternate versions and the same artist beyond a cap, and apply licensing and region rules. For radio, add a sequencing step that balances similarity to the seed with diversity and occasional discovery. Evaluate offline with next-track prediction in held-out sessions and playlist completion, plus human listening judgements; online with skip rate, saves and listening time on radio. Monitor coverage of the catalogue and new-release reach. Trade-offs: familiarity versus discovery, and popularity bias versus long-tail exposure.",
+   "rubric": [
+    "Combines collaborative (co-listening, playlists) and content (audio, metadata) signals",
+    "Describes how co-listening embeddings are trained and how popularity and skips are handled",
+    "Solves cold start for new tracks with audio embeddings mapped into the shared space",
+    "Uses approximate nearest-neighbour retrieval over the catalogue",
+    "Filters duplicates, versions and repeated artists, and applies licensing rules",
+    "Evaluates with held-out sessions or playlists plus listening tests",
+    "Measures online skip rate, saves and listening time",
+    "Discusses popularity bias and familiarity versus discovery"
+   ],
+   "r": [
+    [
+     "Barkan and Koenigstein, Item2Vec: Neural Item Embedding for Collaborative Filtering (2016)",
+     "https://arxiv.org/abs/1603.04259",
+     "Word2vec-style embeddings for items in sessions."
+    ],
+    [
+     "Spijkervet and Burgoyne, Contrastive Learning of Musical Representations (2021)",
+     "https://arxiv.org/abs/2103.09410",
+     "Self-supervised audio embeddings for music."
+    ],
+    [
+     "Wikipedia, Music information retrieval",
+     "https://en.wikipedia.org/wiki/Music_information_retrieval",
+     "Background on audio features and tasks."
+    ],
+    [
+     "Wikipedia, Collaborative filtering",
+     "https://en.wikipedia.org/wiki/Collaborative_filtering",
+     "Item-based methods."
+    ]
+   ],
+   "k": [
+    "music similarity",
+    "co-listening embeddings",
+    "audio embeddings",
+    "cold start"
+   ],
+   "x": [],
+   "p": [
+    "word2vec-sgns-epoch",
+    "implicit-als-user-factors",
+    "embedding-similarity",
+    "catalog-coverage-and-novelty"
+   ]
+  },
+  {
+   "id": "11.06",
+   "t": "Case study: streaming home-page recommendations",
+   "n": [
+    "A streaming service's home page is a two-dimensional layout: rows (themes) of titles, so the design ranks titles within rows and rows on the page.",
+    "The catalogue is small (thousands to tens of thousands of titles) but each viewing decision matters; long-term retention is the true objective.",
+    "Presentation matters: which artwork or trailer is shown for a title can change play rates, and can be personalised with bandits.",
+    "Evaluation relies on experiments with retention and viewing hours, plus offline replay with care for presentation bias."
+   ],
+   "a": "## Requirements\nClarify the setting. A subscription service earns from members staying, not from each click; the goal is that members find something worth watching quickly and keep subscribing. Assume 200 million members, a catalogue of 20,000 titles that varies by region and licence, a home page of about 40 rows with 20 to 40 titles each, rendered within 300 ms, on TVs, phones and browsers.\n\n## Metrics\nOnline: retention (cancellations over months), viewing hours, the share of sessions that start a play within a few minutes, and the share of plays that last beyond a few minutes (\"quality plays\"). Guardrails: catalogue coverage and diversity. Offline: per-row ranking metrics such as NDCG on logged plays, and page-level replay metrics.\n\n## Data and labels\nSignals: plays, play duration and completion, ratings, adding to a list, browsing without playing. Labels for the title ranker are \"played and watched at least N minutes\" after an impression. Log every impression with its row and position, because presentation strongly affects what gets played.\n\n## Rows\nCandidate rows come from templates:\n- Continue watching (ordered by likelihood of resuming).\n- Because you watched X, seeded from recent titles the member finished.\n- Personalised genres or themes (\"Dark crime dramas\").\n- Trending in your country, new releases, top picks.\n\n## Ranking titles within rows\nA ranker scores eligible titles for each row with member features (history embeddings, preferred genres, viewing times), title features (genre, cast, popularity, freshness, embeddings) and context (device, time of day, country). The objective is a quality play, not a click; a misleading trailer produces clicks and early abandonment.\n\n## Ranking rows on the page\nA page-level model scores each row in each position: the expected value of a member engaging with that row there. Then a greedy page builder fills positions under constraints: no title repeated across rows near the top, no two very similar rows in a row, continue watching near the top on most devices, and a minimum share of discovery rows. Device matters: a TV shows fewer titles per row before scrolling.\n\n! Example: the page that repeated itself\n! A team's first page builder chose rows independently, and members with a strong interest in crime dramas saw the same five titles in four of the first six rows. Adding a cross-row deduplication rule and a penalty for row similarity increased distinct titles in the first screen from 21 to 38, and raised the share of sessions starting a play within two minutes.\n\n## Artwork personalisation\nEach title has several candidate images. A contextual bandit chooses the image per member using their history (a member who watches comedies may respond to an image showing a comedic actor). Reward quality plays, not clicks, so that misleading images are not favoured. Keep a small exploration rate.\n\n## Serving\n%%flow Home page construction. Title scores per row are computed, then the page builder picks rows under constraints.\nMember history -(features)-> Row templates -(candidate rows)-> *Title ranker per row -(scored rows)-> Page builder -(dedup, diversity, device rules)-> Artwork bandit -(images)-> Home page\n%%\nPrecompute most of the page offline per member and refresh key rows (continue watching, trending) at request time.\n\n## Evaluation\nOffline replay on logged pages is biased: members could only play what was shown, in the positions shown. Use inverse propensity weighting where impressions were randomised, or treat offline metrics as a filter before experiments. Online experiments should run for weeks, with retention measured on a longer holdout.\n\n## Likely follow-up questions\n- \"How do you handle a new member?\" Ask for a few titles they like at sign-up, then use popular and region-trending titles with fast adaptation from the first plays.\n- \"How do you promote a new original series?\" Give it guaranteed exploration slots and measure quality plays, not just starts.\n\n## Trade-offs\n- Exploitation versus discovery of the catalogue.\n- Row personalisation versus a stable, learnable page layout.\n- Artwork that attracts clicks versus artwork that represents the title honestly.\n\n## A numeric sanity check\n\nWith 20,000 titles and 200 million members, scoring every title for every member is $4 \\times 10^{12}$ scores, too many to do on each visit but manageable in a daily batch spread over a large cluster, especially as many titles are not available in a given region. At request time only a few rows are re-scored, and the page builder works on about 40 candidate rows, which is cheap. Precomputed pages per member take a few kilobytes each, so storing all of them is under a terabyte.\n\n> Takeaway: build the home page as rows of ranked titles, choose and order rows with a page-level model under deduplication and diversity rules, personalise artwork with bandits rewarded by quality plays, and judge everything by retention.",
+   "q": "Design the home page for a subscription video streaming service with 200 million members and 20,000 titles. The page has rows such as \"Continue watching\", \"Because you watched X\", genres and \"Trending now\". Explain how you choose titles within rows, which rows to show and in what order, artwork selection, and how you evaluate against retention.",
+   "s": "Generate candidate rows from templates: continue watching, because you watched (seeded from recent titles), personalised genres, trending, new releases, top picks. Fill each row by ranking eligible titles with a model predicting the probability of playing and of watching substantially (for example, completing an episode), using member history, title features and context such as device and time. Rank rows with a page-level model that predicts the value of each row in each position, with constraints: deduplicate titles across rows, limit similar rows, and keep continue watching near the top. Personalise artwork per member with a contextual bandit over a few candidate images per title, rewarded by quality plays rather than clicks. Evaluate offline with replay on logged pages, correcting for presentation bias, and online with experiments on viewing hours, retention and the share of members who find something to watch. Monitor diversity, catalogue coverage, new-release reach and cold-start member engagement.",
+   "rubric": [
+    "Treats the page as rows of titles and ranks both titles within rows and rows on the page",
+    "Generates rows from templates with personalised seeds",
+    "Ranks titles with a model of meaningful viewing, not just clicks",
+    "Deduplicates titles across rows and enforces row diversity constraints",
+    "Personalises artwork with a bandit rewarded by quality plays",
+    "Evaluates with experiments on retention and viewing, with long-term holdouts",
+    "Handles presentation bias in offline evaluation",
+    "Addresses new members and new titles"
+   ],
+   "r": [
+    [
+     "Wikipedia, Recommender system",
+     "https://en.wikipedia.org/wiki/Recommender_system",
+     "Overview of methods and evaluation."
+    ],
+    [
+     "Wikipedia, Multi-armed bandit",
+     "https://en.wikipedia.org/wiki/Multi-armed_bandit",
+     "For artwork and exploration choices."
+    ],
+    [
+     "Naumov et al., Deep Learning Recommendation Model for Personalization and Recommendation Systems (DLRM, 2019)",
+     "https://arxiv.org/abs/1906.00091",
+     "A reference architecture for ranking with sparse features."
+    ],
+    [
+     "Covington, Adams and Sargin, Deep Neural Networks for YouTube Recommendations (2016)",
+     "https://research.google/pubs/deep-neural-networks-for-youtube-recommendations/",
+     "Candidate generation and ranking for video."
+    ]
+   ],
+   "k": [
+    "page construction",
+    "rows",
+    "artwork",
+    "contextual bandits"
+   ],
+   "x": [],
+   "p": [
+    "mmr-diversity-rerank",
+    "linucb-contextual-bandit",
+    "ndcg-at-k",
+    "catalog-coverage-and-novelty"
+   ]
+  },
+  {
+   "id": "11.07",
+   "t": "Case study: content moderation at platform scale",
+   "n": [
+    "Platform moderation enforces many written policies across text, images, video and live content; each policy is a separate decision with its own costs and legal context.",
+    "The system layers hash matching for known content, fast classifiers per policy, LLM-based policy reasoning for hard cases, and human review sized to capacity.",
+    "Prevalence (the share of views that contain violating content), measured by random sampling, is the honest top-level metric, because actions taken depend on detection itself.",
+    "Appeals, reviewer agreement and policy versioning keep labels consistent as policies and adversaries change."
+   ],
+   "a": "## Requirements\nClarify scope: 1 billion items a day (about 11,600 per second), 30 policies, 50 languages, text, images, short video and comments, and 20,000 reviewers who can each review a few hundred items a day, so several million reviews a day in total. Actions include remove, demote, age-restrict, label, warn the author and suspend accounts. Some categories (child safety, terrorism) carry legal reporting duties and zero tolerance.\n\n## Metrics\n- Prevalence per policy: the share of content views that contain violating content, estimated by reviewing a random sample of views. This counts what the system missed and is not biased by its own detections.\n- Proactive rate: the share of actioned content found before any user report.\n- Precision of automatic actions, measured by sampling and by appeal overturn rates.\n- Reviewer accuracy against expert audits, and time to action for severe content.\n\n## Layers\n1. Hash matching: perceptual hashes of known violating images and videos, shared industry lists for the most serious categories. Fast and precise.\n2. Per-policy classifiers on every item: a multimodal model (image or frame encoder plus text encoder over caption, overlaid text and transcript) with a head per policy. Judge image and text together, since a benign image with hateful text, or the reverse, is common.\n3. LLM policy reasoning: for ambiguous text and newly written policies, a large model given the policy text classifies and explains. It is too costly for every item, so it runs on the uncertain band.\n4. Human review for the remaining uncertain and high-impact items.\n\n## Thresholds and actions\nPer policy, set an automatic-action threshold at a precision target (higher for removals with account penalties), a review band sized to the reviewer capacity for that policy and language, and a demotion band for borderline content that is allowed but should not be amplified.\n\n! Example: queues ordered by the wrong thing\n! A review queue was processed oldest first. Severe items from accounts with large audiences waited hours while reviewers cleared low-reach spam. Ordering the queue by predicted severity times expected views over the next 24 hours cut the views of violating content before action by more than half, with the same number of reviewers.\n\n## Labels\nReviewers label under written guidelines; labels are versioned by policy version, since a policy change can make old labels wrong. Measure inter-reviewer agreement; low agreement shows a guideline is unclear. Experts audit samples. Appeals provide corrections and a measure of precision. Reviewer wellbeing (exposure limits, blurred previews) is part of the design.\n\n## Languages\nTrain multilingual models, collect labels for the largest languages first, and measure performance per language. For low-resource languages, use multilingual embeddings, translation for review, and lower automatic-action rates until evaluation shows enough precision.\n\n## Serving\n%%flow Moderation pipeline. Cheap, precise layers run first; scarce human review is spent where it matters most.\nUpload -(perceptual hash)-> Known-content match -(block)-> Enforcement\nUpload -(no match)-> *Per-policy multimodal classifiers -(high score)-> Enforcement\nPer-policy multimodal classifiers -(uncertain)-> LLM policy check -(still uncertain)-> Review queue by severity x reach -(decision)-> Enforcement\nEnforcement -(appeals)-> Review queue by severity x reach\n%%\n\n## Monitoring\nTrack prevalence per policy and language weekly, proactive rate, appeal overturns, queue backlogs and time to action. Adversaries adapt (misspellings, coded words, altered images); watch for new clusters of reported content and update hashes and models quickly.\n\n## Likely follow-up questions\n- \"How do you launch a new policy?\" Write guidelines, label a seed set, start with LLM-based classification and review, then train a fast head when labels suffice.\n- \"How do you handle live video?\" Sample frames and audio continuously with a fast model, and allow reviewers to interrupt a stream.\n\n## Trade-offs\n- Over-enforcement (silencing legitimate speech) versus under-enforcement (harm), set per policy.\n- Automation versus reviewer capacity and accuracy.\n- Global models versus local context and law.\n\n## A numeric sanity check\n\nAt 1 billion items a day and 30 policies, the classifiers make 30 billion policy scores a day, but they share one encoder pass per item, so the cost is about 11,600 encoder passes per second plus small heads. If 2% of items fall into some review band, that is 20 million candidates a day, several times what 20,000 reviewers can handle at a few hundred each. This is why the review band must be sized to capacity per policy and language, why prioritisation by severity and reach matters, and why the LLM check runs only on the uncertain band.\n\n> Takeaway: moderate in layers (hashes, per-policy multimodal classifiers, LLM policy checks, prioritised human review), set thresholds per policy and language, keep labels versioned with appeals and audits, and measure success by prevalence from random sampling.",
+   "q": "Design the moderation system for a social platform with 1 billion pieces of content a day (posts, comments, images, short videos) across 30 policies (hate speech, harassment, spam, nudity, violence, self-harm and others) in 50 languages. There are 20,000 human reviewers. Explain the layers, labels, thresholds, review routing, appeals and how you measure success.",
+   "s": "Layer the system. Hash matching (perceptual hashes) blocks known violating media at upload. Fast multimodal classifiers score every item on every policy, with text models covering the main languages and multilingual embeddings for the rest. For each policy, a high-precision threshold triggers automatic action, a middle band goes to review, and borderline content may be demoted rather than removed. A large language model given the written policy assists on ambiguous text cases and new policies, and drafts rationales for reviewers. Review queues are prioritised by predicted severity times reach (views expected), and routed by language and expertise. Labels come from reviewers under versioned guidelines, with agreement audits and appeals. Measure prevalence of violating views per policy by random sampling, plus proactive detection rate, appeal overturn rate and reviewer accuracy. Monitor new attack patterns and per-language performance. Trade-offs: over- versus under-enforcement per policy, and speed versus accuracy.",
+   "rubric": [
+    "Layers hash matching, per-policy classifiers and human review",
+    "Treats each policy separately with its own thresholds and actions, including demotion",
+    "Covers multimodal content and many languages, with a plan for low-resource languages",
+    "Prioritises review by severity and expected reach, within reviewer capacity",
+    "Uses versioned policy labels, reviewer agreement audits and appeals",
+    "Measures prevalence by random sampling as the main metric",
+    "Uses LLM-based policy reasoning or zero-shot methods for new or ambiguous cases",
+    "Monitors adversarial adaptation and per-language performance"
+   ],
+   "r": [
+    [
+     "Kiela et al., The Hateful Memes Challenge: Detecting Hate Speech in Multimodal Memes (2020)",
+     "https://arxiv.org/abs/2005.04790",
+     "Why image and text must be judged together."
+    ],
+    [
+     "Wikipedia, Content moderation",
+     "https://en.wikipedia.org/wiki/Content_moderation",
+     "Background, approaches and debates."
+    ],
+    [
+     "Wikipedia, PhotoDNA",
+     "https://en.wikipedia.org/wiki/PhotoDNA",
+     "Hash matching for known illegal images."
+    ],
+    [
+     "Wikipedia, Perceptual hashing",
+     "https://en.wikipedia.org/wiki/Perceptual_hashing",
+     "Matching near-duplicates of known content."
+    ]
+   ],
+   "k": [
+    "content moderation",
+    "policy classifiers",
+    "human review",
+    "prevalence"
+   ],
+   "x": [],
+   "p": [
+    "precision-recall-curve-and-average-precision",
+    "text-deduplication-minhash",
+    "clip-zero-shot-classifier",
+    "sigmoid-focal-loss"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,173 @@
+{
+ "n": "04",
+ "name": "Models and training",
+ "lessons": [
+  {
+   "id": "04.01",
+   "t": "Building a baseline",
+   "n": [
+    "A baseline is the simplest system that solves the task end to end. It sets the bar, exposes data and pipeline bugs, and often ships first.",
+    "Build baselines in layers: a constant or popularity rule, then a heuristic, then a simple model (logistic regression or gradient-boosted trees) on a few strong features.",
+    "Getting the pipeline right with a simple model first separates infrastructure bugs from modelling problems.",
+    "Every later model must beat the baseline on the business metric by enough to pay for its extra cost and complexity."
+   ],
+   "a": "## Why start simple\nA first model has two jobs: to deliver value and to prove the pipeline works. If you start with a complex deep model and get poor results, you cannot tell whether the problem is the data, the features, the training code, the evaluation or the model. A simple model on a working pipeline isolates those questions. Most production ML gains come from better data and features, which a simple model exploits as well as a complex one.\n\n## Layers of baselines\n| Layer | Example | What it tells you\n| Constant | predict the mean, or the majority class | the floor any model must beat\n| Popularity or recency | most popular items, last value | how much signal is in aggregate behaviour\n| Heuristic | business rules from domain experts | what experts already know\n| Simple model | logistic regression, gradient-boosted trees | how much the features can explain\n| Complex model | deep networks, sequence models | the extra gain from capacity\n\nEach layer is cheap to build once the previous one exists, and each comparison is informative. If gradient-boosted trees barely beat popularity, the features are weak, and a bigger model will not help much.\n\n%%flow Iterating from a baseline. Each step should beat the last on the metric that matters.\nConstant -(+ aggregate behaviour)-> Popularity -(+ domain rules)-> Heuristic -(+ features)-> *Simple model -(+ capacity)-> Complex model\n%%\n\n## Gradient-boosted trees as a default\nFor tabular data (fraud, pricing, churn, click-through with engineered features), gradient-boosted trees are a strong default. They handle mixed feature types, missing values and nonlinear interactions; they train quickly on a single machine; and they are easy to inspect with feature importances. Deep models win when inputs are raw text, images, sequences or very high-cardinality IDs that benefit from learned embeddings.\n\n## Testing the pipeline\nA baseline is a test harness. Before improving the model, check:\n- the model beats a constant on held-out data (if not, there is a bug or no signal);\n- it can overfit a tiny subset to near-perfect accuracy (if not, there is a bug in training);\n- offline predictions on logged requests match what the serving path returns for the same inputs;\n- the metric computed in your evaluation code matches a hand-computed value on a few examples.\n\n! Example: a baseline that found a bug\n! A team spent two weeks tuning a neural ranker that scored below a popularity baseline. Training logistic regression on the same features showed the same problem. The cause was a join that attached each click to the wrong impression, shifting labels by one row. The baseline would have found it on day one.\n\n## Deciding whether complexity pays\nCompare each candidate with the baseline on:\n- the offline metric, with confidence intervals across several time windows;\n- the business metric in an online test;\n- training and serving cost, latency and memory;\n- operational burden: retraining time, debugging difficulty, explainability.\n\nA model that improves AUC by 0.3% but doubles serving cost and takes a day to retrain may not be worth it. Often the right move is to keep the simple model and spend effort on new features or better labels.\n\n## Baselines in an interview\nState the baseline before the fancy model: \"First, a popularity baseline per region; then logistic regression on user and item features; then a two-tower retrieval with a gradient-boosted or neural ranker.\" It shows you can ship something quickly and that you will measure each step. Interviewers often ask, \"how would you know the complex model is better?\" The baseline is the answer.\n\n## Keep the baseline running\nDo not delete the baseline once a better model ships. Keep it as the fallback when the main model or its features are unavailable, as a reference in every evaluation report, and as a canary: if the production model's margin over the baseline shrinks, something has degraded. Running both on a small slice of traffic costs little and gives a steady comparison over time.\n\n> Takeaway: build baselines in layers from a constant to a simple model, use them to prove the pipeline and measure each added piece of complexity, and keep the baseline as fallback and reference after better models ship.",
+   "q": "You are asked to build a model that predicts next week's sales for each of 5,000 products in 300 stores. Describe three baselines of increasing complexity, what each would reveal, and how you would decide when to stop adding complexity.",
+   "s": "Baseline 1: last week's sales for the same product and store (a naive forecast), or the same week last year to capture seasonality. It reveals how predictable the series are and gives an error floor that any model must beat; check its error by product category and store size. Baseline 2: a seasonal moving average, for example the average of the last four weeks scaled by a yearly seasonal index, plus known promotions as multipliers. It shows how much simple seasonality and promotions explain. Baseline 3: a gradient-boosted tree model on lagged sales, rolling means, calendar features, price, promotion flags and store features, trained across all series. It shows whether cross-series learning and interactions help. Stop when the improvement in forecast error no longer translates into meaningful business value (fewer stock-outs or less waste) or when it costs more to run and maintain than it saves; check this per segment, because complex models often help only the high-volume products.",
+   "r": [
+    [
+     "Google, Rules of Machine Learning, Rule 4",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "\"Keep the first model simple and get the infrastructure right.\""
+    ],
+    [
+     "Andrej Karpathy, A Recipe for Training Neural Networks (2019)",
+     "https://karpathy.github.io/2019/04/25/recipe/",
+     "Start simple, verify the pipeline, then add complexity."
+    ],
+    [
+     "Chip Huyen, Machine Learning Systems Design (free notes)",
+     "https://huyenchip.com/machine-learning-systems-design/toc.html",
+     "Baselines and iterative development."
+    ]
+   ],
+   "k": [
+    "baselines",
+    "iteration"
+   ],
+   "x": [],
+   "p": [
+    "popularity-baseline-leave-last-out",
+    "logistic-regression",
+    "linear-regression",
+    "gradient-boosted-regressor"
+   ]
+  },
+  {
+   "id": "04.02",
+   "t": "Choosing a model and loss",
+   "n": [
+    "Choose the model family from the data type, the amount of data, the latency budget and the need for explanation, not from fashion.",
+    "The loss should match the decision: log loss for calibrated probabilities, pairwise or listwise losses for ranking, quantile losses when you need intervals, Huber for heavy-tailed targets.",
+    "Ranking systems often use a **cascade**: a cheap model over many candidates, then a richer model over few.",
+    "**Multi-task** models share a representation across related labels (click, purchase, return) and combine their outputs in a final score."
+   ],
+   "a": "## Start from the constraints\nModel choice follows from a few questions:\n| Question | Points towards\n| Tabular features, up to tens of millions of rows? | gradient-boosted trees\n| Raw text, images, audio? | pretrained deep encoders, fine-tuned\n| Huge sparse IDs (users, items, ads)? | neural models with embeddings, factorisation machines\n| Sequences of events? | sequence models (RNN, transformer) or engineered sequence features\n| Latency under 1 ms per item at high volume? | linear models, small trees, or distilled networks\n| Must explain each decision? | linear models, shallow trees, or monotonic constraints\n| Little labelled data? | pretrained models, transfer learning, simple models\n\nOften the answer is a combination: trees on tabular features plus embeddings from a pretrained encoder fed in as features.\n\n## Matching the loss to the decision\n| Decision | Loss | Notes\n| Probability used in expected value (ads, risk pricing) | log loss | rewards calibration\n| Classify rare events | weighted log loss, focal loss | then tune the threshold\n| Order items | pairwise (RankNet), listwise (LambdaRank, softmax) | optimises ranking metrics more directly\n| Predict a quantity | squared error, Huber, log-scale | Huber for outliers, log for multiplicative errors\n| Predict a range | quantile (pinball) loss | one output per quantile\n| Retrieve from a large set | sampled softmax, contrastive | with in-batch or sampled negatives\n\nThe pinball loss for quantile $\\tau$ is $L_\\tau(y, \\hat y) = \\max(\\tau (y - \\hat y), (\\tau - 1)(y - \\hat y))$. Training at $\\tau = 0.9$ gives a value that the true outcome falls below about 90% of the time.\n\n## Cascades\nWhen there are many candidates, a single expensive model is too slow. A cascade uses cheaper models first:\n%%flow A ranking cascade. Each stage trades recall for precision and spends more compute per item.\nMillions of items -(ANN retrieval)-> 1,000 candidates -(light ranker: trees or small net)-> 200 -(heavy ranker: deep multi-task)-> *50 -(re-rank: diversity, rules)-> 10 shown\n%%\nEach stage should have high recall for what the next stage would rank highly. Evaluate stages both alone and in combination: a better heavy ranker cannot fix candidates the retrieval stage never returned.\n\n## Multi-task models\nProducts care about several outcomes: click, long view, purchase, share, report. A multi-task model shares lower layers and has one head per task, which helps sparse tasks borrow strength from dense ones. The final score combines heads with weights chosen by the business, for example $\\text{score} = P(\\text{click}) \\cdot (1 + 2 P(\\text{purchase} \\mid \\text{click})) - 5 P(\\text{report})$. Mixture-of-experts architectures such as MMoE let tasks that conflict use different experts.\n\n! Example: a loss that matched the product\n! A marketplace ranked search results by predicted click-through, trained with log loss on clicks. Sellers complained that cheap, eye-catching listings got all the traffic while buyers rarely purchased them. Switching to a multi-task model with click and purchase heads, ranking by expected purchases, lowered click-through by 2% and raised purchases by 4%.\n\n## Calibration and thresholds\nIf downstream code treats the score as a probability, check calibration after training (reliability diagram, expected calibration error) and recalibrate with Platt scaling or isotonic regression on recent data if needed. If the decision uses a threshold, choose it from business costs on a validation set, not 0.5.\n\n## Model size versus the latency budget\nA model that wins offline by 1% but needs 30 ms per item is useless in a stage with 10 ms for 500 items. Measure inference cost early. Distillation, quantisation and smaller architectures often recover most of the quality within budget.\n\n## Hyperparameters and search\nTune what matters most first: learning rate and number of trees or epochs, regularisation, and model size. Use a time-based validation set and a modest random or Bayesian search; a few dozen trials is usually enough for trees. Record every trial with its data version so results can be compared later, and be suspicious of a configuration that wins by a tiny margin on one validation window only.\n\n> Takeaway: pick the model family from data type, data size, latency and explainability needs; pick the loss to match the decision; and use cascades and multi-task heads when there are many candidates or several outcomes to balance.",
+   "q": "You need to predict delivery time for food orders and show customers a range (\"25-35 minutes\"). Which model family and loss would you choose, and how would you produce the range? What would you do if late deliveries hurt far more than early ones?",
+   "s": "Use gradient-boosted trees (or a small neural network if you have rich sequential inputs like courier GPS traces) on features such as restaurant prep-time history, current kitchen load, courier distance and availability, traffic, time of day and weather. For the point estimate, a squared or Huber loss on minutes, possibly on log minutes since errors scale with duration. For the range, train quantile regressors for the 10th and 90th percentiles (pinball loss) or one model with multiple quantile outputs, and check coverage: about 80% of actual times should fall inside the interval. If lateness is worse than earliness, show a higher quantile (for example the 70th percentile) as the headline estimate, or use an asymmetric loss that penalises under-prediction more, and track the share of orders arriving after the promised upper bound as a guardrail.",
+   "r": [
+    [
+     "Burges, From RankNet to LambdaRank to LambdaMART: An Overview (2010)",
+     "https://www.microsoft.com/en-us/research/publication/from-ranknet-to-lambdarank-to-lambdamart-an-overview/",
+     "Pairwise and listwise learning-to-rank losses."
+    ],
+    [
+     "Ma et al., Modeling Task Relationships in Multi-task Learning with Multi-gate Mixture-of-Experts (KDD 2018)",
+     "https://research.google/pubs/modeling-task-relationships-in-multi-task-learning-with-multi-gate-mixture-of-experts/",
+     "Multi-task models for recommendation."
+    ],
+    [
+     "scikit-learn, Choosing the right estimator",
+     "https://scikit-learn.org/stable/machine_learning_map.html",
+     "A map of model families by data size and task."
+    ]
+   ],
+   "k": [
+    "model selection",
+    "loss functions"
+   ],
+   "x": [],
+   "p": [
+    "log-loss-binary-cross-entropy",
+    "sigmoid-focal-loss",
+    "ndcg-at-k",
+    "regression-metrics",
+    "gradient-boosted-regressor"
+   ]
+  },
+  {
+   "id": "04.03",
+   "t": "Reusing pretrained models",
+   "n": [
+    "Pretrained models for text, images, audio and code turn many problems with little labelled data into small fine-tuning or feature-extraction tasks.",
+    "Options run from **frozen features** (cheapest) to **fine-tuning the top layers**, **parameter-efficient fine-tuning** such as LoRA, and **full fine-tuning** (most data and compute).",
+    "**Zero-shot** and **few-shot** use of large models can serve as a baseline or a labeller before any training.",
+    "Check licences, domain mismatch, serving cost and whether a large model can be **distilled** into a smaller one for production."
+   ],
+   "a": "## Why reuse\nTraining a strong image or language model from scratch needs huge datasets and compute. Pretrained models have learned general representations from that scale: edges and textures, word meanings and syntax, speech sounds. For most product tasks the question is not whether to use one but how much to adapt it.\n\n## The adaptation ladder\n| Approach | What changes | Data needed | Cost\n| Zero-shot prompting | nothing; describe the task in text | none | serving cost of a large model\n| Frozen features + small head | only a linear or MLP head | hundreds to thousands | very low\n| Fine-tune top layers | last few layers and head | thousands | low\n| Parameter-efficient (LoRA, adapters) | small added matrices | thousands | low, many tasks share one base\n| Full fine-tuning | all weights | tens of thousands or more | high, one copy per task\n\nClimb only as far as the quality requires. Frozen embeddings with logistic regression are surprisingly strong, cheap to retrain and easy to serve.\n\n%%flow Climb the ladder only as far as quality requires; distil at the end if serving cost matters.\nZero-shot baseline -(labelled data)-> Frozen features + head -(not enough)-> LoRA or partial fine-tune -(not enough)-> *Full fine-tune -(too slow to serve)-> Distilled small model\n%%\n\n## Zero-shot and few-shot as tools\nLarge language and vision-language models can do many classification and extraction tasks from a description. Even if they are too slow or costly for production, they are useful as:\n- a **baseline** to measure trained models against;\n- a **labeller** that pre-labels data for humans to correct, which is faster than labelling from scratch;\n- a **teacher** for distillation into a small production model.\n\nValidate their labels on a human-labelled sample before trusting them; they are often confidently wrong on domain-specific cases.\n\n## Domain mismatch\nA model pretrained on web photos may struggle with medical scans, satellite images or factory parts; a general language model may not know internal product names or legal jargon. Signs of mismatch: frozen features barely beat simple baselines, or errors cluster on domain-specific terms. Remedies are continued pretraining on unlabelled in-domain data, then fine-tuning, or choosing a domain-specific base model. Measure the gap on a small labelled in-domain set before deciding which.\n\n## Serving costs\nA fine-tuned large model can be too expensive for high-volume or low-latency paths. Options:\n- **distillation**: train a small student on the large model's outputs over plenty of unlabelled data;\n- **quantisation**: 8-bit or 4-bit weights to cut memory and latency;\n- **caching**: precompute embeddings for items, so only queries need online inference;\n- **cascades**: run the large model only on uncertain cases.\n\n! Example: from API calls to a small model\n! A support team classified incoming emails into 40 intents using a large hosted language model, at a cost of several cents per email. They used it to label 200,000 emails, had agents correct a sample of 5,000, and fine-tuned a small text encoder on the result. The small model matched the large one's accuracy within a point, ran on CPU in 15 ms and cut cost by over 95%.\n\n## Practical checks\n- **Licence**: can the weights be used commercially, and does fine-tuning change that?\n- **Data rights**: may your data be sent to a hosted API?\n- **Reproducibility**: pin the exact model version; hosted models change underneath you.\n- **Evaluation**: compare against a frozen-features baseline so you know what fine-tuning bought.\n- **Updates**: plan how to move to a new base model without retraining everything from scratch.\n\n## Choosing a base model\nPick the smallest base that clears the quality bar, because size drives serving cost for the life of the system. Compare two or three candidates with frozen features first; that experiment takes hours and usually ranks them the same way full fine-tuning would. Prefer models with a clear licence and a stable release, and keep the evaluation set fixed so a later swap to a newer base can be judged on the same terms.\n\n> Takeaway: start from pretrained models, climb the ladder from zero-shot and frozen features to LoRA and full fine-tuning only as quality demands, and plan for serving cost with distillation, quantisation and caching.",
+   "q": "An insurance company wants to classify claim photos into 12 damage types. It has 3,000 labelled photos and needs 50 ms inference on CPU. Design the modelling approach from zero-shot to production.",
+   "s": "Start with a zero-shot baseline: a CLIP-style model scoring each photo against text prompts for the 12 types, measured on a labelled holdout. Then train a linear classifier (or small MLP) on frozen image embeddings from a strong pretrained encoder using the 3,000 photos; this is cheap and often close to fine-tuning with little data. If accuracy is still short, fine-tune the encoder's top layers or use LoRA adapters with augmentation, using a time-split or claim-level holdout. For production on CPU at 50 ms, distil the fine-tuned model into a smaller network (for example a mobile-sized CNN) trained on the large model's soft labels over a bigger pool of unlabelled claim photos, then quantise to int8. Track per-class recall, since some damage types are rare, and route low-confidence predictions to human adjusters, whose labels feed the next training round.",
+   "r": [
+    [
+     "Hu et al., LoRA: Low-Rank Adaptation of Large Language Models (2021)",
+     "https://arxiv.org/abs/2106.09685",
+     "Parameter-efficient fine-tuning."
+    ],
+    [
+     "Radford et al., Learning Transferable Visual Models From Natural Language Supervision (CLIP, 2021)",
+     "https://arxiv.org/abs/2103.00020",
+     "Zero-shot image classification from text prompts."
+    ],
+    [
+     "Hinton, Vinyals and Dean, Distilling the Knowledge in a Neural Network (2015)",
+     "https://arxiv.org/abs/1503.02531",
+     "Training a small model to imitate a large one."
+    ]
+   ],
+   "k": [
+    "transfer learning",
+    "fine-tuning"
+   ],
+   "x": [
+    "PyTorch"
+   ],
+   "p": [
+    "clip-zero-shot-classifier",
+    "lora-finetune-and-merge",
+    "clip-cosine-retrieval",
+    "sentence-embeddings"
+   ]
+  },
+  {
+   "id": "04.04",
+   "t": "Training pipelines and versioning",
+   "n": [
+    "A training pipeline is code that turns versioned data into a versioned, evaluated model artifact without manual steps. Notebooks are for exploration, not for production models.",
+    "Version everything that affects the model: data snapshot, feature definitions, code commit, configuration, random seeds, and the environment.",
+    "Every trained model goes through automatic **evaluation gates** before it can be deployed: metrics against the current model, slice checks, calibration and sanity tests.",
+    "A **model registry** records each model's lineage and status, so you can answer \"what is in production, how was it trained, and what do we roll back to?\""
+   ],
+   "a": "## From notebook to pipeline\nA model trained by hand in a notebook cannot be reproduced reliably. Someone ran cells in a particular order, on a particular extract, with a library version that has since changed. When that model misbehaves, nobody can say why or recreate it. A training pipeline replaces those steps with code that runs the same way every time and records what it did.\n\n%%flow A training pipeline. Every stage reads versioned inputs and writes versioned outputs.\nData snapshot -(feature definitions vN)-> Training set -(config + seed)-> Train -(holdout + slices)-> Evaluate -(gates pass)-> *Model registry -(canary)-> Production\n%%\n\n## What to version\n| Item | Why | How\n| Data | the same code on different data gives a different model | snapshot IDs, partitioned tables\n| Feature definitions | a changed feature silently changes the model | versioned feature registry or code\n| Code | training logic and preprocessing | git commit hash\n| Configuration | hyperparameters, date ranges, sampling rates | config file in the repo\n| Random seeds | initialisation and sampling | recorded per run\n| Environment | library versions, hardware | container image digest\n| Artifact | the model itself | registry entry with all of the above\n\nThe Machine Learning course's \"Reproducible data\" lesson (mlcore 09.02) covers data versioning in detail.\n\n## Evaluation gates\nAutomatic checks stop bad models before users see them:\n- **comparison with production**: the new model must not be worse on the main offline metric beyond a tolerance, measured on the same recent holdout;\n- **slices**: no important segment (new users, each market, each platform, rare classes) may regress more than a set amount;\n- **calibration**: if scores are used as probabilities, calibration error stays within bounds;\n- **sanity**: prediction distribution on recent traffic is close to the current model's; no NaNs; latency and size within budget;\n- **invariance tests**: predictions do not change when irrelevant inputs change (for example a name in a text classifier).\n\nOnly then does the model go to a canary or A/B test (05.05).\n\n## The model registry\nA registry is the source of truth for models. Each entry stores the artifact, lineage (data, code, config), evaluation results, approval status and deployment history. It answers operational questions: which model is serving, what changed between two versions, and which version to roll back to. Deployment reads from the registry; nothing is deployed by copying files by hand.\n\n! Example: an invisible data change\n! A churn model's quality dropped after a routine retrain. The registry showed the data snapshot had a different row count. The upstream team had changed how cancelled trials were recorded, turning many former churners into \"never subscribed\" and removing them. The slice gate on \"trial users\" would have caught it; the team added it after the incident and set up an alert on row counts per label.\n\n## Retraining schedules\nPipelines run on a schedule (daily, weekly), on a trigger (drift detected, new labelled data), or both. Each run produces a candidate, not an automatic deployment. Lesson 07.02 covers when and how to retrain.\n\n## Experiments versus production runs\nTrack every experiment, including failed ones, with its configuration and metrics; tools such as MLflow make this cheap. Promote an experiment to production only by running it through the pipeline, so the production model is always the output of reproducible code rather than a one-off run.\n\n## Costs and speed\nLong training jobs slow every iteration. Keep a fast path for experiments (a sampled dataset, fewer epochs) and a full path for production candidates. Cache intermediate datasets, such as built training tables, so retraining does not rebuild them from raw logs each time.\n\n## Testing the pipeline itself\nTreat pipeline code like any other production code. Unit-test feature transformations on small hand-made inputs, run the whole pipeline end to end on a tiny sample in continuous integration, and check that two runs with the same inputs and seed produce the same metrics. These tests catch the most common breakages, such as a renamed column or a changed default, before they reach a nightly run.\n\n> Takeaway: train production models only through a pipeline that versions data, features, code, config, seeds and environment, gates every candidate on metrics, slices, calibration and sanity checks, and records lineage in a registry for diagnosis and rollback.",
+   "q": "A model was retrained last night and click-through dropped 4% after deploy. Nobody can tell what changed. Describe the pipeline and records that would have let you diagnose and roll back within an hour, and the gates that should have stopped the deploy.",
+   "s": "The pipeline should be a scheduled job that (1) reads a pinned data snapshot ID, (2) builds features from versioned definitions, (3) trains with a configuration file and seed stored in the repo, (4) evaluates against the current production model on the same holdout and on key slices, and (5) registers the artifact with its lineage: data snapshot, code commit, config, metrics and environment. With that, you diff the two models' records to see what changed (for example a new data source, a changed feature definition or a different number of training days) and roll back by redeploying the previous registered version in minutes. Gates that should have blocked it: an offline metric no worse than production beyond a tolerance; no slice (new users, each country, each platform) worse by more than a set amount; calibration error within bounds; prediction distribution on recent traffic close to the current model's; and a canary with automatic rollback on online metrics before full rollout.",
+   "r": [
+    [
+     "Google Cloud, MLOps: continuous delivery and automation pipelines",
+     "https://cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning",
+     "Levels of pipeline automation."
+    ],
+    [
+     "Sato, Wider and Windheuser, Continuous Delivery for Machine Learning (2019)",
+     "https://martinfowler.com/articles/cd4ml.html",
+     "Versioning data, models and code together."
+    ],
+    [
+     "MLflow documentation",
+     "https://mlflow.org/docs/latest/index.html",
+     "Experiment tracking and a model registry."
+    ]
+   ],
+   "k": [
+    "training pipeline",
+    "reproducibility"
+   ],
+   "x": [],
+   "p": [
+    "hashed-dataset-split",
+    "learning-rate-sweep",
+    "early-stopping",
+    "k-fold-cross-validation"
+   ]
+  }
+ ]
+}

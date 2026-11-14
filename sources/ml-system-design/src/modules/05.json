@@ -1,0 +1,220 @@
+{
+ "n": "05",
+ "name": "Evaluation and experiments",
+ "lessons": [
+  {
+   "id": "05.01",
+   "t": "Classification metrics and thresholds",
+   "n": [
+    "Offline metrics must reflect how the score will be used: ranking quality (AUC, average precision), probability quality (log loss, calibration) or decision quality at a threshold (precision, recall, cost).",
+    "The **operating point** is chosen from business costs and capacity, such as the number of cases reviewers can handle or a maximum false-positive rate, not from a default of 0.5.",
+    "Base rates change between test sets and production. Precision depends on prevalence, so re-estimate it on data with the production class mix.",
+    "Many systems use **two thresholds**: act automatically above one, send to human review between the two, and allow below."
+   ],
+   "a": "## Three questions a metric can answer\n| Question | Metrics | Use when\n| Does the model rank positives above negatives? | ROC AUC, average precision (PR AUC) | comparing models, any threshold\n| Are the scores trustworthy probabilities? | log loss, expected calibration error, reliability diagram | scores feed expected-value maths, auctions, pricing\n| How good are the decisions at our threshold? | precision, recall, false-positive rate, cost | the score drives an action\n\nReport one from each row for most systems. A model can rank well (high AUC) and still be badly calibrated, or rank well overall but poorly in the narrow region around the threshold that matters. The Machine Learning course covers the definitions (mlcore 06.01 and 06.02); this lesson is about using them in a system.\n\n## Choosing the operating point\nThe threshold turns scores into actions. Choose it from what errors cost and from operational limits:\n- **cost-based**: minimise $c_{FP} \\cdot FP + c_{FN} \\cdot FN$ on a validation set;\n- **capacity-based**: flag exactly as many cases as reviewers can handle;\n- **constraint-based**: maximise recall subject to precision at least 95%, or a false-positive rate below 0.1%.\n\nPlot precision, recall and the number of flagged cases against the threshold on recent data. The right threshold is usually obvious once these curves sit next to the business constraint.\n\n%%flow Two thresholds split traffic into three actions. The middle band uses human judgement where the model is least sure.\nScore -(above high threshold)-> *Auto action -(between thresholds)-> Human review -(below low threshold)-> Allow\n%%\n\n## Prevalence changes precision\nPrecision depends on how common positives are. A model with 90% recall and a 1% false-positive rate has precision 0.90 × 0.5 / (0.90 × 0.5 + 0.01 × 0.5) ≈ 99% on a balanced test set, but on production traffic with 0.3% positives:\n$$\\text{precision} = \\frac{0.9 \\times 0.003}{0.9 \\times 0.003 + 0.01 \\times 0.997} \\approx 21\\%$$\nAlways evaluate on data with the production class mix, or reweight a stratified sample to it.\n\n! Example: the threshold that drifted\n! A payments team set a fraud threshold to block 0.5% of transactions. After a holiday marketing campaign brought many new customers, the model's scores for new accounts rose, and the same threshold blocked 1.4% of transactions, mostly legitimate first purchases. They switched to monitoring the block rate daily and recalibrating the threshold to a target rate per customer segment, with alerts on sudden shifts.\n\n## Calibration in a system\nCalibration matters whenever scores are compared across models, combined, or used as probabilities. Retraining, sampling changes (02.03) and traffic shifts all break calibration. Recalibrate on recent data with Platt scaling or isotonic regression as a final pipeline step, and monitor calibration error in production on matured labels.\n\n## Confidence intervals\nWith rare positives, metrics are noisy. A recall of 0.80 measured on 100 positives has a 95% interval of roughly 0.71 to 0.87. Report intervals, using bootstrap resampling, and do not treat small differences between models as real without them.\n\n## Metrics per slice\nReport metrics for important segments as well as overall: countries, languages, platforms, new versus established users. A threshold that is fine overall can be far too aggressive for one segment. Lesson 05.04 covers slice analysis.\n\n## Writing it up\nAn evaluation summary for a classification system usually fits in one table: AUC and average precision for ranking quality; log loss and calibration error for probability quality; precision, recall and expected daily volume at each threshold; and the same three rows for the two or three most important slices, each with an interval. Put the current production model in the next column. A reviewer can then see in one glance whether the new model is better, where, and by how much.\n\n## Thresholds per segment\nA single global threshold assumes the score means the same thing everywhere. When segments differ in base rate or calibration, such as new versus established accounts, either calibrate per segment or set per-segment thresholds against the same business rule (for example the same precision target). Document the choice, because per-segment thresholds can raise fairness questions that a policy team should review.\n\n> Takeaway: report ranking, probability and decision metrics, choose thresholds from costs, capacity or constraints on data with the production class mix, recalibrate after every change, and give confidence intervals and per-slice numbers.",
+   "q": "A content-moderation model will auto-remove posts above a threshold and send borderline posts to a review team that can handle 20,000 posts a day. The platform receives 10 million posts a day, of which about 0.3% violate policy. How do you set the two thresholds, and which metrics do you report?",
+   "s": "Use a recent, labelled sample with the production class mix (or stratified and reweighted to 0.3% prevalence). For auto-removal, choose the lowest threshold whose precision is at or above a high bar agreed with policy, for example 98%, because wrongful removals are costly and visible; report recall at that threshold. For the review band, choose a lower threshold so that the number of posts between the two thresholds is about 20,000 a day (0.2% of traffic), which uses reviewer capacity on the most uncertain cases. Report: precision and recall of auto-removal, total recall (auto plus review, after reviewers decide), the expected daily review volume and its variance, the false-removal rate per million posts, and these numbers by language and region. Recheck the thresholds whenever the model or the traffic mix changes.",
+   "r": [
+    [
+     "Saito and Rehmsmeier, The Precision-Recall Plot Is More Informative than the ROC Plot on Imbalanced Datasets (2015)",
+     "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0118432",
+     "Why PR curves matter for rare positives."
+    ],
+    [
+     "scikit-learn, Probability calibration",
+     "https://scikit-learn.org/stable/modules/calibration.html",
+     "Reliability diagrams, Platt scaling and isotonic regression."
+    ],
+    [
+     "Google, Machine Learning Crash Course: classification",
+     "https://developers.google.com/machine-learning/crash-course/classification",
+     "Thresholds, confusion matrices and ROC."
+    ]
+   ],
+   "k": [
+    "precision and recall",
+    "operating point"
+   ],
+   "x": [],
+   "p": [
+    "precision-recall-curve-and-average-precision",
+    "auc-roc",
+    "expected-calibration-error",
+    "log-loss-binary-cross-entropy"
+   ]
+  },
+  {
+   "id": "05.02",
+   "t": "Retrieval and ranking metrics",
+   "n": [
+    "Retrieval stages are judged by **recall@k**: does the candidate set contain the items the final ranker or the user would choose?",
+    "Ranking stages are judged by position-aware metrics such as **NDCG@k**, **MRR** and **MAP**, which reward putting relevant items near the top.",
+    "Logged engagement is biased by what was shown and where. Offline metrics on logs favour the current model; correct with position-bias models, randomised data or counterfactual estimators.",
+    "Track **beyond-accuracy** metrics too: coverage, diversity, novelty and freshness. A ranker can win NDCG while narrowing what users see."
+   ],
+   "a": "## Two stages, two kinds of metric\nLarge ranking systems retrieve a few hundred candidates from millions, then rank them (04.02). Each stage needs its own metric.\n\n**Retrieval** is judged by recall: of the items the user eventually engaged with (or that the full ranker would put on top), how many are in the candidate set?\n$$\\text{recall@}k = \\frac{|\\text{relevant} \\cap \\text{top-}k|}{|\\text{relevant}|}$$\nRetrieval with low recall caps the whole system; no ranker can recover an item that was never retrieved.\n\n**Ranking** is judged by how high relevant items appear:\n| Metric | Definition | Good for\n| Precision@k | share of the top k that is relevant | fixed-size lists\n| Hit rate@k | did any relevant item appear in the top k? | next-item prediction\n| MRR | average of 1/rank of the first relevant item | one right answer (search, autocomplete)\n| MAP | mean of precision at each relevant position | several relevant items\n| NDCG@k | discounted gain, normalised by the ideal ordering | graded relevance (purchase > click)\n\nNDCG uses $\\text{DCG@}k = \\sum_{i=1}^{k} \\frac{2^{rel_i} - 1}{\\log_2(i + 1)}$, divided by the best possible DCG for that list. It handles graded relevance and rewards the top positions most.\n\n%%flow Evaluate each stage with its own metric, then the system end to end.\nRetrieval -(recall@500)-> Ranking -(NDCG@10)-> Re-ranking -(diversity, coverage)-> *Online metric: engagement, retention\n%%\n\n## Logged data is biased\nOffline ranking evaluation usually replays logged sessions: the items shown, and what the user clicked. Two biases distort it:\n- **Exposure bias**: you only see feedback on items the old system showed. A new ranker that would surface different items gets no credit for them.\n- **Position bias**: users click top positions more regardless of relevance, so logs over-reward whatever the old ranker put first.\n\nCorrections:\n- estimate how likely each position is to be examined (from a small experiment that randomises order among top results) and weight clicks by the inverse of that propensity;\n- reserve a little traffic for randomised exposure, giving unbiased data for evaluation;\n- use counterfactual estimators (inverse propensity scoring) when you log the probability each item was shown.\n\n## Human relevance judgements\nFor search, a fixed set of queries with graded human labels gives a stable benchmark unaffected by the current ranker. It is expensive but valuable as a regression test: every new model must not lose NDCG on it.\n\n## Beyond accuracy\n| Metric | What it catches\n| Catalogue coverage | share of items ever recommended; a narrowing system shows the same few items\n| Diversity | dissimilarity within a list; lists of near-duplicates feel repetitive\n| Novelty | how unpopular the recommended items are; too low means only hits\n| Freshness | share of new content; low values starve new creators\n| Fairness of exposure | exposure by provider group compared with their relevance\n\nThese are often guardrails in A/B tests: the new ranker must improve engagement without dropping coverage or new-creator exposure below a threshold.\n\n! Example: a better ranker that shrank the catalogue\n! An online shop's new ranker raised offline NDCG by 5% and online conversion by 1%. Three months later, sellers complained that sales had concentrated in fewer listings. Coverage of the top 10 lists had dropped from 30% to 9% of the catalogue. The team added a diversity re-ranking step (maximal marginal relevance) and a coverage guardrail, recovering most coverage at a 0.2% conversion cost.\n\n## Choosing k\nPick $k$ to match the product: the number of results above the fold, the slots on a home screen, or the length of an autocomplete list. A metric at $k = 100$ for a product that shows five items measures the wrong thing.\n\n## Offline-online agreement\nKeep a log of past launches with offline metric changes and the online result. If offline NDCG gains of 2% have reliably produced engagement gains, trust the offline metric for screening. If not, fix the offline setup before relying on it.\n\n## Metrics per query type\nSearch and recommendation traffic mixes very different requests: navigational queries with one right answer, broad exploratory ones, and long-tail queries seen once. Report ranking metrics for each type. A model that helps head queries but hurts the long tail can look neutral overall while frustrating the users who search hardest.\n\n> Takeaway: judge retrieval by recall@k and ranking by position-aware metrics such as NDCG and MRR, correct logged data for exposure and position bias, keep a human-labelled regression set, and guard coverage, diversity and freshness alongside accuracy.",
+   "q": "A new video ranker improves offline NDCG@10 on last week's logged sessions by 6%, but an A/B test shows no change in watch time. Give three reasons the offline gain might not transfer and how you would change the offline evaluation.",
+   "s": "(1) Exposure bias: logs only contain engagement on videos the old ranker showed, so the new ranker is rewarded for re-ranking the old model's choices and is never credited or penalised for videos it would surface that were never shown. (2) Position bias: clicks at the top of the old list partly reflect position, so learning to copy the old ordering looks good offline. (3) Metric mismatch: NDCG on clicks is not watch time; the new ranker may promote clickable but short videos. Also possible: the retrieval stage limits what the ranker can change, or the offline set over-represents heavy users. Fixes: evaluate with position-debiased labels (inverse propensity weighting from a small randomised slot experiment), use watch-time-weighted gains in NDCG, collect a small amount of randomised exposure data for counterfactual evaluation, check recall of the retrieval stage separately, and report results by user segment.",
+   "r": [
+    [
+     "Wikipedia, Discounted cumulative gain",
+     "https://en.wikipedia.org/wiki/Discounted_cumulative_gain",
+     "NDCG and its variants, citing Järvelin and Kekäläinen (2002)."
+    ],
+    [
+     "Joachims, Swaminathan and Schnabel, Unbiased Learning-to-Rank with Biased Feedback (2016)",
+     "https://arxiv.org/abs/1608.04468",
+     "Correcting position bias with propensity weighting."
+    ],
+    [
+     "Wikipedia, Recommender system (evaluation and beyond-accuracy measures)",
+     "https://en.wikipedia.org/wiki/Recommender_system",
+     "Diversity, novelty, serendipity and coverage, with references."
+    ]
+   ],
+   "k": [
+    "ranking metrics",
+    "offline evaluation"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "ndcg-at-k",
+    "hit-rate-and-mrr",
+    "precision-recall-at-k",
+    "catalog-coverage-and-novelty",
+    "mmr-diversity-rerank"
+   ]
+  },
+  {
+   "id": "05.03",
+   "t": "Evaluating generated answers",
+   "n": [
+    "Generated outputs rarely have one right answer, so evaluation mixes **reference-based** metrics, **rubric-based** human or model grading, **pairwise preference**, and **task success** checks.",
+    "Build a versioned **evaluation set** from real traffic, with hard and adversarial cases, and keep it separate from anything used for prompts or training.",
+    "**LLM-as-judge** scales grading but has biases: position, length, self-preference and sensitivity to the rubric wording. Calibrate it against human labels.",
+    "In production, measure task outcomes (resolution rate, edits, thumbs, escalations), safety and cost per request, not just offline scores."
+   ],
+   "a": "## Why it is harder\nFor a classifier, the label is right or wrong. For a generated summary, answer or piece of code, many outputs are acceptable, and small changes in wording can be fine while a single wrong number is a serious error. Evaluation therefore combines several methods, each catching different failures. The AI Engineering course covers LLM foundations and RAG (aieng 03); this lesson focuses on evaluation design.\n\n## Methods\n| Method | How | Strengths | Weaknesses\n| Reference overlap (BLEU, ROUGE) | compare n-grams with a reference | cheap, reproducible | punishes valid paraphrases\n| Exact or programmatic checks | parse output, run tests, compare a number | objective | only for structured tasks\n| Human rubric grading | experts score against criteria | most trustworthy | slow, expensive\n| LLM-as-judge | a model grades against a rubric | scalable | biased, needs calibration\n| Pairwise preference | which of two answers is better? | easier for raters | relative, needs many comparisons\n| Task outcome | did the user's problem get solved? | closest to value | delayed, noisy\n\nFor code, run tests. For extraction, check fields exactly. For open-ended answers, use rubrics and pairwise comparisons, validated by humans.\n\n## The evaluation set\nBuild it from real usage, not invented examples alone:\n- sample real queries across topics and difficulty;\n- add hard cases: ambiguous questions, missing information, adversarial prompts, long inputs;\n- write references or rubrics with domain experts;\n- version it, and keep it out of prompt examples and training data.\n\nA few hundred well-chosen examples with careful labels are worth more than thousands of noisy ones. Grow the set from production failures: every serious bug becomes a test case.\n\n%%flow An evaluation loop for generated outputs. Production failures become new test cases.\nReal traffic -(sample + hard cases)-> Eval set -(model outputs)-> Graders: checks, judge, humans -(scores)-> *Release decision -(launch)-> Production monitoring -(failures)-> Eval set\n%%\n\n## Using model judges well\nAn LLM judge grades faster and cheaper than people, but:\n- **position bias**: it may prefer the first answer shown; randomise order and average both orders;\n- **length bias**: it may prefer longer answers; compare at similar lengths or regress scores on length (the `remove-response-length-bias-from-judge-scores` problem shows how);\n- **self-preference**: it may favour outputs from its own model family;\n- **rubric sensitivity**: vague criteria give unstable scores; use specific rubrics with examples.\n\nValidate the judge on a human-labelled subset and report agreement before trusting it. Keep a slice of human grading running permanently.\n\n## Pairwise comparisons and ratings\nWhen comparing several systems, pairwise votes fitted with a Bradley-Terry model give a rating per system with confidence intervals. This is more reliable than averaging 1-to-10 scores, which people and models use inconsistently.\n\n! Example: a judge that rewarded padding\n! A team optimised a summariser against an LLM judge asked \"how helpful is this summary, 1-10?\". Scores rose steadily while users complained summaries had become longer and less useful. The judge rewarded length and hedging. Rewriting the rubric to check specific facts against the source, plus a length penalty, made judge scores track user ratings again.\n\n## RAG-specific checks\nFor retrieval-augmented answers, measure the retrieval and the generation separately: did retrieval find the supporting passages (recall), is every claim in the answer supported by them (faithfulness), and does the answer address the question (relevance)? A wrong answer with good retrieval is a generation problem; a wrong answer with poor retrieval is a search problem.\n\n## In production\nOffline scores are not the end. Track task outcomes (resolution rate, user edits to drafts, follow-up questions, escalations), explicit feedback, safety incidents, latency and cost per request. Sample production outputs for regular human review.\n\n## Cost and latency are part of quality\nTwo systems with the same answer quality are not equal if one costs five times as much per request or takes eight seconds to respond. Report tokens per request, cost per thousand requests and p95 latency in every evaluation table, next to the quality scores. Many launch decisions come down to whether a smaller model, a shorter prompt or fewer retrieved passages keep quality within a tolerance while cutting cost.\n\n> Takeaway: evaluate generated outputs with a mix of programmatic checks, rubric grading, pairwise preference and task outcomes on a versioned set built from real traffic, and calibrate any model judge against human labels for position, length and rubric bias.",
+   "q": "You are launching an LLM assistant that answers questions about a company's HR policies using retrieved documents. Design the evaluation: datasets, metrics, how you use model judges, and what you monitor after launch.",
+   "s": "Datasets: 500 to 1,000 real employee questions sampled from search logs and HR tickets, stratified by topic, plus hand-written hard cases (ambiguous questions, policies that differ by country, questions with no answer in the documents, attempts to extract other employees' data). For each, HR experts write a reference answer and list the documents that support it. Metrics: retrieval recall of supporting documents; answer correctness against the reference graded on a rubric (correct, partially correct, wrong); faithfulness (every claim supported by retrieved text); appropriate refusal when the answer is absent; citation accuracy; and latency and cost. Use an LLM judge with a specific rubric and examples for correctness and faithfulness, validated against expert labels on a 200-item subset (target agreement above 85%), randomising answer order for pairwise comparisons and checking length bias. After launch, monitor thumbs-down and follow-up rates, escalations to HR, a weekly expert review of a random sample, refusal rate, and alerts for responses citing no document.",
+   "r": [
+    [
+     "Zheng et al., Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena (2023)",
+     "https://arxiv.org/abs/2306.05685",
+     "Agreement and biases of model judges."
+    ],
+    [
+     "Liang et al., Holistic Evaluation of Language Models (HELM, 2022)",
+     "https://arxiv.org/abs/2211.09110",
+     "Evaluating models across many scenarios and metrics."
+    ],
+    [
+     "Es et al., RAGAS: Automated Evaluation of Retrieval Augmented Generation (2023)",
+     "https://arxiv.org/abs/2309.15217",
+     "Faithfulness and relevance metrics for RAG."
+    ]
+   ],
+   "k": [
+    "LLM evaluation",
+    "LLM-as-judge"
+   ],
+   "x": [],
+   "p": [
+    "remove-response-length-bias-from-judge-scores",
+    "fit-elo-ratings-from-pairwise-votes",
+    "evaluation-metrics-bleu-rouge",
+    "score-multiple-choice-continuations"
+   ]
+  },
+  {
+   "id": "05.04",
+   "t": "Error analysis and evaluation slices",
+   "n": [
+    "Aggregate metrics hide where a model fails. **Slices**, such as segments by country, device, user tenure or item type, show which groups are underserved.",
+    "**Error analysis** means reading misclassified examples, grouping them into causes and counting each cause, so you fix the biggest problem first.",
+    "Common causes are label noise, missing features, distribution gaps, and bugs in data or serving. Each needs a different fix: more data, new features, relabelling or engineering.",
+    "Turn recurring failure types into permanent test slices that every new model must pass."
+   ],
+   "a": "## Averages hide failures\nA model with 95% accuracy can be 99% accurate for most users and 70% accurate for one country, device or language. Those users are the ones who complain, churn or are treated unfairly. Aggregate metrics are the starting point of evaluation, not the end.\n\n## Slicing\nCompute every key metric by segment:\n- **user**: new versus returning, country, language, accessibility settings;\n- **item or content**: category, popularity tier, age, creator size;\n- **context**: platform, app version, time of day, network quality;\n- **input properties**: length, noise, rare words, missing features.\n\nLook for slices that are both worse than average and large enough to matter. Compute confidence intervals; a slice with 30 examples can look terrible by chance.\n\n```python\nimport pandas as pd\ndef slice_report(df, by, metric=\"correct\", min_n=200):\n    g = df.groupby(by)[metric].agg([\"mean\", \"count\"])\n    g[\"se\"] = (g[\"mean\"] * (1 - g[\"mean\"]) / g[\"count\"]) ** 0.5\n    overall = df[metric].mean()\n    g[\"gap\"] = g[\"mean\"] - overall\n    return g[g[\"count\"] >= min_n].sort_values(\"gap\")\n```\n\n## Reading errors\nNumbers tell you where; examples tell you why. Sample 100 to 200 errors from the most important slice, read them, and tag each with a cause. Then count.\n| Cause | Share of errors | Fix\n| Label is wrong | 18% | relabel; improve guidelines\n| Missing information in features | 30% | new feature or data source\n| Rare pattern, few training examples | 25% | targeted data collection, augmentation\n| Bug in preprocessing or serving | 12% | engineering fix\n| Genuinely ambiguous | 15% | accept, or change the product\n\nThe table turns vague worries into a prioritised plan. The biggest bucket with a feasible fix goes first. A fix that addresses 30% of errors is worth more than a clever modelling idea that addresses 5%.\n\n%%flow Error analysis turns metrics into a prioritised list of fixes and new tests.\nMetrics by slice -(worst large slices)-> Sample errors -(tag causes)-> Count by cause -(largest fixable)-> *Fix -(add slice + cases)-> Evaluation gates\n%%\n\n## Estimating the ceiling\nFor each cause, estimate the best possible gain: if every label error were fixed, how much would the metric improve? This \"ceiling analysis\" stops teams from spending months on a component that could only add half a point.\n\n! Example: a slice that explained the complaints\n! A food-delivery ETA model had good average error, but complaints came mainly from one city. Slicing by city and hour showed large under-estimates at dinner time in districts with new high-rise buildings. Reading cases revealed couriers spent 8 to 12 minutes getting from the street to the customer's door, which the model did not know about. A per-building \"last-50-metres\" feature learned from past deliveries halved the error in those districts.\n\n## Automating slice discovery\nWith many attributes, manual slicing misses combinations (\"Android, app version 5.2, in Brazil, at night\"). Tools like Slice Finder search for subgroups with significantly worse performance. Treat their output as leads to investigate, not conclusions.\n\n## Behavioural tests\nSome failures are best expressed as tests rather than slices:\n- **invariance**: changing a name or a neutral word should not change a sentiment label;\n- **directional**: adding \"not\" should flip it;\n- **minimum functionality**: simple cases every model must get right.\n\nAdd each discovered failure type as a test case or a slice in the evaluation gates (04.04), so it cannot come back unnoticed.\n\n## Fairness slices\nSlices by protected or sensitive attributes deserve particular care. Report error rates, false-positive rates and calibration per group where the data and policy allow it, and decide with policy and legal teams which differences are acceptable. When the attribute itself is not available, proxies such as region can reveal some disparities but should be interpreted cautiously.\n\n## Sharing the results\nWrite error analysis up as a short table of causes, shares and planned fixes, with a few representative examples for each. It makes the next modelling decision easy to justify and lets people outside the team, such as product managers and reviewers, see why the plan targets one problem before another.\n\n> Takeaway: report every key metric by slice with confidence intervals, read and tag a sample of errors to find their causes, fix the largest fixable cause first, and turn each failure type into a permanent slice or test in the evaluation gates.",
+   "q": "A speech-to-text model for a customer-service product has 8% word error rate overall, but complaints are rising. Describe how you would find where it fails and decide what to fix first.",
+   "s": "Slice the error rate by every attribute available: language and accent or region, audio channel (phone vs app), background noise level estimated from the audio, call length, speaker role (agent vs customer), and domain vocabulary such as product names and account numbers. Look for slices with much higher error and enough volume to matter, computing confidence intervals so small slices are not over-interpreted. Then sample 200 errors from the worst high-volume slices and label each with a cause: mis-heard product names, numbers formatted wrongly, crosstalk, low-bandwidth audio, labelling errors in references. Count causes and estimate how much each would reduce errors if fixed. For example, if 35% of customer-side errors are product names and account numbers, a custom vocabulary or contextual biasing gives the biggest win; if phone audio has twice the error, add phone-quality training data or augmentation. Add each important slice to the evaluation gates.",
+   "r": [
+    [
+     "Andrew Ng, Machine Learning Yearning (error analysis chapters)",
+     "https://info.deeplearning.ai/machine-learning-yearning-book",
+     "Manual error analysis and prioritisation."
+    ],
+    [
+     "Chung et al., Automated Data Slicing for Model Validation (Slice Finder, 2019)",
+     "https://arxiv.org/abs/1807.06068",
+     "Finding underperforming slices automatically."
+    ],
+    [
+     "Ribeiro et al., Beyond Accuracy: Behavioral Testing of NLP Models with CheckList (2020)",
+     "https://arxiv.org/abs/2005.04118",
+     "Turning failure types into tests."
+    ]
+   ],
+   "k": [
+    "error analysis",
+    "slices"
+   ],
+   "x": [
+    "pandas"
+   ],
+   "p": [
+    "permutation-feature-importance",
+    "group-by",
+    "bootstrap-confidence-interval",
+    "expected-calibration-error"
+   ]
+  },
+  {
+   "id": "05.05",
+   "t": "A/B testing and safe rollout",
+   "n": [
+    "Offline metrics screen candidates; **online experiments** decide. Randomise users (not requests) into control and treatment, and compare the business metric with a pre-registered analysis.",
+    "Plan the test: primary metric, guardrails, minimum detectable effect, sample size and duration covering weekly cycles.",
+    "Roll out in stages: shadow mode, canary, A/B test, then gradual ramp, with automatic rollback when guardrails break.",
+    "Beware interference between users (marketplaces, social networks), novelty effects, and peeking at results. Each needs a specific design fix."
+   ],
+   "a": "## Why online tests decide\nOffline metrics are estimates built on logged data and assumptions (05.02). The only way to know whether a model improves the business metric is to show it to real users and compare. A randomised controlled experiment does that while controlling for everything else that changes over time. The Machine Learning course covers the statistics (mlcore 09.04, mlmaths 13.06); this lesson covers design choices for ML systems.\n\n## Designing the test\n- **Unit of randomisation**: usually the user, so each person has a consistent experience. Request-level randomisation inflates sample size but breaks consistency and can bias results.\n- **Primary metric**: one metric that decides the launch, such as bookings per user.\n- **Guardrails**: metrics that must not get worse: latency, crash rate, complaints, revenue for other surfaces.\n- **Minimum detectable effect and sample size**: the smallest effect worth detecting and the users needed to detect it with, say, 80% power. For a binary metric with base rate $p$, roughly $n \\approx 16 p(1-p)/\\delta^2$ per arm for a two-sided test at 5% significance.\n- **Duration**: at least one or two full weeks to cover weekly cycles and let novelty effects fade.\n\nWrite this down before starting. Changing the metric after seeing results is how false wins get shipped.\n\n## Staged rollout\n%%flow A rollout ladder. Each rung can stop the release.\nOffline gates -(pass)-> Shadow mode -(no errors, sane outputs)-> Canary 1-5% -(guardrails healthy)-> *A/B test -(primary metric wins)-> Ramp to 100% -(holdback)-> Long-term check\n%%\n- **Shadow**: the new model scores live traffic but its outputs are not used; compare predictions and latency with production.\n- **Canary**: a small share of traffic gets the new model; automatic rollback if error rates or guardrails break.\n- **A/B test**: a properly powered experiment on the primary metric.\n- **Ramp**: increase exposure in steps while monitoring.\n- **Holdback**: keep a small control group for weeks to measure long-term effects.\n\n## Pitfalls\n| Pitfall | What happens | Fix\n| Peeking | stopping when p < 0.05 first appears inflates false positives | fixed horizon, or sequential tests designed for monitoring\n| Novelty effect | users try anything new, then revert | run longer, look at effects over time\n| Interference | treatment affects control (shared marketplace, social graph) | switchback, geo or cluster randomisation\n| Sample ratio mismatch | arms differ in size more than chance allows | check assignment and logging before trusting results\n| Too many metrics | some will be \"significant\" by chance | one primary metric, correction for others\n| Feedback into training | treatment data trains the next model | tag data by arm, analyse separately\n\n! Example: a test that measured the wrong thing\n! A news app's new ranker raised clicks by 3% in a one-week test and was launched. Over the next month, daily active users fell slightly. A long-running 1% holdback showed the ranker increased clicks on sensational headlines but reduced return visits. The team made 28-day retention a guardrail for future ranking tests and kept a permanent holdback.\n\n## Interleaving for rankers\nFor ranking changes, interleaving merges results from two rankers into one list and credits clicks to the ranker that contributed each item. It needs far fewer users than an A/B test to detect which ranker is better, making it a good screening step before a full test.\n\n## Rollback\nEvery deploy needs a fast, tested rollback: the previous model version stays loaded or can be redeployed from the registry in minutes, and feature or schema changes are backward compatible. Automate rollback on guardrail breaches during the canary.\n\n## Reading results\nLook at the confidence interval, not just the p-value. A 0.5% lift with an interval of -0.1% to 1.1% is not a win yet. Check the result across major segments; a win driven entirely by one platform may hide a loss elsewhere. Then write a short decision record: what was tested, the result with its interval, the guardrails, and why the change was launched or not. These records become the evidence for how well offline metrics predict online ones.\n\n> Takeaway: decide launches with randomised online experiments planned in advance, roll out through shadow, canary, A/B and ramp stages with automatic rollback, and design around peeking, novelty, interference and sample-ratio problems.",
+   "q": "A ride-hailing company wants to test a new pricing model. Why might a standard user-level A/B test give a misleading answer, and what design would you use instead?",
+   "s": "Riders and drivers share one marketplace. If treatment riders see lower prices, they request more rides, using up drivers that control riders would otherwise have got, so control's experience gets worse and the measured difference is exaggerated (interference, a violation of the no-interference assumption). Driver behaviour also responds to aggregate demand. Use a design that randomises at a level where the market is mostly self-contained: switchback experiments that alternate the whole city between treatment and control in time blocks (for example 30 to 60 minutes, with washout periods), or geographic randomisation across comparable cities or zones. Analyse with block-level outcomes and account for carry-over between blocks. Keep guardrails on driver earnings, wait times and cancellation rates, and run long enough to cover weekly patterns.",
+   "r": [
+    [
+     "Kohavi, Tang and Xu, Trustworthy Online Controlled Experiments (book site)",
+     "https://experimentguide.com/",
+     "The standard reference on online experiments."
+    ],
+    [
+     "Johari et al., Always Valid Inference: Bringing Sequential Analysis to A/B Testing (2015)",
+     "https://arxiv.org/abs/1512.04922",
+     "Sequential tests that allow peeking."
+    ],
+    [
+     "Google SRE Workbook, Canarying Releases",
+     "https://sre.google/workbook/canarying-releases/",
+     "Staged rollout and automatic rollback."
+    ]
+   ],
+   "k": [
+    "A/B testing",
+    "rollout"
+   ],
+   "x": [
+    "NumPy",
+    "SciPy"
+   ],
+   "p": [
+    "b-test-significance",
+    "canary-mann-whitney",
+    "msprt-always-valid-pvalues",
+    "z-test-one-sample",
+    "bootstrap-confidence-interval"
+   ]
+  }
+ ]
+}

@@ -1,0 +1,12 @@
+{"id": "tiny-vit-from-scratch", "kind": "project", "group": "Computer Vision",
+ "title": "Build a Tiny Vision Transformer",
+ "blurb": "Treat an image as a sequence of patches: patchify, embed with a class token and positions, attend, run a pre-norm block and measure how far each head looks.",
+ "intro": "A vision transformer cuts an image into patches and runs a standard transformer encoder over them. The steps build patch extraction, the patch embedding with a class token and position embeddings, scaled dot-product attention over patches, a pre-norm transformer block, and the mean attention distance that shows whether a head looks locally or across the whole image. The capstone runs a complete one-block ViT forward pass and reports its logits and each head's attention distance.",
+ "steps": [
+  {"name": "Cut images into patch vectors", "problem": "vit-patchify"},
+  {"name": "Embed patches with a class token and positions", "problem": "vision-transformer-patch-embedding"},
+  {"name": "Scaled dot-product attention over patches", "problem": "scaled-dot-product-attention"},
+  {"name": "Run one pre-norm transformer block", "problem": "transformer-encoder-block"},
+  {"name": "Measure how far each head looks", "problem": "attention-distance-per-head"}
+ ],
+ "capstone": "tiny-vit-capstone"}

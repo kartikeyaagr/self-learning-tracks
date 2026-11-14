@@ -1,0 +1,13 @@
+{"id": "recommender-evaluation-from-scratch", "kind": "project", "group": "Recommendation and Ranking",
+ "title": "Evaluate a Recommender Honestly",
+ "blurb": "Measure recommendations the way they will be used: hit rate, precision and recall, MRR, NDCG, coverage and popularity bias, a time-based split, and full ranking instead of sampled negatives.",
+ "intro": "Recommender metrics are easy to inflate by accident: random splits leak the future, sampled negatives flatter weak models, and popularity can look like personalisation. The steps build hit rate, precision and recall at K, mean reciprocal rank, NDCG with graded relevance, coverage and novelty, a time-based split with a gap, and a comparison of full ranking against 100 sampled negatives. The capstone evaluates a popularity baseline and an item co-occurrence model on the same time split with all the metrics.",
+ "steps": [
+  {"name": "Hit rate, precision and recall at K", "problem": "precision-recall-at-k"},
+  {"name": "Mean reciprocal rank", "problem": "hit-rate-and-mrr"},
+  {"name": "NDCG with graded relevance", "problem": "ndcg-at-k"},
+  {"name": "Catalogue coverage and popularity bias", "problem": "catalog-coverage-and-novelty"},
+  {"name": "A time-based train and test split", "problem": "time-split-with-gap"},
+  {"name": "Full ranking versus 100 sampled negatives", "problem": "sampled-vs-full-ranking-metrics"}
+ ],
+ "capstone": "recommender-evaluation-capstone"}

@@ -1,0 +1,12 @@
+{"id": "memory-efficient-training-from-scratch", "kind": "project", "group": "ML Systems and GPU Programming",
+ "title": "Memory-Efficient Training from Scratch",
+ "blurb": "Account for every byte of a training step: model states, activations, recomputation, quantised weights and adapters, then pick a plan that fits the GPU.",
+ "intro": "Training memory has two parts: model states (weights, gradients, optimiser moments) that scale with parameters, and activations that scale with batch, sequence length and depth. The steps count model states under mixed precision, estimate transformer activations with and without recomputation, plan checkpoint segments, quantise weights to int8, and size a LoRA fine-tune. The capstone searches ZeRO stages, recomputation modes and micro-batch sizes and returns the plan that fits.",
+ "steps": [
+  {"name": "Count the memory of model states", "problem": "mixed-precision-training-memory-accountant"},
+  {"name": "Estimate activation memory", "problem": "transformer-activation-memory"},
+  {"name": "Plan activation checkpoints", "problem": "activation-checkpoint-plan"},
+  {"name": "Quantise weights to int8 with absmax scales", "problem": "int8-symmetric-quantize"},
+  {"name": "Size a LoRA fine-tune", "problem": "lora-finetune-memory"}
+ ],
+ "capstone": "training-memory-plan-capstone"}

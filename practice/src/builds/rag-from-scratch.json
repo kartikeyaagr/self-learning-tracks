@@ -1,0 +1,13 @@
+{"id": "rag-from-scratch", "kind": "project", "group": "Agentic Systems",
+ "title": "RAG from Scratch",
+ "blurb": "Build retrieval-augmented generation one primitive at a time: chunking, embeddings, retrieval, context packing, citation checks and retrieval evaluation, then wire them into one pipeline.",
+ "intro": "Retrieval-augmented generation answers a question from documents the model was never trained on. Each step builds one stage and tests it on its own: split documents into overlapping chunks, turn chunks into TF-IDF vectors, rank them with hybrid retrieval, pack the best evidence into a token budget with permission checks, verify that every cited chunk supports its sentence, and measure whether retrieval found the expected evidence. The capstone composes the stages into a deterministic extractive pipeline. In a framework such as LangChain these map onto a text splitter, an embedding model with a vector store such as Chroma, a retriever, a prompt template and an LLM call.",
+ "steps": [
+  {"name": "Split documents into overlapping chunks", "problem": "chunk-text-with-overlap"},
+  {"name": "Turn chunks into searchable vectors", "problem": "tf-idf", "note": "A neural embedding model replaces this in production; the interface stays the same."},
+  {"name": "Rank chunks with sparse, dense and fused scores", "problem": "document-ranking"},
+  {"name": "Pack permitted evidence into the context", "problem": "rag-context-packing"},
+  {"name": "Check citations against the evidence", "problem": "validate-citations"},
+  {"name": "Measure whether retrieval found the evidence", "problem": "hit-rate-and-mrr"}
+ ],
+ "capstone": "rag-pipeline-capstone"}

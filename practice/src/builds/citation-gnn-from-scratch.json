@@ -1,0 +1,12 @@
+{"id": "citation-gnn-from-scratch", "kind": "project", "group": "Graph Machine Learning",
+ "title": "Classify Research Papers by Their Citations",
+ "blurb": "Use a citation graph to classify papers with few labels: masked splits, the normalised adjacency, GCN and GraphSAGE layers, and over-smoothing.",
+ "intro": "When only a few papers are labelled, the papers they cite are strong evidence about their topic. Graph neural networks use that by passing information along the links. The steps build accuracy on masked splits of one graph, the normalised adjacency matrix, a GCN layer, a GraphSAGE layer that keeps a node's own features apart from its neighbours', and a measure of over-smoothing as layers are stacked. The capstone trains a simplified GCN and compares it with no propagation and with far too much.",
+ "steps": [
+  {"name": "Score predictions on one split", "problem": "masked-split-accuracy"},
+  {"name": "Build the normalised adjacency matrix", "problem": "normalized-adjacency"},
+  {"name": "Pass messages through one GCN layer", "problem": "gcn-layer"},
+  {"name": "Average the neighbours, keep yourself apart", "problem": "graphsage-mean-layer"},
+  {"name": "Measure over-smoothing", "problem": "oversmoothing-measure"}
+ ],
+ "capstone": "citation-gnn-capstone"}

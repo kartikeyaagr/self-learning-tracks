@@ -1,0 +1,13 @@
+{"id": "tiny-gpt-from-scratch", "kind": "project", "group": "LLM Engineering",
+ "title": "Tiny GPT from Scratch",
+ "blurb": "Build a small GPT piece by piece: byte-pair tokens, the next-token loss, causal and multi-head attention, a parameter budget and sampling, then run the whole model.",
+ "intro": "A GPT is a stack of causal self-attention and MLP blocks trained to predict the next token. The steps build what you need to read and run one: a BPE merge, cross-entropy over a padded batch, masked attention, multi-head causal attention, an exact parameter count, and the temperature, top-k and top-p filters used for sampling. The capstone wires a one-layer model with fixed weights into a forward pass, a loss and a greedy decoding loop. Training the same model in PyTorch on a small text corpus is the natural next step.",
+ "steps": [
+  {"name": "Merge the most frequent byte pair", "problem": "bpe-merge-step"},
+  {"name": "Next-token cross-entropy with padding", "problem": "cross-entropy-loss-mean-reduction"},
+  {"name": "Attention with a mask", "problem": "scaled-dot-product-attention"},
+  {"name": "Multi-head causal self-attention", "problem": "scaled-dot-product-attention-2"},
+  {"name": "Count the parameters", "problem": "gpt-parameter-count", "note": "GPT-2 small should come to 124,439,808."},
+  {"name": "Temperature, top-k and top-p", "problem": "temperature-top-k-and-top-p-sampling"}
+ ],
+ "capstone": "tiny-gpt-capstone"}

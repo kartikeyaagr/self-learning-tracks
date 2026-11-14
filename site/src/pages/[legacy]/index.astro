@@ -4,7 +4,7 @@ import { getCollection } from 'astro:content';
 import { courseData, lessonUrl } from '../../lib/course.mjs';
 import { u } from '../../lib/url.mjs';
 export async function getStaticPaths() {
-  const out = [{params: {legacy: 'ml-system-design'}, props: {home: u('/courses/'), map: {}}}];
+  const out = [];
   for (const c of await getCollection('courses')) {
     const { modules } = await courseData(c.id), map = {};
     for (const m of modules) { map['m' + m.n] = u(`/courses/${c.id}/${m.slug}/`);

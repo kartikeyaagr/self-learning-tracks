@@ -1,0 +1,12 @@
+{"id": "ppo-agent-from-scratch", "kind": "project", "group": "Reinforcement Learning",
+ "title": "Train an Agent with PPO",
+ "blurb": "Build Proximal Policy Optimization from its parts: returns, GAE advantages, the clipped objective, KL and clip-fraction diagnostics, and the full minibatch loss.",
+ "intro": "PPO is the default policy-gradient algorithm in practice, from robotics to language-model fine-tuning. The steps build discounted returns that respect episode boundaries, generalised advantage estimation, the clipped surrogate objective, the approximate KL and clip fraction used to watch an update, and the complete minibatch loss with value and entropy terms. The capstone runs a full multi-epoch PPO update on a softmax bandit policy with a hand-written gradient and early stopping on KL.",
+ "steps": [
+  {"name": "Discounted returns across episode boundaries", "problem": "discounted-returns"},
+  {"name": "Generalized advantage estimation", "problem": "gae-advantages"},
+  {"name": "The clipped surrogate objective", "problem": "ppo-clipped-surrogate-objective"},
+  {"name": "Approximate KL and clip fraction", "problem": "approx-kl-and-clip-fraction"},
+  {"name": "The complete PPO minibatch loss", "problem": "ppo-minibatch-loss"}
+ ],
+ "capstone": "ppo-bandit-capstone"}

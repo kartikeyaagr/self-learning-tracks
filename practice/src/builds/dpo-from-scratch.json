@@ -1,0 +1,13 @@
+{"id": "dpo-from-scratch", "kind": "project", "group": "Reinforcement Learning",
+ "title": "Align a Language Model with DPO",
+ "blurb": "Train on preference pairs without a reward model: preference probabilities, sequence scores, the DPO loss, training metrics, IPO and per-token drift from the reference.",
+ "intro": "Direct Preference Optimization turns preference data (this reply is better than that one) into a supervised loss on the policy itself, with the reference model standing in for an explicit KL penalty. The steps build the Bradley-Terry preference model, scoring whole replies with a language model, the DPO loss and its implicit rewards, the reward accuracy and margin used to watch training, the IPO loss that stops the margin running away, and per-token KL to measure how far the policy moved. The capstone takes one DPO gradient step on a tiny language model with a hand-written gradient.",
+ "steps": [
+  {"name": "Turn two scores into a preference probability", "problem": "bradley-terry-reward-model-loss"},
+  {"name": "Score a reply with its log-probability", "problem": "score-multiple-choice-continuations"},
+  {"name": "The DPO loss and its implicit rewards", "problem": "dpo-closed-form-loss"},
+  {"name": "Log reward accuracy and margin", "problem": "dpo-reward-accuracy-margin"},
+  {"name": "Write the IPO loss", "problem": "ipo-loss"},
+  {"name": "Measure drift with per-token KL", "problem": "per-token-kl-to-reference"}
+ ],
+ "capstone": "dpo-step-capstone"}

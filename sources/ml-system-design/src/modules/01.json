@@ -1,0 +1,221 @@
+{
+ "n": "01",
+ "name": "Understanding and framing ML systems",
+ "lessons": [
+  {
+   "id": "01.01",
+   "t": "What ML system design is",
+   "n": [
+    "An ML system is a data pipeline, a training pipeline, a serving path and a feedback loop. The model is one component, and rarely the one that fails first.",
+    "**Design** means choosing how each part works and how the parts connect: what is predicted, from which data, how fast, at what cost and how you will know it still works.",
+    "Every design decision trades off accuracy, latency, cost, freshness, and how easy the system is to operate.",
+    "A good design starts from the product decision the model supports and works backwards to data and models, not forwards from a favourite algorithm."
+   ],
+   "a": "## More than a model\nA model in a notebook answers one question: how well can these features predict this label on this dataset? An ML system has to answer many more. Where do the examples come from tomorrow? Who labels them, and how late? How are features computed when a request arrives in 30 ms? What happens when the model is down? How will anyone notice that quality has dropped?\n\nML system design is the practice of answering those questions on purpose. It overlaps with ordinary system design, covered in System Design 101 (caching, queues, storage and scaling), and with ML in production, covered in the Machine Learning course (skew, reproducible data, monitoring, experiments). This course sits between them: it is about the decisions that are specific to systems whose behaviour is learned from data.\n\n%%flow The loop every ML system runs. Each arrow is a place where things can go wrong without an error.\nProduct decision -(defines)-> Prediction task -(needs)-> Data and labels -(train)-> *Model -(serve)-> Predictions -(change)-> User behaviour -(logged as)-> Data and labels\n%%\n\n## The parts and their contracts\n| Part | What it does | Typical silent failure\n| Data pipeline | turns raw events into examples | a join drops new users\n| Labels | attaches outcomes to examples | labels arrive weeks late, so recent data looks negative\n| Training | fits and versions models | preprocessing differs between runs\n| Serving | computes features and predictions live | a feature is computed differently than in training\n| Logging | records inputs, outputs and outcomes | a field stops being logged\n| Monitoring | detects drift and quality loss | alert thresholds are too loose\n| Rollout | releases models gradually | a bad model reaches 100% of traffic\n\nEach part has an implicit contract with the next. The serving path promises to compute `days_since_signup` exactly as training did; the logging pipeline promises to record what was served. Design makes these contracts explicit so they can be checked.\n\n## The trade-offs you are balancing\nAlmost every decision moves one of five dials:\n- **Quality**: how good the predictions are on the metric that matters.\n- **Latency**: how long a prediction takes, usually measured at p99.\n- **Cost**: compute for training and serving, storage, labelling.\n- **Freshness**: how quickly the system reflects new data.\n- **Operability**: how easy it is to debug, roll back and hand to another team.\n\nA larger model raises quality and cost. Precomputing predictions cuts latency but hurts freshness. A feature from a slow service may add 1% quality and 40 ms of latency. Stating these trade-offs out loud, with rough numbers, is most of what interviewers mean by \"design\".\n\n! Example: the same task, two designs\n! A food-delivery app wants to show \"estimated delivery time\". Design A computes it nightly per restaurant and stores it: cheap, fast, but wrong at lunch rush. Design B predicts per order at checkout using live courier positions: accurate, but needs a streaming feature pipeline and a 50 ms model. A common answer is a hybrid: a nightly baseline per restaurant plus a light online correction from current load. The right choice depends on how much a wrong estimate costs the business.\n\n## Working backwards\nStart from the decision the prediction drives. If a fraud score blocks payments, false positives lose revenue and anger customers, so precision at the operating point matters more than AUC. If a ranking model orders a feed, what matters is engagement over weeks, not click-through on one session. Writing down the decision first tells you the metric, the latency budget and the cost of errors. Only then pick data and models.\n\nThe rest of this course follows that order: framing (this module), data and labels, features, models, evaluation, serving, monitoring, then interview practice and 21 case studies that put it together.\n\n## How this course uses case studies\nThe last three modules are case studies: ETA prediction, pricing, fraud, spam, visual search, feeds, ads, recommendations, autocomplete, retrieval-augmented generation and more. Each follows the same template: requirements, metrics, data and labels, features, model, serving, monitoring and trade-offs, ending with a rubric of what a strong design covers. Reading them after the concept modules shows how the same handful of decisions reappear in very different products. Trying each prompt yourself before reading the model design is the fastest way to build the habit.\n\n> Takeaway: an ML system is data, labels, training, serving, logging, monitoring and rollout around a model; design means choosing each part from the product decision backwards and stating the quality, latency, cost, freshness and operability trade-offs.",
+   "q": "A team says their \"ML system\" is a gradient-boosted model with 0.91 AUC in a notebook. List the other components that must exist before it can affect users, and for each name one way it could fail silently.",
+   "s": "Beyond the model you need: (1) a data pipeline that produces training examples, which can silently drop a segment or change a join; (2) a labelling process, where labels can be delayed or biased by the current system; (3) a training pipeline with versioned data and code, where an unpinned dependency can change preprocessing; (4) a serving path that computes features for live requests, which can diverge from the offline computation; (5) logging of inputs, predictions and outcomes, which can stop capturing a field; (6) monitoring and alerting, where thresholds that are too loose miss drift; and (7) a rollout and rollback process, where a bad model can reach everyone at once without a canary. None of these raise an exception when they go wrong; the model just keeps producing numbers.",
+   "r": [
+    [
+     "Sculley et al., Hidden Technical Debt in Machine Learning Systems (2015)",
+     "https://papers.nips.cc/paper_files/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html",
+     "Why the code around the model dominates cost and risk."
+    ],
+    [
+     "Google, Rules of Machine Learning",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "Practical rules for the first ML system in a product."
+    ],
+    [
+     "Chip Huyen, Designing Machine Learning Systems (book page)",
+     "https://huyenchip.com/books/",
+     "A book-length treatment of the same lifecycle."
+    ]
+   ],
+   "k": [
+    "ML system design",
+    "system boundaries"
+   ],
+   "x": [],
+   "p": [
+    "training-serving-skew",
+    "hashed-dataset-split",
+    "population-stability-index"
+   ]
+  },
+  {
+   "id": "01.02",
+   "t": "When machine learning is the right tool",
+   "n": [
+    "ML pays off when the pattern is too complex to write as rules, there is enough data with labels, the pattern repeats, and mistakes are tolerable and measurable.",
+    "A **heuristic baseline** is the first thing to build. It sets the bar ML must clear and often ships first.",
+    "ML adds cost: data pipelines, labels, retraining and monitoring. The quality gain has to pay for them.",
+    "Prefer ML when the world changes faster than people can update rules, and when scale makes manual decisions impossible."
+   ],
+   "a": "## A tool with running costs\nMachine learning replaces hand-written rules with a function fitted to data. That is powerful when the rules would be too many, too subtle or too fast-changing to maintain. But a learned function needs things a rule does not: a steady supply of labelled examples, a training pipeline, monitoring for drift, and someone on call when it degrades. The question is not \"can ML do this?\" but \"does the quality gain pay for those costs?\"\n\n## Signs that ML fits\n| Question | Good sign for ML | Warning sign\n| Is the pattern complex? | many interacting signals, fuzzy boundaries | a few clear thresholds\n| Is there data? | thousands or more labelled examples, or labels you can collect | only a handful, or labels nobody can define\n| Does it repeat? | the same decision many times a day | a one-off decision\n| Can you tolerate errors? | mistakes are cheap or reversible | one mistake is catastrophic and unexplainable\n| Does it change? | patterns drift, adversaries adapt | stable rules that rarely need edits\n| Is the scale large? | too many decisions for people | a team can decide each case\n\nFraud scoring, search ranking, spam filtering and demand forecasting tick most boxes. Calculating tax, enforcing a legal age limit or routing by an exact product code do not: rules are cheaper, exact and auditable.\n\n## Start with a heuristic\nBefore any model, write the simplest rule that works: \"sort by popularity\", \"flag transactions over £5,000 from a new device\", \"route tickets containing 'refund' to billing\". It does three jobs. It ships value now. It gives a baseline number that any model must beat. And it becomes the fallback when the model is unavailable.\n\n%%flow The usual path from rules to ML. Each step must beat the last on the business metric.\nManual process -(codify)-> Heuristic rules -(log decisions + outcomes)-> Labelled data -(fit)-> *Simple model -(if it pays)-> Complex model\n%%\n\nLogging is the bridge. Once the heuristic runs, record its inputs and the eventual outcomes. That log becomes your first training set, and it is often the only realistic source of labels.\n\n## Estimating whether it is worth it\nPut rough numbers on the value. If a better ranking increases conversion by 0.5% on £20M of annual sales, that is £100k a year. If maintaining the ML pipeline costs one engineer half-time plus £20k of compute, it is worth it. If the gain is 0.05%, it is not, at least not yet.\n\nA useful habit: estimate the ceiling. If even a perfect model would only fix 10% of current errors, because the rest come from missing data or ambiguous labels, ML cannot deliver much.\n\n! Example: ML that was not needed\n! A retailer planned a model to predict which products to restock. Analysis showed 90% of stock-outs came from a supplier delay that no model could see. A rule that reordered when stock fell below two weeks of average sales fixed most of the problem. ML came later, for the remaining 10%, where seasonal patterns were genuinely hard to hand-code.\n\n## When ML is the only option\nSome tasks have no workable rules at all: recognising objects in images, transcribing speech, ranking billions of documents for free-text queries, or generating text. Here the question is not whether to use ML but which model and how to get data. Pretrained models (covered in 04.03) often make these feasible with little labelled data.\n\n## Questions to ask before committing\nWho will own the model after launch, and will they retrain it? How will you know if it gets worse? What is the fallback if the model or its features are unavailable? Can you explain a decision to a customer or a regulator if asked? If nobody can answer these, the project is not ready, however good the offline numbers look. Writing the answers down is a cheap way to find gaps in the plan before any data work starts.\n\n> Takeaway: use ML when the pattern is complex, repeated at scale, learnable from available labels and tolerant of errors; build a heuristic first as baseline, fallback and label source, and check the quality gain pays for the pipeline.",
+   "q": "A support team wants ML to route 2,000 tickets a day into 6 queues. Today a keyword rule routes 80% correctly. How would you decide whether ML is worth it, and what would you build first?",
+   "s": "First measure the value of better routing: how much time or customer satisfaction is lost per misrouted ticket, and how many of the 400 daily errors could a model fix. Then check prerequisites: are historical tickets labelled with their final queue (reassignments give labels for free), is the label distribution stable, and can errors be corrected cheaply by an agent? If labels exist, build a quick text classifier (TF-IDF plus logistic regression) and compare it with the rule on a time-based holdout. If it moves accuracy from 80% to, say, 92% and the error cost justifies a retraining and monitoring pipeline, ship it with the rule as a fallback. If not, improve the rules. Either way, the keyword rule is the baseline and a safety net.",
+   "r": [
+    [
+     "Google, Rules of Machine Learning, Rule 1 and 3",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "\"Don't be afraid to launch a product without machine learning.\""
+    ],
+    [
+     "Google, Problem framing course",
+     "https://developers.google.com/machine-learning/problem-framing",
+     "Deciding whether ML fits and how to frame it."
+    ]
+   ],
+   "k": [
+    "problem framing",
+    "heuristics vs ML"
+   ],
+   "x": [],
+   "p": [
+    "popularity-baseline-leave-last-out",
+    "logistic-regression",
+    "k-fold-cross-validation"
+   ]
+  },
+  {
+   "id": "01.03",
+   "t": "Training and prediction",
+   "n": [
+    "Training and prediction are two different programs that must agree: same features, same preprocessing, same meaning of every input.",
+    "Training runs offline on historical data, optimises for throughput and can take hours; prediction runs on live data and is bounded by a latency budget.",
+    "The **prediction time** of each training example matters: features must be computed as they would have been known at that moment, or the model learns from the future.",
+    "Predictions can be computed in batch ahead of time, online per request, or from a stream; the choice sets freshness, latency and cost."
+   ],
+   "a": "## Two programs, one contract\nTraining reads a large table of historical examples, fits parameters and writes a model artifact. Prediction loads that artifact and applies it to new inputs. They often run on different machines, in different languages, written by different people. The model only works if both programs agree on what every input means.\n\n%%flow Training and serving share feature definitions and the model artifact. Everything else differs.\nHistorical events -(point-in-time features + labels)-> Training job -(model artifact)-> *Model registry -(deploy)-> Serving -(live features)-> Prediction\n%%\n\n| Aspect | Training | Prediction\n| Data | months of history | one request, or today's batch\n| Goal | best fit on a metric | right answer within the latency budget\n| Time budget | minutes to days | milliseconds to hours\n| Hardware | many GPUs or a big CPU job | CPU servers, GPUs, or a phone\n| Failure cost | a wasted run | wrong decisions for real users\n\n## Prediction time\nEvery training example corresponds to a moment when the model would have been asked to predict. Call it $t_0$. Features must use only data available before $t_0$; the label describes what happened after $t_0$. Breaking this rule is called **leakage**, and it produces models that look excellent offline and fail live.\n\nThe fix is a **point-in-time join**: for each example, look up each feature's value as of $t_0$, not as of today. This needs either a history of feature values (a feature store with time travel) or the raw event log from which features can be recomputed. Choosing $t_0$ is a design decision. For churn, it might be the first of each month; for fraud, the authorisation time of each transaction; for ranking, the time each impression was served.\n\n! Example: a leak through an \"updated\" field\n! A loan default model used `account_status` from the customer table. For defaulted loans the status had since been set to \"collections\". The model learned that \"collections\" predicts default, reaching 0.99 AUC. Rebuilding the table with status as of the application date brought AUC to 0.74, which matched production.\n\n## Three ways to serve predictions\n**Batch** prediction scores every entity on a schedule and stores the results for lookup. It suits churn scores, daily recommendations or weekly forecasts. It is cheap per prediction and needs no low-latency model, but predictions are only as fresh as the last run and new entities have none.\n\n**Online** prediction computes the answer per request. It is needed when the input only exists at request time: a search query, a transaction, the current basket. It needs a fast model and fast features.\n\n**Streaming** prediction sits between them: a stream processor updates features (clicks in the last 5 minutes) and possibly predictions as events arrive. It gives freshness without computing everything at request time, at the cost of operating a streaming system.\n\nMany real systems combine them. Lesson 06.01 goes deeper into the trade-offs.\n\n## Keeping the two programs in step\nThree habits remove most training/serving mismatch:\n- define each feature once and compute it from the same code in both paths (a feature store, 03.02);\n- log the exact features used at serving time, and train future models from those logs;\n- version the model, the feature definitions and the preprocessing together, so a deploy can never mix them.\n\nThe Machine Learning course's \"From notebook to service\" lesson (mlcore 09.01) covers skew detection in detail.\n\n## Where predictions run\nPrediction does not always run on a server. Models on phones or browsers avoid network latency and keep data on the device, but must be small and are updated only when the app updates. Models inside a database or a stream processor avoid moving data. The location changes which features are available: an on-device keyboard model sees what is typed but not the server-side history, and a server model sees history but adds a network round trip. Decide where prediction runs early, because it constrains the model size, the feature set and how quickly you can ship fixes.\n\n> Takeaway: training and prediction are separate programs bound by one contract; build every example as of its prediction time, choose batch, online or streaming serving by freshness and latency, and share feature code so the contract holds.",
+   "q": "Your churn model's training set joins each customer's label (churned in the next 30 days) to their current account features. Offline AUC is 0.93; in production it is 0.71. What went wrong, and how would you rebuild the training set?",
+   "s": "The features were taken as of today rather than as of the moment each prediction would have been made, so they contain information from after the prediction time. For churned customers, today's features already reflect churn (zero recent logins, a cancelled plan, a support ticket), which makes the problem look easy offline. At serving time those signals are not yet present. Fix it by choosing a prediction timestamp for each example (for example, the first of each month), computing every feature from data available strictly before that timestamp (a point-in-time join against feature history or event logs), and computing the label from the 30 days after it. Validate on later months than you train on. Offline AUC will drop toward the production value, which is the honest number.",
+   "r": [
+    [
+     "Google, Rules of Machine Learning, Rules 29-37 (training-serving skew)",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "How skew arises and how to prevent it."
+    ],
+    [
+     "Google Cloud, MLOps: continuous delivery and automation pipelines",
+     "https://cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning",
+     "How training and serving pipelines fit together."
+    ]
+   ],
+   "k": [
+    "training vs inference",
+    "batch vs online"
+   ],
+   "x": [],
+   "p": [
+    "training-serving-skew",
+    "point-in-time-feature-join",
+    "hashed-dataset-split"
+   ]
+  },
+  {
+   "id": "01.04",
+   "t": "Clarifying requirements",
+   "n": [
+    "Requirements come in two kinds: **functional** (what the system decides, for whom, with what inputs and outputs) and **non-functional** (latency, throughput, freshness, cost, privacy, fairness).",
+    "Ask about the decision, the users, the scale, the latency budget, the data available and the cost of each kind of error before proposing anything.",
+    "Write assumptions down with numbers. A stated assumption the interviewer can correct is better than a hidden one.",
+    "Requirements decide the architecture: a 20 ms budget rules out some models, and a weekly freshness need rules out a streaming pipeline."
+   ],
+   "a": "## Why ask first\nA design is an answer to a specific question. \"Recommend restaurants\" could mean a nightly email, a live home screen or a search ranking. Each needs a different system. Spending the first few minutes on requirements avoids designing the wrong thing well, and in an interview it shows you know that constraints drive architecture.\n\n## Functional requirements\nThese describe what the system does:\n- **The decision**: what does the prediction change? Ranking a list, blocking a payment, setting a price, sending a notification.\n- **Inputs and outputs**: what is known at prediction time, and what form the output takes (a score, a class, a list of ten items, a price).\n- **The users**: who sees the result, and are there distinct groups (new versus returning, buyers versus sellers)?\n- **Surfaces**: where it appears (web, app, email) and how often.\n\n## Non-functional requirements\nThese describe how well it must do it:\n| Requirement | Question to ask | Example answer\n| Scale | how many predictions per second at peak? | 5,000 QPS, 50M users\n| Latency | what is the budget for this call? | p99 under 50 ms\n| Freshness | how quickly must new data matter? | within 1 hour\n| Cost | what can we spend per prediction or per month? | under $0.0001 per request\n| Availability | what happens if the model is down? | fall back to popularity\n| Privacy and policy | which data may we use? | no precise location\n| Fairness | which groups must be treated consistently? | sellers of all sizes get exposure\n\nLatency budgets should be stated as percentiles, usually p99, because users notice the slow tail. The ML part usually gets only a fraction of the page budget; the rest goes to network, other services and rendering.\n\n%%flow From vague ask to design input. Each answer narrows the space of designs.\nVague ask -(decision + users)-> Functional spec -(scale, latency, freshness, cost)-> Non-functional spec -(constraints + data)-> *Design space\n%%\n\n## The cost of errors\nAsk what a false positive and a false negative each cost. Blocking a legitimate £50 payment costs the sale and a support call; missing a fraudulent one costs £50 plus a chargeback fee. Showing an irrelevant restaurant costs a little attention; recommending one that is closed costs trust. These costs choose the metric and the operating threshold later (05.01).\n\n## State assumptions with numbers\nWhen the interviewer does not know or does not say, assume and write it down: \"Assume 20M daily users, 10 sessions a day each, so about 200M ranking calls a day, or roughly 2,300 per second on average and maybe 10,000 at peak.\" Numbers make trade-offs concrete and let the interviewer redirect you early.\n\n! Example: one answer that changes everything\n! \"How fresh must fraud scores be?\" If the answer is \"a transaction must be scored before authorisation\", the design needs online features (spend in the last hour, new device) and a model under about 50 ms. If the answer is \"we review flagged accounts the next day\", a nightly batch job with heavy features and a large model is simpler and cheaper.\n\n## A short checklist\nDecision and action; users and surfaces; success metric and guardrails; scale; latency; freshness; available data and labels; cost of each error; constraints on privacy and fairness; fallback behaviour. Ten items, two or three minutes, and the rest of the design follows from them.\n\n## Requirements that conflict\nRequirements often pull against each other, and naming the conflict is part of the design. Higher recall in fraud detection means more false alarms for analysts to review. Fresher recommendations mean a streaming pipeline and higher cost. Strict privacy rules may remove the most predictive feature. When two requirements conflict, ask which one wins, or propose a compromise with numbers: \"we can hit p99 under 50 ms if we drop the external credit-score call, which costs about 2% recall; is that acceptable?\" Interviewers look for exactly this kind of explicit trade-off.\n\n> Takeaway: before designing, pin down the decision, inputs and outputs, scale, latency, freshness, cost, error costs and constraints, and write assumptions down with numbers, because each one rules designs in or out.",
+   "q": "You are asked to \"design a system that recommends restaurants\". List the eight questions you would ask before designing anything, and explain how two different answers to one of them would change the design.",
+   "s": "Questions: (1) Where is the recommendation shown and what action follows (home feed, search, notification)? (2) Who are the users and how many (daily active users, requests per second at peak)? (3) What is the success metric (orders, retention, rating)? (4) What is the latency budget for a page load? (5) How fresh must it be (does today's opening hours or current wait time matter)? (6) What data exists (orders, views, ratings, location, menus)? (7) What are the constraints (delivery radius, dietary filters, fairness to small restaurants)? (8) What is the cost of a bad recommendation? For example, if recommendations appear in a push notification sent once a day, batch scoring overnight is fine and the model can be heavy; if they power a live home screen that reacts to the current location and time, you need online retrieval and ranking under about 100 ms with location-aware candidate generation.",
+   "r": [
+    [
+     "Google, Problem framing course",
+     "https://developers.google.com/machine-learning/problem-framing",
+     "Defining the goal, output and success metrics."
+    ],
+    [
+     "Chip Huyen, Machine Learning Systems Design (free notes)",
+     "https://huyenchip.com/machine-learning-systems-design/toc.html",
+     "Project setup, objectives and constraints."
+    ]
+   ],
+   "k": [
+    "requirements",
+    "constraints"
+   ],
+   "x": [],
+   "p": [
+    "p50-p95-and-p99-inference-latency",
+    "optimize-throughput-and-cost-under-latency-slo"
+   ]
+  },
+  {
+   "id": "01.05",
+   "t": "From business goal to ML task",
+   "n": [
+    "A business goal (\"increase bookings\") must be turned into an **ML task**: a precise prediction with an input, an output, a label and a loss.",
+    "Labels are usually **proxies** for the real goal. Choose proxies that are available quickly, correlate with the goal, and are hard to game.",
+    "Common framings are classification, regression, ranking, retrieval, forecasting and generation. The same goal can often be framed several ways with different data needs.",
+    "Track an **online business metric**, an **offline ML metric** that predicts it, and **guardrail metrics** that must not get worse."
+   ],
+   "a": "## The translation step\n\"Increase bookings\", \"reduce fraud losses\" and \"keep users engaged\" are goals, not tasks. A model needs a precise target: given this input at this moment, predict this quantity. Getting the translation right matters more than the choice of model, because a model optimises exactly what you give it.\n\n%%flow Goals become tasks through a chain of choices. Each arrow is a decision you should state.\nBusiness goal -(which decision?)-> Prediction target -(which data?)-> Label -(which loss?)-> *ML task -(which metric?)-> Offline evaluation\n%%\n\n## Common framings\n| Framing | Output | Example\n| Binary classification | probability of an event | will this transaction be fraud?\n| Multiclass | one of K labels | which queue should this ticket go to?\n| Regression | a number | minutes until delivery\n| Ranking | an ordering of items | order search results for this query\n| Retrieval | a candidate set | 500 videos this user might like\n| Forecasting | future values of a series | units sold per store next week\n| Generation | text, image or code | a reply suggestion\n\nThe same goal can often be framed several ways. Recommending products can be a ranking problem trained on clicks, a classification problem trained on purchases, or a regression on predicted revenue. Each needs different labels and gives different behaviour.\n\n## Labels are proxies\nThe thing you care about is often slow, rare or unmeasurable. Long-term satisfaction might take months to show; a purchase might happen days later on another device. So you choose a proxy label that is available soon and moves with the goal.\n\nGood proxies are:\n- **available quickly**, so models can be trained and evaluated without long delays;\n- **correlated with the goal**, checked by seeing whether proxy gains predict business gains in experiments;\n- **hard to game**, so the model can't improve the proxy while hurting the goal.\n\n! Example: clicks versus watch time\n! A video ranking model trained on clicks learned to promote misleading thumbnails: click-through rose and session time fell. Switching the objective to expected watch time, using weighted logistic regression where positive impressions are weighted by seconds watched, aligned the model better with what users valued. Covington et al. (2016) describe this shift.\n\n## Combining several objectives\nReal products care about more than one thing: clicks, purchases, returns, report rate. Two common patterns:\n- **Multi-task models** predict several labels from shared features, then combine scores with weights: $\\text{score} = w_1 P(\\text{click}) + w_2 P(\\text{purchase}) - w_3 P(\\text{report})$. The weights are business decisions, tuned by experiment.\n- **Constraints**: optimise one objective subject to limits on others (a minimum share of fresh content, a maximum ad load).\n\n## Three layers of metrics\n- **Business (online) metric**: what the company cares about, measured in A/B tests. Revenue, retention, fraud losses.\n- **ML (offline) metric**: what you compute on a held-out set. AUC, log loss, NDCG, RMSE. It should predict the online metric.\n- **Guardrails**: things that must not get worse. Latency, complaint rate, fairness across groups, diversity.\n\nWhen offline gains stop predicting online gains, the offline metric or the proxy label is the first suspect. Keep a log of past experiments with both numbers side by side; over time it shows which offline metric you can trust, and by how much an offline gain usually shrinks once it meets real users. That ratio is useful when deciding whether a small offline improvement is worth an online test.\n\n## Checking the framing\nBefore building, sanity-check the framing with three questions. Can a person do the task from the same inputs? If not, the model probably cannot either. Does the label exist for enough examples, at the right time? Would a perfect model on this task actually move the business metric? A perfect click predictor does not help if the bottleneck is that the catalogue lacks what users want. A framing that fails any of these checks is worth rethinking before you spend weeks on data pipelines.\n\n> Takeaway: turn a business goal into a precise prediction with a label and loss, treat the label as a proxy that must be fast, correlated and hard to game, and track business, offline and guardrail metrics together.",
+   "q": "A video platform wants to \"increase long-term user satisfaction\". Propose two possible ML tasks with labels, say what each proxy gets wrong, and describe how you would choose between them.",
+   "s": "Task A: predict the probability a user clicks a recommended video (binary label from impressions). Clicks are fast and plentiful but reward clickbait thumbnails and say nothing about whether the video was good. Task B: predict expected watch time of the video if shown (regression on seconds watched, or weighted logistic regression). Watch time is closer to satisfaction but favours long videos and can reward compulsive viewing. Possible additions are survey responses (\"was this worth your time?\"), likes, shares and return visits, which are sparser but closer to the goal. Choose by running online experiments: train models on each objective and measure the business metric (for example 7-day retention or survey satisfaction) in an A/B test; keep the proxy whose offline gains best predict online gains, and add guardrails such as report rate and diversity.",
+   "r": [
+    [
+     "Google, Problem framing course",
+     "https://developers.google.com/machine-learning/problem-framing",
+     "Translating a goal into a model output and label."
+    ],
+    [
+     "Covington, Adams and Sargin, Deep Neural Networks for YouTube Recommendations (2016)",
+     "https://research.google/pubs/deep-neural-networks-for-youtube-recommendations/",
+     "Predicting watch time instead of clicks to avoid clickbait."
+    ]
+   ],
+   "k": [
+    "ML objective",
+    "proxy metrics"
+   ],
+   "x": [],
+   "p": [
+    "log-loss-binary-cross-entropy",
+    "ndcg-at-k",
+    "regression-metrics"
+   ]
+  },
+  {
+   "id": "01.06",
+   "t": "Scale and latency estimates",
+   "n": [
+    "Rough numbers for traffic, data size, model size and latency decide the architecture. Do them early and out loud.",
+    "Convert daily volumes to **queries per second**: divide by 86,400, then multiply by a peak factor of 2 to 10.",
+    "Split the end-to-end **latency budget** across stages (feature fetch, candidate retrieval, ranking, network) and check each against what the hardware can do.",
+    "Estimate storage and compute for training data, features and models; these often decide between batch and online, or between a big and a small model."
+   ],
+   "a": "## Why estimate\nNumbers turn opinions into decisions. \"We could score every item online\" is a feeling; \"that is 8 million model evaluations a second\" is a design constraint. A few minutes of arithmetic tells you whether a design is feasible, roughly what it costs and where the bottleneck is.\n\n## Traffic\nStart from users and actions:\n$$\\text{average QPS} = \\frac{\\text{users} \\times \\text{actions per user per day}}{86{,}400}$$\nThen multiply by a peak factor, typically 2 to 3 for consumer traffic with daily cycles and up to 10 for event spikes. 100M actions a day is about 1,160 per second on average.\n\nFor ranking systems, multiply by the number of items scored per request. This is usually the number that matters for compute.\n\n## Latency budgets\nState the end-to-end target as a percentile, then split it:\n| Stage | Budget (p99) | Notes\n| Network and gateway | 20 ms | outside your control\n| Feature fetch | 10 ms | key-value lookups, batched\n| Candidate retrieval | 15 ms | approximate nearest neighbour\n| Ranking | 30 ms | the ML model\n| Business rules and re-ranking | 5 ms | filters, diversity\n| Total | 80 ms | leaves headroom under 100 ms\n\nStages run in sequence add up; stages run in parallel cost the slowest. Remember that the p99 of a request that fans out to many backends is worse than any single backend's p99, because the slowest of many calls dominates.\n\n%%flow A ranking request's latency budget. The model gets only part of it.\nRequest -(20 ms)-> Gateway -(10 ms)-> Feature fetch -(15 ms)-> Retrieval -(30 ms)-> *Ranking -(5 ms)-> Response\n%%\n\n## Useful reference numbers\nKeep orders of magnitude in mind: a main-memory read is about 100 ns, a read from a key-value store in the same data centre about 0.5 to 1 ms, a round trip across regions 50 to 150 ms. A small gradient-boosted model scores in microseconds per item; a mid-sized neural ranker tens of microseconds per item on CPU; a transformer forward pass on a GPU milliseconds per batch.\n\n## Storage and training data\nEstimate the training set: 200M impressions a day × 30 days × 500 bytes of features is 3 TB. That fits on one large machine for gradient-boosted trees with sampling, or calls for distributed training for a neural model. Embedding tables are often the largest part of a recommender: 100M users × 64 dimensions × 4 bytes is 25.6 GB.\n\nFor large models, memory decides hardware. A model with $N$ parameters in 16-bit precision needs about $2N$ bytes for weights alone; a 7B-parameter model needs about 14 GB, plus memory for activations or a KV cache.\n\n! Example: an estimate that changed the design\n! A team planned to compute personalised recommendations online for 50M users. Estimating 50M users × 5 visits × 2,000 candidates gave 500 billion item scores a day. They switched to nightly batch generation of a top-200 list per user (10 billion scores, once a day on spare capacity), with a light online re-ranker for context such as time of day.\n\n## Present it clearly\nIn an interview, write the three or four numbers that matter: peak QPS, items scored per second, end-to-end latency budget, and storage for the biggest table. Round aggressively. The point is the order of magnitude and what it implies, not the third digit. Then say what the numbers imply: \"8 million item scores a second means we need a cheap first-stage ranker\" is the sentence the interviewer is waiting for.\n\n## Cost per prediction\nEstimate cost alongside capacity. If a CPU core costs about $0.04 an hour and scores 50,000 items a second, a billion item scores cost under a dollar. A GPU at a few dollars an hour that serves 500 large-model requests a second costs around half a cent per thousand requests. Multiplying these by daily volume shows quickly whether a design fits the budget, and which stage is worth optimising first. Usually one stage dominates, and that is where a cheaper model, caching or batching pays off most.\n\n> Takeaway: convert users and actions into peak QPS and items per second, split the p99 latency budget across stages, and estimate data and model sizes; these few numbers decide between batch and online, and between one model and a cascade.",
+   "q": "A shopping app ranks 1,000 candidate products per home-screen load. It has 30M daily active users, each loading the home screen 8 times a day. Estimate peak ranking QPS and items scored per second, and decide whether a model costing 20 microseconds per item on one CPU core is affordable.",
+   "s": "Loads per day = 30M × 8 = 240M, or about 2,800 per second on average. With a peak factor of 3, peak is about 8,300 loads per second. Each load scores 1,000 items, so about 8.3M items per second at peak. At 20 µs per item, one core scores 50,000 items per second, so you need about 166 cores busy at peak, or roughly 250 to 350 cores with headroom. That is affordable (a few dozen servers) but significant. Latency per request is 1,000 × 20 µs = 20 ms on one core, so you should parallelise scoring across cores or batch items to hit a ranking budget of around 30 ms. If cost matters, add a cheaper first-stage ranker that cuts 1,000 candidates to 200 before the heavy model.",
+   "r": [
+    [
+     "Latency numbers every programmer should know",
+     "https://gist.github.com/jboner/2841832",
+     "Orders of magnitude for memory, disk and network."
+    ],
+    [
+     "Colin Scott, Interactive latency numbers by year",
+     "https://colin-scott.github.io/personal_website/research/interactive_latency.html",
+     "How the reference numbers have changed over time."
+    ]
+   ],
+   "k": [
+    "back-of-the-envelope",
+    "capacity planning"
+   ],
+   "x": [],
+   "p": [
+    "estimate-model-memory-and-minimum-gpu-count",
+    "p50-p95-and-p99-inference-latency",
+    "optimize-throughput-and-cost-under-latency-slo",
+    "kv-cache-memory-for-mha-mqa-gqa-and-mla"
+   ]
+  }
+ ]
+}

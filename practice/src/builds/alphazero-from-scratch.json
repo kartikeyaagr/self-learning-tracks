@@ -1,0 +1,12 @@
+{"id": "alphazero-from-scratch", "kind": "project", "group": "Reinforcement Learning",
+ "title": "Build an AlphaZero-Style Game Player",
+ "blurb": "Write the rules of tic-tac-toe, solve it exactly with minimax, then build the PUCT search AlphaZero uses and the training targets it produces.",
+ "intro": "AlphaZero learns a game from its rules alone by pairing a neural network with a guided tree search. The steps write the rules (legal moves and the winner), an exact minimax solver to use as ground truth, PUCT move selection, the conversion of visit counts into a policy target, and a full simulation loop over a game tree. The capstone runs PUCT search on tic-tac-toe with a stand-in network and checks its moves against the exact solver, including a position where search without a value estimate goes wrong.",
+ "steps": [
+  {"name": "Legal moves and the winner", "problem": "tictactoe-legal-moves-and-winner"},
+  {"name": "Solve a position with minimax", "problem": "tictactoe-minimax"},
+  {"name": "Pick the next move to explore with PUCT", "problem": "select-action-with-puct"},
+  {"name": "Turn visit counts into a policy target", "problem": "turn-root-visits-into-search-policy"},
+  {"name": "Run PUCT simulations on a game tree", "problem": "run-deterministic-neural-guided-mcts"}
+ ],
+ "capstone": "alphazero-search-capstone"}

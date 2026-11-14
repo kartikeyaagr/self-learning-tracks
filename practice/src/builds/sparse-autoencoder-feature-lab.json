@@ -1,0 +1,11 @@
+{"id": "sparse-autoencoder-feature-lab", "kind": "project", "group": "Mechanistic Interpretability",
+ "title": "Sparse Autoencoder Feature Lab",
+ "blurb": "Train a sparse autoencoder on model activations and inspect the features it finds: forward pass, loss, firing rates, top examples and a hand-written training step.",
+ "intro": "A sparse autoencoder rewrites each activation of a model as a few active entries in a much wider dictionary, in the hope that each entry is one human-readable feature. The steps build the encoder and decoder, the loss that trades reconstruction against sparsity, the firing-rate histogram that flags dead and dense features, and the top-activating examples used to guess what a feature means. The capstone is one full training step with gradients written by hand and decoder rows kept at unit norm.",
+ "steps": [
+  {"name": "Encode and decode activations", "problem": "sae-forward"},
+  {"name": "Balance reconstruction and sparsity", "problem": "sae-loss-l1"},
+  {"name": "Measure how often features fire", "problem": "feature-activation-frequency"},
+  {"name": "Retrieve top activating examples", "problem": "top-activating-examples"}
+ ],
+ "capstone": "sae-training-step-capstone"}
