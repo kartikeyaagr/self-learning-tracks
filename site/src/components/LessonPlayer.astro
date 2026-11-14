@@ -42,8 +42,6 @@ const n = steps.length;
             {s.q.options.map((o, j) => <button type="button" role="radio" aria-checked="false" class="lp-opt" data-j={j} set:html={o} />)}
           </div>
         </div>}
-        {s.q && <div role="status" class="lp-fb right" hidden><strong set:html={s.q.right ? `Right: ${s.q.right}` : 'Right'} /><span set:html={s.q.why} /></div>}
-        {s.q && <div role="status" class="lp-fb wrong" hidden><strong>Not quite</strong><span set:html={s.q.hint || 'Look again and try another answer.'} /></div>}
         {s.kind === 'check' && <div class="lp-check">
           <textarea class="lp-ans" aria-label="Your answer" placeholder="Write your answer first. It saves automatically."></textarea>
           <div class="lp-row"><span class="lp-saved mono" aria-live="polite"></span><button type="button" class="lp-reveal">Show model answer</button></div>
@@ -57,12 +55,18 @@ const n = steps.length;
           </div>
         </div>}
       </section>)}
+      {/* feedback + actions: one footer, so on phones it is a sticky bottom area the feedback slides up into */}
+      <div class="lp-foot">
+      {steps.map((s, i) => s.q && <>
+        <div role="status" class="lp-fb right" data-i={i} hidden><strong set:html={s.q.right ? `Right: ${s.q.right}` : 'Right'} /><span set:html={s.q.why} /></div>
+        <div role="status" class="lp-fb wrong" data-i={i} hidden><strong>Not quite</strong><span set:html={s.q.hint || 'Look again and try another answer.'} /></div></>)}
       <div class="lp-act">
         <button type="button" class="lp-skip" id="lpSkip">Skip step</button>
         <span class="sp"></span>
         <button type="button" class="lp-btn check" id="lpCheck" disabled>Check</button>
         <span class="lp-contw" id="lpContW" hidden><button type="button" class="lp-btn go" id="lpCont">Continue</button></span>
         <button type="button" class="lp-btn bad" id="lpAgain" hidden>Try again</button>
+      </div>
       </div>
     </div>
 
@@ -137,7 +141,7 @@ const n = steps.length;
     secs.forEach((s, j) => s.hidden = j !== i);
     const sec = secs[i];
     $$('.lp-opt', sec).forEach(b => { b.dataset.state = 'idle'; b.setAttribute('aria-checked', 'false'); });
-    $$('.lp-fb', sec).forEach(f => f.hidden = true);
+    $$('.lp-fb').forEach(f => f.hidden = true);
     btn.check.disabled = true;
     if (sec.dataset.kind === 'check') paintCheck(sec);
     else act($('.lp-q', sec) ? 'check' : 'cont');
@@ -163,7 +167,7 @@ const n = steps.length;
     const sec = secs[cur], ok = pick === +sec.dataset.answer, o = $(`.lp-opt[data-j="${pick}"]`, sec);
     if (!tally.seen.has(cur)) { tally.seen.add(cur); tally.asked++; if (ok) tally.right++; }
     o.dataset.state = ok ? 'right' : 'wrong';
-    $('.lp-fb.right', sec).hidden = !ok; $('.lp-fb.wrong', sec).hidden = ok;
+    $(`.lp-fb.right[data-i="${cur}"]`).hidden = !ok; $(`.lp-fb.wrong[data-i="${cur}"]`).hidden = ok;
     act(ok ? 'cont' : 'again', ok && finish(cur));
   });
   btn.again.addEventListener('click', () => show(cur));
@@ -225,7 +229,7 @@ const n = steps.length;
       <div class="streak"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c1 4 5 5.5 5 10a5 5 0 0 1-10 0c0-2 1-3.5 2.5-4.5C9.5 11 11 12 12 12c-1-3 0-6 0-9z"/></svg>
         <div><strong><span id="lpSn">${bumped ? s0.streak : s.streak}</span> day streak</strong>
         <div class="sub">${s.goalMet ? `Daily goal reached · ${GOAL} / ${GOAL} XP` : `${s.today} / ${GOAL} XP today · ${GOAL - s.today} to the daily goal`}</div></div></div>
-      ${p ? `<a class="practise" href="${problemHref(p.id)}"><span class="mono">PRACTISE IT NOW · ARENA</span><strong>${esc(p.t)}</strong>
+      ${p ? `<a class="practise" data-theme="dark" href="${problemHref(p.id)}"><span class="mono">PRACTISE IT NOW · ARENA</span><strong>${esc(p.t)}</strong>
         <span class="sub">${p.d ? esc(p.d) + ' · ' : ''}uses what you just learned${XP.solve[p.d] ? ` · +${XP.solve[p.d]} XP` : ''}</span></a>` : ''}
       <div class="sp"></div>
       ${fresh && D.card ? `<div class="note">1 new review card added to your deck</div>` : ''}

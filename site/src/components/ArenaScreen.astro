@@ -2,6 +2,8 @@
 // Arena route (mockups/desktop/ArenaRoute.dc.html): rank / problem of the day / this week, the current set as a
 // serpentine path ending in its boss round, more sets, and a right rail (XP rules, solve calendar, interview rounds).
 // Rendered in the browser: it depends on progress (store.js, game.js) and the chosen destination.
+// Phones (≤640px, mockups/mobile/MobileArena.dc.html): a rank strip, a set picker, a vertical node path and a bottom sheet
+// with the selected problem (renderPhone); the top cards and the right rail hide (arena.css).
 import '../styles/screens/arena.css';
 ---
 <div class="ar" id="arena">
@@ -31,7 +33,10 @@ import '../styles/screens/arena.css';
     play: c => `<svg width="24" height="24" viewBox="0 0 24 24" fill="${c}" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>`,
     lock: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--bad)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
   };
-  const narrow = matchMedia('(max-width: 700px)');
+  const narrow = matchMedia('(max-width: 700px)'), phone = matchMedia('(max-width: 640px)');   // phone = Site.astro's mobile surface
+  const BOOK = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h6a2 2 0 0 1 2 2v12a2 2 0 0 0-2-2H4z"/><path d="M20 5h-6a2 2 0 0 0-2 2v12a2 2 0 0 1 2-2h6z"/></svg>';
+  let pickNode = null;                                                  // phone: select node k (set by renderPhone)
+  let gen = 0;                                                          // renders await theory fetches; only the latest one paints
 
   Promise.all([routes(), json('practice/index.json')]).then(([R, I]) => {
     const A = state(), evs = events(A), day = today(), s = summary(evs, day);
@@ -51,12 +56,15 @@ import '../styles/screens/arena.css';
     if (q && R.sets.some(x => x.id === q)) { ns('game').set = q; save(); }
     const pick = () => R.sets.find(x => x.id === ns('game').set) ?? byRoute.find(todo) ?? R.sets[0];
 
+    const mins = Object.fromEntries(R.concepts.flatMap(c => c.lesson_links || []).map(x => [x.lesson, x.mins]));
     renderTop(I, A, s, P, evs);
     renderRail(R, I, D, s, evs, day, rounds, pick());
-    const renderMain = () => renderSets(pick(), {R, A, P, plans, rounds, stars, done, onRoute, byRoute, todo});
+    const renderMain = () => (phone.matches ? renderPhone : renderSets)(pick(), {R, A, P, plans, rounds, stars, done, onRoute, byRoute, todo, mins});
     renderMain();
     narrow.addEventListener('change', renderMain);
+    phone.addEventListener('change', renderMain);
     $('aMain').addEventListener('click', e => {                         // picking a set makes it the current one
+      const nd = e.target.closest('[data-pick]'); if (nd) return pickNode?.(+nd.dataset.pick);
       const b = e.target.closest('[data-set]'); if (!b) return;
       ns('game').set = b.dataset.set; save(); renderMain();
       $('aCur').scrollIntoView({behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start'});
@@ -70,6 +78,8 @@ import '../styles/screens/arena.css';
     const all = I.topics.flatMap(m => m.lessons), p = all[dailyIndex(today(), all.length)];
     const n = Math.min(s.week.solves, s.week.target), left = s.week.target - n;
     $('aTop').innerHTML = `
+      <div class="ar-strip m-fade"><h1>Arena</h1><span class="mono rk">RANK ${r.n}</span>
+        <span style="flex:1"></span><span class="mono">This week ${n}/${s.week.target}</span></div>
       <section class="ar-card ar-rank m-rise"><div class="hd"><span class="lab">ARENA RANK</span><span class="mono k">${fmt(solved)} solved</span></div>
         <div class="big"><span class="r">Rank ${r.n}</span><span class="mono x">${fmt(s.arenaXp)} XP</span></div>
         <div class="ar-xbar" role="progressbar" aria-label="Arena XP toward rank ${r.n + 1}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i class="m-fill" style="width:${pct}%"></i></div>
@@ -86,7 +96,8 @@ import '../styles/screens/arena.css';
 
   // The current set: nodes in serpentine order (row 1 left→right, row 2 right→left, …), boss last.
   async function renderSets(set, {R, A, P, plans, rounds, stars, done, onRoute, byRoute, todo}) {
-    const ths = await Promise.all(set.problems.map(theory));
+    const my = ++gen, ths = await Promise.all(set.problems.map(theory));
+    if (my !== gen) return;
     const cols = narrow.matches ? 3 : 5, boss = set.boss && rounds[set.boss];
     const n = set.problems.length, got = set.problems.filter(done).length, open = bossOpen(A, set.problems);
     const cur = set.problems.findIndex(p => !done(p));
@@ -120,11 +131,7 @@ import '../styles/screens/arena.css';
     const plan = plans[set.plan];
     const label = onRoute(set) ? 'ON YOUR ROUTE' : esc((plan?.title || set.plan).toUpperCase());
 
-    // More sets: route sets first (route order), then ones you've started, then the rest; the current one is above.
-    const prog = st => st.problems.filter(done).length;
-    const rest = R.sets.filter(st => !onRoute(st));
-    const others = [...byRoute, ...rest.filter(prog), ...rest.filter(st => !prog(st))].filter(st => st.id !== set.id);
-    const next = byRoute.slice(byRoute.indexOf(set) + 1).find(todo);   // the set after this one on the route
+    const {prog, others, next} = otherSets(set, {R, done, onRoute, byRoute, todo});
     const card = (st, i) => {
       const g = prog(st), m = st.problems.length, all = g === m, pl = plans[st.plan];
       const lab = all ? 'DONE' : onRoute(st) ? `ON ROUTE${st === next ? ' · NEXT' : ''}` : esc((pl?.group || 'Set').toUpperCase());
@@ -143,6 +150,82 @@ import '../styles/screens/arena.css';
         <div class="grid">${others.map(card).join('')}</div>
         ${others.length > 8 ? `<button type="button" class="ar-all" id="aAll">Show all ${others.length} sets</button>` : ''}</section>`;
     $('aAll')?.addEventListener('click', e => { $('aMain').querySelectorAll('.ar-set[hidden]').forEach(b => b.hidden = false); e.currentTarget.remove(); });
+  }
+
+  // More sets: route sets first (route order), then ones you've started, then the rest; the current one is shown apart.
+  function otherSets(set, {R, done, onRoute, byRoute, todo}) {
+    const prog = st => st.problems.filter(done).length;
+    const rest = R.sets.filter(st => !onRoute(st));
+    const others = [...byRoute, ...rest.filter(prog), ...rest.filter(st => !prog(st))].filter(st => st.id !== set.id);
+    const next = byRoute.slice(byRoute.indexOf(set) + 1).find(todo);   // the set after this one on the route
+    return {prog, others, next};
+  }
+
+  // Phone: set picker (the other sets in a disclosure), the set as a vertical path (tap a node to select it) and a
+  // bottom sheet with the selected problem above the tab bar. Node k sits at y = 36 + 84k (72px wrapper + 12px gap),
+  // x = --dx from the node column's centre, so the route line's SVG can use the same numbers.
+  async function renderPhone(set, {R, A, P, plans, rounds, stars, done, onRoute, byRoute, todo, mins}) {
+    const my = ++gen, ths = await Promise.all(set.problems.map(theory));
+    if (my !== gen) return;
+    const boss = set.boss && rounds[set.boss], n = set.problems.length, got = set.problems.filter(done).length, open = bossOpen(A, set.problems);
+    const cur = set.problems.findIndex(p => !done(p));
+    const DX = [0, 50, 0, -50], at = k => ({x: DX[k % 4], y: 36 + 84 * k});
+    const items = set.problems.map((id, k) => ({id, k, p: P[id] || {t: id, d: 'Easy'}})).concat(boss ? [{boss: true, k: n}] : []);
+    const t0 = 200, dt = 80;
+    let lines = '', nodes = '';
+    for (let k = 0; k + 1 < items.length; k++) {
+      const a = at(k), b = at(k + 1), green = done(set.problems[k]) && (k + 1 < n ? done(set.problems[k + 1]) : open);
+      lines += `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" pathLength="400" class="${green ? 'on' : ''}" style="animation-delay:${t0 + k * dt + 20}ms"/>`;
+    }
+    for (const x of items) {
+      const {k} = x, here = k === cur, pos = `--dx:${at(k).x}px;animation-delay:${t0 + k * dt}ms`;
+      const btn = x.boss
+        ? `<button type="button" class="ar-boss${open ? ' open' : ''}" data-pick="${k}" aria-pressed="false" aria-label="Boss round: ${esc(boss.title)}, ${open ? 'open' : 'locked'}">${open ? ICON.play('var(--bad)') : ICON.lock}</button>`
+        : done(x.id) ? `<button type="button" class="node done ar-mn" data-pick="${k}" aria-pressed="false" aria-label="${k + 1}. ${esc(x.p.t)}, solved">${ICON.check}</button>`
+        : `<button type="button" class="node ${here ? 'ar-now' : 'ar-open'} ar-mn" data-pick="${k}" aria-pressed="false" aria-label="${k + 1}. ${esc(x.p.t)}, ${here ? 'current' : 'open'}"><span class="mono">${k + 1}</span></button>`;
+      nodes += `<li class="m-pop" style="${pos}"><span class="ar-mw${here ? ' m-here' : ''}">${btn}</span><span class="pt">${x.boss ? `Boss · ${esc(boss.title)}` : esc(x.p.t)}</span></li>`;
+    }
+    const plan = plans[set.plan], label = onRoute(set) ? 'ON YOUR ROUTE' : esc((plan?.title || set.plan).toUpperCase());
+    const {prog, others, next} = otherSets(set, {R, done, onRoute, byRoute, todo});
+    const row = st => { const g = prog(st), m = st.problems.length, all = g === m;
+      const lab = all ? 'DONE' : onRoute(st) ? `ON ROUTE${st === next ? ' · NEXT' : ''}` : esc((plans[st.plan]?.group || 'Set').toUpperCase());
+      return `<li><button type="button" class="ar-prow" data-set="${esc(st.id)}" aria-label="${esc(st.title)}: ${g} of ${m} solved. Make it the current set">
+        <span><span class="lab">${lab}</span><strong>${esc(st.title)}</strong></span><span class="mono${all ? ' ok' : ''}">${all ? '✓' : `${g} / ${m}`}</span></button></li>`; };
+    $('aMain').innerHTML = `
+      <section class="ar-m" id="aCur" aria-label="Current set">
+        <details class="ar-pick m-rise" style="--i:1"><summary><span><span class="lab">CURRENT SET · ${label}</span><strong>${esc(set.title)}</strong></span>
+          <span class="mono c">${got} / ${n} <span aria-hidden="true">▾</span></span></summary>
+          <ul aria-label="Other sets">${others.map(row).join('')}</ul></details>
+        <div class="ar-mroute"><svg class="ar-mline" aria-hidden="true" width="1" height="1">${lines}</svg>
+          <ol class="ar-mpath" aria-label="${esc(set.title)} route">${nodes}</ol></div>
+        <div class="ar-mlinks"><a href="${href('/practice/problems/')}">All ${fmt(Object.keys(P).length)} problems →</a><a href="${href('/practice/interview/')}">Interview rounds →</a></div>
+        <section class="ar-sheet m-sheet" aria-label="Selected problem" aria-live="polite"><span class="grip" aria-hidden="true"></span><div class="ar-swap" id="aSwap"></div></section>
+      </section>`;
+    const sheet = (k) => {
+      const x = items[k], chip = (c, t) => `<span class="mono ar-chip ${c}">${t}</span>`;
+      let html;
+      if (x.boss) html = `<div class="ar-chips m-rise">${chip('hard', 'Boss round')}${chip('', `Timed · ${boss.minutes} min`)}${chip('', 'No hints')}</div>
+        <strong class="nm m-rise" style="--i:1">${esc(boss.title)}</strong>
+        ${open ? `<a class="u-btn arena ar-go m-rise" style="--i:2" href="${roundHref(boss.id)}">Start the round</a>`
+          : `<span class="u-btn ar-go off m-rise" style="--i:2" data-locked role="button" aria-disabled="true">Unlocks at ${n - 1} / ${n} solved</span>`}`;
+      else {
+        const ok = done(x.id), sn = stars[x.id] || 0, th = ths[k], m = th && mins[th.lesson];
+        const status = ok ? `<span class="mono ar-st ok">✓ Solved${sn ? ` · ${sn} star${sn > 1 ? 's' : ''}` : ''}</span>`
+          : `<span class="mono ar-st">${A.practice?.code?.[x.id] != null ? 'In progress' : k === cur ? 'Up next' : 'Not started'}</span>`;
+        html = `<div class="ar-chips m-rise">${chip({Easy: 'easy', Medium: 'med', Hard: 'hard'}[x.p.d], x.p.d)}${chip('', RT[x.p.rt] || esc(x.p.rt || ''))}${chip('xp', `+${XP.solve[x.p.d]} XP`)}${status}</div>
+          <strong class="nm m-rise" style="--i:1">${esc(x.p.t)}</strong>
+          ${th ? `<a class="ar-mth m-rise" style="--i:2" href="${esc(th.href)}">${BOOK}<span class="tx"><span class="t">${ok ? 'Theory' : 'Theory first'}: ${esc(th.label)}</span>
+            <span class="s">${[m && `${m} min`, !ok && 'earns a star'].filter(Boolean).join(' · ') || 'Open the lesson'}</span></span><span aria-hidden="true">›</span></a>` : ''}
+          <a class="u-btn arena ar-go m-rise" style="--i:3" href="${problemHref(x.id)}?set=${encodeURIComponent(set.id)}">${ok ? 'Solve again' : 'Solve'}</a>`;
+      }
+      $('aSwap').innerHTML = html;
+      $('aMain').querySelectorAll('[data-pick]').forEach(b => { const on = +b.dataset.pick === k;
+        b.setAttribute('aria-pressed', String(on)); b.parentElement.classList.toggle('on', on); });
+      root.style.setProperty('--sheet-h', `${$('aMain').querySelector('.ar-sheet').offsetHeight}px`);   // room under the path
+    };
+    let sel = cur < 0 ? items.length - 1 : cur;                         // the current problem, or the boss once all are solved
+    pickNode = k => { if (items[k] && k !== sel) sheet(sel = k); };
+    sheet(sel);
   }
 
   function renderRail(R, I, D, s, evs, day, rounds, set) {

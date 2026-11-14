@@ -51,7 +51,7 @@ const diff = {Easy: 'easy', Medium: 'med', Hard: 'hard'}[p.d as string];
     <a class="pb-back" id="pbBack" href={u('/arena/')}>← Arena</a>
     <ol class="pb-dots" aria-label="Set progress" id="pbDots"></ol>
     <span style="flex:1"></span>
-    <span class="mono pb-clock">par {PAR[p.d]}:00 · <span id="pbClock" role="timer" aria-label="Time on this problem">00:00</span></span>
+    <span class="mono pb-clock"><span class="pb-par">par {PAR[p.d]}:00 · </span><span id="pbClock" role="timer" aria-label="Time on this problem">00:00</span></span>
   </div>
 
   <div class="pb-grid">
@@ -89,14 +89,15 @@ const diff = {Easy: 'easy', Medium: 'med', Hard: 'hard'}[p.d as string];
             <button type="button" role="tab" class="mono" aria-selected="false" aria-controls="pane-tests" data-tab="tests">tests.py</button>
           </div>
           <span style="flex:1"></span>
-          {p.colab ? <>
+          {/* the actions: inline here on desktop (display: contents); a fixed row above the tab bar on phones (problem.css) */}
+          <div class="pb-acts">{p.colab ? <>
             <a class="pb-run" href={p.colab} target="_blank" rel="noopener">Open in Colab ↗</a>
             <button type="button" class="pb-submit" id="mark">All tests passed · mark solved</button>
           </> : <>
             <button type="button" class="pb-reset" id="reset" title="Restore the starter code">Reset</button>
             <button type="button" class="pb-run" id="run" title="Run the examples"><span class="lbl">Run <span class="mono k" id="runKey">⌘↵</span></span></button>
             <button type="button" class="pb-submit" id="submit" title="Run all tests (add Shift to the Run shortcut)">Submit</button>
-          </>}
+          </>}</div>
         </div>
         <div id="pane-code" role="tabpanel" aria-label={file}>
           {p.colab ? <pre class="mono pb-code">{p.starter}</pre> : <textarea id="code" aria-label="Code editor">{p.starter}</textarea>}
@@ -175,6 +176,8 @@ const diff = {Easy: 'easy', Medium: 'med', Hard: 'hard'}[p.d as string];
         ? `<li style="--i:${set.problems.length}"><a href="${href(`/practice/interview/${set.boss.id}/`)}" class="dot boss open" aria-label="Boss round: ${esc(set.boss.t)}, open" title="${esc(set.boss.t)}"></a></li>`
         : `<li style="--i:${set.problems.length}"><span class="dot boss" role="img" data-locked aria-label="Boss round, locked: opens at ${set.problems.length - 1} of ${set.problems.length} solved"></span></li>`;
       $('#pbDots').innerHTML = html;
+      const dots = $('#pbDots'), c = dots.querySelector('.cur');            // phones: the dots scroll sideways; keep this one in view
+      if (c) dots.scrollLeft = c.parentElement.offsetLeft - dots.clientWidth / 2;
     }
     shakeLocked($('#pbDots'));
 

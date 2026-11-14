@@ -104,3 +104,28 @@
 @media (max-width: 900px) { .dz-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 640px) { .dz { padding: 24px 16px 40px; } .dz-head h1 { font-size: 34px; } }
 @media (max-width: 480px) { .dz-cols { grid-template-columns: minmax(0, 1fr); } }
+
+/* phones: light palette; banner sticks above the tab bar, the concept panel sits inline under the route */
+@media (max-width: 640px) {
+  .dz { gap: 22px; }
+  .dz-goals { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .dz-goal { padding: 16px; }
+  .dz-goal:hover, .cr:hover, .dz-lib .chips a:hover { translate: none; filter: none; }
+  #dBanner { position: sticky; bottom: calc(92px + env(safe-area-inset-bottom)); z-index: 40; }
+  #dBanner:empty { display: none; }
+  .dz-banner { background: var(--surface); box-shadow: 0 -6px 18px rgba(26, 28, 30, .08), 0 2px 0 var(--accent-line); }
+  .dz-banner .tx { min-width: 100%; }
+  .dz-banner button { flex: 1; height: 44px; }
+  .dz-banner .go { background: var(--accent); color: var(--accent-ink); border-bottom: 3px solid var(--accent-edge); }
+  .dz-body { flex-direction: column; flex-wrap: nowrap; align-items: stretch; }
+  .dz-route { flex: none; }
+  .dz-panel { flex: none; max-width: none; background: var(--surface); animation: none; }
+  .dz-panel.in { animation: m-rise var(--t3) var(--e-out) both; }
+  .dz-panel h2 { font-size: 24px; }
+  .dz-panel .go, .dz-panel .go:hover { background: var(--accent); color: var(--accent-ink); border-bottom: 3px solid var(--accent-edge); }
+  .dz-panel .acts a { height: 46px; }
+  .cr { padding: 12px; background: var(--surface); }
+  .cr.opt .dot { border-color: var(--line-4); }
+  .cr.fin { border-color: var(--bad-line); }
+  .dz-lib .chips a { background: var(--surface); }
+}
