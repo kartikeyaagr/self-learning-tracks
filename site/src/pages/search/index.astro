@@ -1,0 +1,17 @@
+---
+// Full-text search over every lesson and problem (Pagefind index, built after astro build).
+import Site from '../../layouts/Site.astro';
+import { u } from '../../lib/url.mjs';
+---
+<Site title="Search · Tracks">
+  <link slot="head" rel="stylesheet" href={u('/pagefind/pagefind-ui.css')}>
+  <h1 style="font-size:40px;letter-spacing:-.045em;margin:4px 0 18px">Search</h1>
+  <div id="search"></div>
+  <script is:inline define:vars={{ src: u('/pagefind/pagefind-ui.js') }}>
+    const s = document.createElement('script'); s.src = src;
+    s.onload = () => new PagefindUI({element: '#search', showSubResults: true, showImages: false, autofocus: true});
+    s.onerror = () => document.getElementById('search').textContent = 'The search index is built with the production build (npm run build).';
+    document.head.appendChild(s);
+  </script>
+  <style is:global>#search{--pagefind-ui-primary:var(--accent);--pagefind-ui-text:var(--ink);--pagefind-ui-background:var(--card);--pagefind-ui-border:var(--line);--pagefind-ui-font:var(--body)}</style>
+</Site>

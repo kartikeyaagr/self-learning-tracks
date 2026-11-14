@@ -25,7 +25,7 @@ EXPORTS = {
                                   mount="""mountViz(root);
   const box = document.getElementById('air-blocks');
   if (box){ const B = JSON.parse(box.dataset.blocks); rerender = () => { box.innerHTML = B.map(blockHTML).join(''); wireBlocks({blocks: B}); mountViz(box); }; rerender(); }""",
-                                  patch=[('href="sheets/${', 'href="/courses/ai-research-track-web/sheets/${'),
+                                  patch=[('href="sheets/${', 'href="${window.__base || \'\'}/courses/ai-research-track-web/sheets/${'),
                                          ('`<a href="#l${key(id)}">${id}</a>`', '`<a href="${(window.__lessonUrl || {})[id] || \'#\'}">${id}</a>`')]),
 }
 # Page-level sections: the Astro site provides these itself.
@@ -60,7 +60,7 @@ def sections(code):
 
 
 def build(dirname, cfg):
-    d = ROOT / dirname
+    d = ROOT / 'sources' / dirname
     code = script_of(d / cfg['src'])
     for a, b in cfg.get('patch', []):
         assert code.count(a) == 1, f'{dirname}: patch anchor {a!r} found {code.count(a)}x'
@@ -78,6 +78,9 @@ def build(dirname, cfg):
         parts.append(body)
     js = '\n'.join(parts)
     if cfg.get('keep_state'):
+        # its saved state lives in the site-wide store (site/src/lib/store.js), under its old key as the namespace
+        k = re.search(r"localStorage\.getItem\('([^']+)'", js).group(1)
+        js = js.replace(f"localStorage.getItem('{k}')", f"window.__store.raw.get('{k}')").replace(f"localStorage.setItem('{k}', ", f"window.__store.raw.set('{k}', ")
         js = js.replace('function rerender(', 'function __unused_rerender(')   # mount() supplies rerender
         js += '\nlet rerender = () => {};\nconst view = document.getElementById(\'view\');\n'
     stubs = '\n'.join(v for k, v in STUBS.items() if not re.search(rf'(function {k}\(|const {k} = |let {k} = )', js))

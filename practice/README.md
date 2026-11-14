@@ -5,8 +5,8 @@ browser (Pyodide in a Web Worker). PyTorch, JAX, CUDA (Numba kernels) and Triton
 
 ## Build
 
-    uv run practice/src/build.py        # verify every problem, write index.html, data/, nb/
-    uv run --no-project build_hub.py    # refresh the hub card
+    uv run practice/src/build.py        # verify every problem, write site/public/practice/
+    cd site && npm run build            # the site renders the Practice pages from that data
 
 ## Add a problem
 
@@ -28,6 +28,7 @@ or if a tag, lesson or related slug doesn't exist. `harness.py` grades both here
 
 ## Files
 
-- `index.html`, `data/*.json`, `nb/*.ipynb`: generated, commit them (GitHub Pages serves them).
+- `site/public/practice/` (`index.json`, `data/*.json`, `quiz/`, `nb/*.ipynb`, `links.json`): generated, commit them.
+  CI only builds the site; Colab opens the notebooks straight from `main`.
 - `runner.js`: the Web Worker. Pyodide is pinned to 0.29.5; the build pins Python 3.13, numpy 2.2 and pandas 2.3 to match.
-- Progress is stored in `localStorage` under `practice`, in the same shape as the courses, so the hub reads it.
+- Progress lives in the site-wide store (`localStorage` key `tracks`, namespace `practice`).

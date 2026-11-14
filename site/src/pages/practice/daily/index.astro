@@ -1,0 +1,12 @@
+---
+import Practice from '../../../layouts/Practice.astro';
+---
+<Practice title="Problem of the day" cur="daily"><p style="color:var(--muted)">Finding today's problem…</p>
+  <script>
+    import { today } from '../../../lib/progress.js';
+    fetch(`${window.__base}/practice/index.json`).then(r => r.json()).then(I => {
+      const all = I.topics.flatMap(m => m.lessons), d = today(); let h = 0; for (const c of d) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+      location.replace(`${window.__base}/practice/p/${all[h % all.length].id}/`);
+    });
+  </script>
+</Practice>

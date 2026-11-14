@@ -3,7 +3,7 @@ import { glob } from 'astro/loaders';
 import { z } from 'astro/zod';
 
 // One course = src/content/courses/<dir>/course.json + lessons/*.md (written by scripts/import_courses.py,
-// then edited directly). The schemas replace engine/build_course.py --check.
+// then edited directly).
 const courses = defineCollection({
   loader: glob({base: './src/content/courses', pattern: '*/course.json', generateId: ({entry}) => entry.split('/')[0]}),
   schema: z.object({
@@ -19,7 +19,7 @@ const courses = defineCollection({
 });
 
 const lessons = defineCollection({
-  loader: glob({base: './src/content/courses', pattern: '*/lessons/*.md'}),
+  loader: glob({base: './src/content/courses', pattern: '*/lessons/*.md', generateId: ({entry}) => entry.replace(/\.md$/, '')}),
   schema: z.object({
     id: z.string().regex(/^[0-9A-Z]{2}\.\d\d$/), course: z.string(), module: z.string(), slug: z.string(), title: z.string(),
     keyIdeas: z.array(z.string()).default([]), question: z.string().default(''), answer: z.string().default(''),

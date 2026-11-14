@@ -1,0 +1,40 @@
+---
+// ML Maths step 1: a self-graded diagnostic notebook that decides which modules to skip, review or learn in full.
+import Site from '../../../../layouts/Site.astro';
+import CourseSide from '../../../../components/CourseSide.astro';
+import { courseData } from '../../../../lib/course.mjs';
+import { u } from '../../../../lib/url.mjs';
+const { course, modules } = await courseData('ml-maths-course');
+const mod = n => modules.find(m => m.n === n);
+const TASKS = [['T1', 'Masked argmax for a decoder', ['01', '02']], ['T2', 'Gaussian elimination with partial pivoting', ['03']], ['T3', 'Rank and null space by row reduction', ['04']],
+  ['T4', 'PCA from scratch, checked against SVD', ['05', '06', '07', '08']], ['T5', 'Softmax cross-entropy forward and backward', ['09']], ['T6', 'Find and fix 8 bugs in a logistic-regression script', ['08', '09']],
+  ['T7', 'Memory, FLOP and probability estimates', ['09', '10']], ['T8', 'Multivariate Gaussian log-density at d = 300', ['10', '11', '12']]];
+const nb = u('/courses/ml-maths-course/step1_diagnostic.ipynb');
+---
+<Site title={`Diagnostic · ${course.title}`} course={course} courseId="ml-maths-course" side crumbs={[['Diagnostic', Astro.url.pathname]]}>
+  <CourseSide slot="side" course={course} courseId="ml-maths-course" modules={modules} />
+  <section class="panel mhead"><div>
+    <div class="lab">Step 1 · before module 01</div>
+    <h1>Diagnostic</h1>
+    <p class="mdesc">Eight work-style tasks in one notebook, each with a self-grading check cell. Your results decide, module by module, whether you skip it, review it or learn it in full.</p>
+    <div class="meta"><span class="pill">8 tasks</span><span class="pill">Python · NumPy</span><span class="pill">Colab or laptop</span><span class="pill ip" id="state">Not submitted yet</span></div>
+    <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap"><a class="btn" href={nb} download>Download notebook</a><button type="button" class="btn ghost" id="sub">Mark as submitted</button></div>
+  </div><div class="big" aria-hidden="true">T</div></section>
+  <div class="sh"><h2>Tasks</h2><span class="lab">8 tasks · 14 modules</span></div>
+  <div class="tbl"><table><thead><tr><th>Task</th><th>What you build</th><th>Modules it tests</th></tr></thead><tbody>{TASKS.map(([t, w, ms]) =>
+    <tr><td><b>{t}</b></td><td>{w}</td><td>{ms.map((n, i) => <>{i > 0 && ', '}<a href={u(`/courses/ml-maths-course/${mod(n).slug}/`)}>{n}</a></>)}</td></tr>)}</tbody></table></div>
+  <section class="card blk"><div class="lab">How it works</div><ol>
+    <li>Download the notebook and open it in Colab (File &gt; Upload notebook) or Jupyter.</li>
+    <li>Fill in each function where it says TODO, then run the CHECK cell under it. Checks print pass or fail with a reason.</li>
+    <li>Do it without looking anything up first. A blank is more useful to the plan than a copied answer.</li>
+    <li>Upload the finished notebook in the project chat. It gets graded per task, and the study plan is built from the result.</li>
+  </ol></section>
+  <script>
+    import { load, save, bump } from '../../../../lib/progress.js';
+    const st = load('mlmaths'); st.meta = st.meta || {};
+    const b = document.getElementById('sub'), s = document.getElementById('state');
+    const paint = () => { const on = !!st.meta.diag; b.textContent = on ? 'Mark as not submitted' : 'Mark as submitted'; s.textContent = on ? 'Submitted' : 'Not submitted yet'; s.className = 'pill ' + (on ? 'ok' : 'ip'); };
+    b.onclick = () => { st.meta.diag = !st.meta.diag; if (st.meta.diag) bump(st); save(); paint(); };
+    paint();
+  </script>
+</Site>

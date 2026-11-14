@@ -1,0 +1,24 @@
+---
+// Old URLs (/<course folder>/#l03-02, #m03, #review, #diag) from before the Astro site: forward to the new pages.
+import { getCollection } from 'astro:content';
+import { courseData, lessonUrl } from '../../lib/course.mjs';
+import { u } from '../../lib/url.mjs';
+export async function getStaticPaths() {
+  const out = [{params: {legacy: 'ml-system-design'}, props: {home: u('/courses/'), map: {}}}];
+  for (const c of await getCollection('courses')) {
+    const { modules } = await courseData(c.id), map = {};
+    for (const m of modules) { map['m' + m.n] = u(`/courses/${c.id}/${m.slug}/`);
+      for (const l of m.lessons) map['l' + l.data.id.replace('.', '-')] ??= lessonUrl(c.id, m, l); }
+    // ML Maths was renumbered: its old lesson ids are now topic ids, each pointing at the topic's first lesson
+    for (const m of modules) for (const l of m.lessons) if (l.data.topic) map['l' + l.data.topic.id.replace('.', '-')] = map['t' + l.data.topic.id] ??= lessonUrl(c.id, m, l);
+    map.review = u('/review/'); if (c.id === 'ml-maths-course') map.diag = u('/courses/ml-maths-course/diagnostic/');
+    out.push({params: {legacy: c.id}, props: {home: u(`/courses/${c.id}/`), map}});
+  }
+  return out;
+}
+const { home, map } = Astro.props;
+---
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Moved</title><meta name="robots" content="noindex">
+<meta http-equiv="refresh" content={`1; url=${home}`}>
+<script is:inline define:vars={{ home, map }}>location.replace(map[location.hash.slice(1)] || home);</script>
+</head><body><p>This course has moved: <a href={home}>continue to its new home</a>.</p></body></html>

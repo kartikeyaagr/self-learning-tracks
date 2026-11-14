@@ -1,4 +1,5 @@
 ---
+import { u } from '../lib/url.mjs';
 // Roadmap home: four layers, each with its courses and the study plans that practise them.
 import Site from '../layouts/Site.astro';
 import { getCollection } from 'astro:content';
@@ -18,7 +19,6 @@ const order = ['ml-maths-course', 'ml-toolkit', 'machine-learning', 'deep-learni
 const sorted = [...courses].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
 const count = id => lessons.filter(l => l.data.course === id).length;
 const total = lessons.length;
-const practiceBase = import.meta.env.PUBLIC_PRACTICE_BASE ?? '/practice/index.html';
 ---
 <Site title="Tracks">
   <section class="hero panel" style="min-height:0;padding:44px 44px 40px">
@@ -31,20 +31,21 @@ const practiceBase = import.meta.env.PUBLIC_PRACTICE_BASE ?? '/practice/index.ht
       <div class="ln"><span class="lab">Layer {L.n}</span><b>{L.name}</b><span>{L.blurb}</span></div>
       <div>
         <div class="mods">{cs.map(c => (
-          <a class="card mcard course" href={`/courses/${c.id}/`} data-key={c.data.key} data-total={count(c.id)}>
+          <a class="card mcard course" href={u(`/courses/${c.id}/`)} data-key={c.data.key} data-total={count(c.id)}>
             <div class="tp"><Fragment set:html={c.data.logo} /><span class="lab done-n">0/{count(c.id)}</span></div>
             <h4>{c.data.title}</h4>
             <p style="margin:0;color:var(--muted);font-size:14px;line-height:1.45;flex:1">{c.data.description}</p>
             <div class="bar"><i style="width:0%"></i></div>
             <div class="ft"><span>{c.data.modules.length} modules · {count(c.id)} lessons</span><span>Open →</span></div>
           </a>))}</div>
-        {ps.length > 0 && <div class="plans"><span class="lab">Practice</span>{ps.map(p => <a class="plan" href={`${practiceBase}#plan-${p.id}`}>{p.title}<i>{p.problems.length}</i></a>)}</div>}
+        {ps.length > 0 && <div class="plans"><span class="lab">Practice</span>{ps.map(p => <a class="plan" href={u(`/practice/plans/${p.id}/`)}>{p.title}<i>{p.problems.length}</i></a>)}</div>}
       </div>
     </section>; })}
   <script>
+    import { ns } from '../lib/store.js';
     // progress per course, from each course's saved data (same keys as before)
     document.querySelectorAll('.course[data-key]').forEach(a => {
-      let done = {}; try { done = JSON.parse(localStorage.getItem(a.dataset.key) || '{}').done || {}; } catch {}
+      const done = ns(a.dataset.key).done || {};
       const n = Object.values(done).filter(Boolean).length, t = +a.dataset.total;
       a.querySelector('.done-n').textContent = `${n}/${t}`; a.querySelector('.bar i').style.width = `${Math.min(100, 100 * n / t)}%`;
     });

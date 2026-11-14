@@ -1,0 +1,21 @@
+---
+import Practice from '../../../layouts/Practice.astro';
+import PCard from '../../../components/PCard.astro';
+import { IDX } from '../../../lib/practice.mjs';
+import { u } from '../../../lib/url.mjs';
+const roles = [...new Set(IDX.rounds.map(r => r.role))];
+---
+<Practice title="Interview prep" cur="interview">
+  <h1 style="font-size:40px;letter-spacing:-.045em;margin:4px 0 6px">Interview prep</h1>
+  <p style="color:var(--muted);margin:0 0 8px;max-width:660px">Timed rounds by role. Coding problems are graded by tests; theory questions come from the course lessons and you grade yourself against the model answer. Each round ends with a readiness report.</p>
+  <a class="card" id="live" hidden style="display:block;padding:16px 20px;margin:16px 0;border-color:var(--accent);text-decoration:none"></a>
+  {roles.map(role => <><div class="parth"><h3>{role}</h3></div><div class="mods">{IDX.rounds.filter(r => r.role === role).map(r =>
+    <PCard href={u(`/practice/interview/${r.id}/`)} lab={`${r.minutes} min`} title={r.title} blurb={r.blurb} right={`${(r.coding || []).length} coding · ${(r.theory || []).length} theory`}>
+      <span slot="badge" class="pill" data-round={r.id} hidden></span></PCard>)}</div></>)}
+  <script define:vars={{ T: Object.fromEntries(IDX.rounds.map(r => [r.id, r.title])) }}>window.__rounds = T;</script>
+  <script>
+    import { st } from '../../../lib/practice-client.js';
+    const a = document.getElementById('live');
+    if (st.live.id) { a.hidden = false; a.href = `${window.__base}/practice/interview/${st.live.id}/`; a.innerHTML = '<b>Round in progress:</b> '; a.append(`${window.__rounds[st.live.id] || ''} → resume`); }
+  </script>
+</Practice>

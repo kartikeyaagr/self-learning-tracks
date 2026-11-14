@@ -4,8 +4,8 @@
 const key = id => id.replace('.', '-');
 const st = {done:{}, at:{}, notes:{}, flags:{}, reveal:{}, grades:{}, rev:{}, act:{}, mcq:{}, exd:{}, cp:{}};
 let db = null;
-function lsGet(){ try { return JSON.parse(localStorage.getItem('air-fanout-v1') || '{}'); } catch(e){ return {}; } }
-function lsSet(){ try { const {done, at, notes, flags, grades, rev, act, mcq, exd, cp} = st; localStorage.setItem('air-fanout-v1', JSON.stringify({done, at, notes, flags, grades, rev, act, mcq, exd, cp})); } catch(e){} }
+function lsGet(){ try { return JSON.parse(window.__store.raw.get('air-fanout-v1') || '{}'); } catch(e){ return {}; } }
+function lsSet(){ try { const {done, at, notes, flags, grades, rev, act, mcq, exd, cp} = st; window.__store.raw.set('air-fanout-v1', JSON.stringify({done, at, notes, flags, grades, rev, act, mcq, exd, cp})); } catch(e){} }
 Object.assign(st, lsGet()); st.reveal = {};
 ['done','at','notes','flags','grades','rev','act','mcq','exd','cp'].forEach(k => st[k] = st[k] || {});
 
@@ -139,7 +139,7 @@ function blockHTML(B){
     <div class="meta"><span class="pill">covers ${covers}</span><span class="pill k">+10 XP per exercise</span><span class="pill k">+5 XP per right answer</span></div>
     <p style="margin:0 0 8px;color:var(--muted);font-size:14.5px">After this topic you should be able to:</p>
     <ul class="obj">${B.obj.map(o => `<li>${o}</li>`).join('')}</ul>
-    <div class="nb"><span class="fn">${esc(B.sheet)}</span>${local ? `<a class="btn" href="/courses/ai-research-track-web/sheets/${encodeURIComponent(B.sheet)}" download>Download notebook</a>` : `<button type="button" class="btn" data-dl="${esc(B.sheet)}" hidden>Download notebook (.zip)</button>`}<a class="btn" href="https://colab.research.google.com/" target="_blank" rel="noopener">Open Colab</a>${B.drive ? `<a class="btn" href="${esc(B.drive)}" target="_blank" rel="noopener">Open in Colab</a>` : ''}<span class="dlmsg">${local ? 'Then File → Upload notebook in Colab.' : 'In Colab: File → Upload notebook. The notebook checks your answers with asserts.'}</span></div>
+    <div class="nb"><span class="fn">${esc(B.sheet)}</span>${local ? `<a class="btn" href="${window.__base || ''}/courses/ai-research-track-web/sheets/${encodeURIComponent(B.sheet)}" download>Download notebook</a>` : `<button type="button" class="btn" data-dl="${esc(B.sheet)}" hidden>Download notebook (.zip)</button>`}<a class="btn" href="https://colab.research.google.com/" target="_blank" rel="noopener">Open Colab</a>${B.drive ? `<a class="btn" href="${esc(B.drive)}" target="_blank" rel="noopener">Open in Colab</a>` : ''}<span class="dlmsg">${local ? 'Then File → Upload notebook in Colab.' : 'In Colab: File → Upload notebook. The notebook checks your answers with asserts.'}</span></div>
     <div class="lab" style="margin:4px 0 10px">Exercises · ${Object.keys(exd).length}/${B.ex.length} passed</div>
     <ul class="exl">${B.ex.map((e, j) => `<li><label class="${exd[j] ? 'on' : ''}"><input type="checkbox" class="ck" data-ex="${B.grp}" data-j="${j}"${exd[j] ? ' checked' : ''}><span><b>${e.t}</b><span class="d">${e.d}</span></span></label></li>`).join('')}</ul>
     <div class="lab" style="margin:30px 0 10px">Quiz · ${right}/${B.quiz.length} right${answered === B.quiz.length && right === B.quiz.length ? ' · clean sheet' : ''}</div>

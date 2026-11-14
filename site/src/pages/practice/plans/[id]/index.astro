@@ -1,0 +1,24 @@
+---
+import Practice from '../../../../layouts/Practice.astro';
+import ProblemRow from '../../../../components/ProblemRow.astro';
+import PHead from '../../../../components/PHead.astro';
+import { IDX, BY, planItems, quiz } from '../../../../lib/practice.mjs';
+import { u } from '../../../../lib/url.mjs';
+export const getStaticPaths = () => IDX.plans.map(pl => ({params: {id: pl.id}, props: {pl}}));
+const { pl } = Astro.props;
+const q = quiz(pl.id), hasQuiz = s => !!q?.sections.find(x => x.section === s.name)?.questions?.length;
+let i = 0;
+---
+<Practice title={pl.title} cur="plans" description={pl.blurb} crumbs={[['Study plans', u('/practice/plans/')], [pl.title, Astro.url.pathname]]}>
+  <PHead lab={`Study plan · ${pl.group}`} title={pl.title} items={planItems(pl)} big={pl.sections.length} verbs="Start plan|Continue|Practise again">
+    <p style="margin:0 0 16px;color:var(--muted);max-width:620px;font-size:16.5px">{pl.blurb}</p>
+  </PHead>
+  {(pl.prereq || pl.next) && <div class="two" style="margin-top:14px">
+    {pl.prereq ? <div class="card" style="padding:18px 20px"><div class="lab" style="margin-bottom:8px">Before you start</div><p style="margin:0;font-size:15px;color:var(--muted)">{pl.prereq}</p></div> : <span></span>}
+    {pl.next && <div class="card" style="padding:18px 20px"><div class="lab" style="margin-bottom:8px">Where to go next</div><p style="margin:0;font-size:15px;color:var(--muted)">{pl.next}</p></div>}
+  </div>}
+  {pl.sections.map((sec, si) => { const sl = sec.problems.map(x => BY[x]).filter(Boolean); return <>
+    <div class="parth" data-ids={sl.map(l => l.id).join('|')}><span class="lab">Section {si + 1}</span><h3>{sec.name}</h3><span class="lab" style="margin-left:auto"><span class="dn">0</span>/{sl.length}</span>
+      {hasQuiz(sec) && <a class="pill k" data-quiz={`${pl.id}:${si}`} href={u(`/practice/plans/${pl.id}/quiz/${si + 1}/`)} style="text-decoration:none">Quiz</a>}</div>
+    <div class="plist">{sl.map(l => <ProblemRow l={l} n={++i} />)}</div></>; })}
+</Practice>

@@ -1,4 +1,5 @@
 ---
+import { u } from '../../../../lib/url.mjs';
 import Site from '../../../../layouts/Site.astro';
 import CourseSide from '../../../../components/CourseSide.astro';
 import { getCollection, render } from 'astro:content';
@@ -27,15 +28,15 @@ const host = u => { try { return new URL(u).hostname.replace(/^www\./, ''); } ca
 const k = key(L.id), I = s => inlM(s, math);
 const own = course.css !== 'house';                       // exports bring their own figure code
 // Old in-page links (#l03-02, #m03) and AI Research's block links resolve through this map.
-const linkMap = Object.fromEntries([...lessons.map(x => [x.data.id, url(x)]), ...modules.map(mm => ['m' + mm.n, `/courses/${courseId}/${mm.slug}/`])]);
+const linkMap = Object.fromEntries([...lessons.map(x => [x.data.id, url(x)]), ...modules.map(mm => ['m' + mm.n, u(`/courses/${courseId}/${mm.slug}/`)])]);
 ---
 <Site title={`${L.title} · ${course.title}`} description={(L.keyIdeas[0] || L.lead || L.title).replace(/<[^>]+>|[*`$⟦⟧\d]/g, '').slice(0, 200)} course={course} courseId={courseId} side
-      crumbs={[[`${m.n} · ${m.name}`, `/courses/${courseId}/${m.slug}/`], [L.title, Astro.url.pathname]]}>
+      crumbs={[[`${m.n} · ${m.name}`, u(`/courses/${courseId}/${m.slug}/`)], [L.title, Astro.url.pathname]]}>
   <CourseSide slot="side" course={course} courseId={courseId} modules={modules} curMod={m.n} curLesson={L.id} />
   <div class="lgrid">
-    <article>
+    <article data-pagefind-body>
       <header class="panel lhead">
-        <a class="back" href={`/courses/${courseId}/${m.slug}/`}>← Module {m.n} · {m.name}</a>
+        <a class="back" href={u(`/courses/${courseId}/${m.slug}/`)}>← Module {m.n} · {m.name}</a>
         <div class="idrow"><span class="lid">{L.id}</span><span class="lab">Lesson {m.lessons.indexOf(l) + 1} of {m.lessons.length}{L.topic && ` · Topic ${L.topic.id}`}</span><span class="pill ok" id="donepill" hidden>✓ Completed</span></div>
         <h1>{L.title}</h1>
         <div class="meta"><span class="pill">{mins} min read</span>{L.topic && <span class="pill">{L.topic.title}</span>}{L.tags.map(t => <span class="pill k">{t}</span>)}{L.tools.map(t => <span class="pill">{t}</span>)}</div>
@@ -60,11 +61,11 @@ const linkMap = Object.fromEntries([...lessons.map(x => [x.data.id, url(x)]), ..
       {practice.length > 0 && <section class="card blk" id="practice"><div class="lab">Practice this</div><h3>Problems that use this lesson</h3>
         <div class="plinks">{practice.map(([s, t, d]) => <a href={practiceHref(s)}><span>{t}</span><span class={`pd ${d}`}>{d}</span></a>)}</div></section>}
 
-      <div class="done-zone">
+      <div class="done-zone" data-pagefind-ignore>
         <button type="button" class="btn" id="complete">Mark complete <span class="xp">+10 XP</span></button>
         <p>Shortcuts: C complete · J next · K previous</p>
       </div>
-      <nav class="pn" aria-label="Lesson navigation">
+      <nav class="pn" aria-label="Lesson navigation" data-pagefind-ignore>
         {prev && <a class="card" href={url(prev)}><span class="lab">← Previous · {prev.data.id}</span><b>{prev.data.title}</b></a>}
         {next && <a class="card nx" href={url(next)}><span class="lab">Next · {next.data.id} →</span><b>{next.data.title}</b></a>}
       </nav>
@@ -81,11 +82,11 @@ const linkMap = Object.fromEntries([...lessons.map(x => [x.data.id, url(x)]), ..
     window.__lessonUrl = linkMap;
   </script>
   <script>
-    import { load, save, now, dk } from '../../../../lib/progress.js';
+    import { load, save, now, bump as bumpOf } from '../../../../lib/progress.js';
     const { courseKey, courseDir, own, k, nextUrl, prevUrl } = window.__lesson, map = window.__lessonUrl;
-    const st = load(courseKey); ['done', 'at', 'notes', 'grades', 'rev', 'act'].forEach(x => st[x] = st[x] || {});
+    const st = load(courseKey);
     const $ = s => document.querySelector(s), prose = $('#prose');
-    const bump = () => { const d = dk(Date.now()); st.act[d] = (st.act[d] || 0) + 1; };
+    const bump = () => bumpOf(st);
     // old in-page links → new URLs
     prose.querySelectorAll('a[href^="#l"], a[href^="#m"]').forEach(a => { const h = a.getAttribute('href').slice(1);
       const t = h[0] === 'l' ? map[h.slice(1).replace('-', '.')] : map[h]; if (t) a.href = t; });
@@ -98,7 +99,7 @@ const linkMap = Object.fromEntries([...lessons.map(x => [x.data.id, url(x)]), ..
     // answer box: autosave
     const ans = $('#ans');
     if (ans) { ans.value = st.notes[k] || ''; let t;
-      ans.addEventListener('input', () => { clearTimeout(t); $('#saved').textContent = 'Saving…'; t = setTimeout(() => { st.notes[k] = ans.value; save(courseKey, st); $('#saved').textContent = 'Saved'; }, 400); }); }
+      ans.addEventListener('input', () => { clearTimeout(t); $('#saved').textContent = 'Saving…'; t = setTimeout(() => { st.notes[k] = ans.value; save(); $('#saved').textContent = 'Saved'; }, 400); }); }
     // model answer + self-grade
     const rv = $('#reveal');
     if (rv) {
@@ -106,13 +107,13 @@ const linkMap = Object.fromEntries([...lessons.map(x => [x.data.id, url(x)]), ..
       rv.addEventListener('click', () => showModel($('#model').hidden));
       const g = st.grades[k]?.g; if (g) { showModel(true); document.querySelector(`.gbtn[data-g="${g}"]`)?.setAttribute('aria-pressed', 'true'); }
       document.querySelectorAll('.gbtn').forEach(b => b.addEventListener('click', () => {
-        st.grades[k] = {g: +b.dataset.g, at: now()}; bump(); save(courseKey, st);
+        st.grades[k] = {g: +b.dataset.g, at: now()}; bump(); save();
         document.querySelectorAll('.gbtn').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
       }));
     }
     // completion
     const paint = () => { const d = !!st.done[k]; $('#donepill').hidden = !d; const c = $('#complete'); c.className = d ? 'btn go' : 'btn'; c.innerHTML = d ? '✓ Completed · undo' : 'Mark complete <span class="xp">+10 XP</span>'; };
-    $('#complete').addEventListener('click', () => { if (st.done[k]) { delete st.done[k]; delete st.at[k]; } else { st.done[k] = true; st.at[k] = now(); } save(courseKey, st); paint(); });
+    $('#complete').addEventListener('click', () => { if (st.done[k]) { delete st.done[k]; delete st.at[k]; } else { st.done[k] = true; st.at[k] = now(); } save(); paint(); });
     paint();
     addEventListener('keydown', e => { if (e.target.closest('textarea, input') || e.metaKey || e.ctrlKey) return;
       if (e.key === 'c') $('#complete').click(); else if (e.key === 'j' && nextUrl) location.href = nextUrl; else if (e.key === 'k' && prevUrl) location.href = prevUrl; });

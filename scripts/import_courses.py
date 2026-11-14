@@ -8,9 +8,9 @@ Writes, per course:
   site/src/content/courses/<dir>/lessons/<id>-<slug>.md  YAML frontmatter + Markdown notes
   site/src/content/courses/<dir>/math.json               exports only: ⟦n⟧ → pre-rendered MathML, for frontmatter text
 
-Sources:
-  engine courses   <dir>/src/course.json + src/modules/NN.json (ml-toolkit, machine-learning, deep-learning, ml-system-design)
-  claude.ai exports <dir>/index.html (or assets/data.js) + add-on modules from addons/<dir>/*.json
+Sources (all under sources/):
+  JSON course drafts <dir>/src/course.json + src/modules/NN.json (ml-toolkit, machine-learning, deep-learning, ml-system-design)
+  claude.ai exports  <dir>/index.html (or assets/data.js) + add-on modules from addons/<dir>/*.json
 
 The house lesson dialect becomes standard Markdown that remark parses:
   %%flow caption … %%   → ~~~dg-flow caption … ~~~   (house diagrams, rendered to SVG at build time)
@@ -26,6 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / 'site' / 'src' / 'content' / 'courses'
+SRC = ROOT / 'sources'                                     # importer inputs: claude.ai exports, add-on modules, JSON course drafts
 STD = ('flow', 'seq', 'layers', 'state', 'tree', 'timeline', 'compare', 'matrix', 'bars', 'widget')   # house renderer
 slug = lambda s: re.sub(r'[^a-z0-9]+', '-', s.lower()).strip('-')[:60].strip('-') or 'lesson'
 
@@ -39,7 +40,7 @@ EXPORTS = {   # raw = figure kinds that stay course-specific; single = those wri
     'system-design-101':     dict(name='System Design', data='index.html', engine='index.html', key='sdsd', layer=4, raw=set(), single=set(), house=True),
 }
 LAYER = {'ml-toolkit': 1, 'machine-learning': 2, 'deep-learning': 2, 'ml-system-design': 4}
-# Where add-on modules sit in an export's parts (mirrors build_addons.py).
+# Where add-on modules sit in an export's parts (sources/addons/<dir>/*.json).
 ADDON_PART = {'ml-maths-course': {'13': 'Probability and statistics', '14': 'Optimization'},
               'inference-eng-course': {'31': 'Runtime & kernel engineering'}}
 
@@ -160,7 +161,7 @@ def engine_lesson(L, m):
 
 
 def import_engine(dirname):
-    src = ROOT / dirname / 'src'
+    src = SRC / dirname / 'src'
     cfg = json.loads((src / 'course.json').read_text(encoding='utf-8'))
     mods = [json.loads(f.read_text(encoding='utf-8')) for f in sorted((src / 'modules').glob('*.json'))]
     if not mods:
@@ -171,14 +172,14 @@ def import_engine(dirname):
 
 
 def import_export(dirname, ex):
-    d = ROOT / dirname
+    d = SRC / dirname
     data_src = (d / ex['data']).read_text(encoding='utf-8')
     code = (d / ex['engine']).read_text(encoding='utf-8')
     page = (d / 'index.html').read_text(encoding='utf-8')
     mods = js_value(data_src, 'RAW')['modules'] if 'const RAW = ' in data_src else js_value(data_src, 'DATA')
-    mods = [m for m in mods if not m.get('addon')]                  # injected by build_addons.py; re-added below
+    mods = [m for m in mods if not m.get('addon')]                  # old add-on copies; re-added below from sources/addons
     math = js_value(data_src, 'MATH') if 'const MATH = ' in data_src else None
-    addons = [json.loads(f.read_text(encoding='utf-8')) for f in sorted((ROOT / 'addons' / dirname).glob('*.json'))]
+    addons = [json.loads(f.read_text(encoding='utf-8')) for f in sorted((SRC / 'addons' / dirname).glob('*.json'))]
     num = lambda pat: ast.literal_eval(re.search(pat, code).group(1))
     parts_src = re.search(r'const PARTS = (\[.*?\]);', code).group(1)
     if 'm:[' in parts_src.replace(' ', ''):

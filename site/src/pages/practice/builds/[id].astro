@@ -1,0 +1,22 @@
+---
+import Practice from '../../../layouts/Practice.astro';
+import ProblemRow from '../../../components/ProblemRow.astro';
+import PHead from '../../../components/PHead.astro';
+import { IDX, BY, buildItems } from '../../../lib/practice.mjs';
+import { md } from '../../../lib/md.mjs';
+import { u } from '../../../lib/url.mjs';
+export const getStaticPaths = () => IDX.builds.map(b => ({params: {id: b.id}, props: {b}}));
+const { b } = Astro.props, paper = b.kind === 'paper', cap = BY[b.capstone];
+const intro = b.intro ? await md(b.intro) : '';
+---
+<Practice title={b.title} cur={paper ? 'papers' : 'projects'} description={b.blurb} crumbs={[[paper ? 'Papers' : 'Projects', u(paper ? '/practice/papers/' : '/practice/projects/')], [b.title, Astro.url.pathname]]}>
+  <PHead lab={`${paper ? 'Paper' : 'Project'} · ${b.group}`} title={b.title} items={buildItems(b)} big={b.steps.length} verbs="Start building|Continue|Build it again" unit="done">
+    {paper && <p style="margin:0 0 10px;color:var(--muted)">{b.authors} · {b.year} · <a href={b.url} target="_blank" rel="noopener">Read the paper ↗</a></p>}
+    <p style="margin:0 0 16px;color:var(--muted);max-width:640px;font-size:16.5px">{b.blurb}</p>
+  </PHead>
+  {intro && <div class="prose" style="max-width:760px;margin-top:26px" data-pagefind-body set:html={intro} />}
+  <div class="parth"><span class="lab">Steps</span><h3>Build it piece by piece</h3></div>
+  <div class="plist">{b.steps.map((s, i) => BY[s.problem] && <ProblemRow l={BY[s.problem]} n={i + 1} note={s.note ? `${s.name} · ${s.note}` : s.name} />)}</div>
+  {cap && <><div class="parth"><span class="lab">Capstone</span><h3>Put it together</h3></div><div class="plist" style="--line:var(--accent)"><ProblemRow l={cap} /></div></>}
+  {(b.lesson_links || []).length > 0 && <section class="card blk"><div class="lab">Learn the ideas first</div><div class="links">{b.lesson_links.map(x => <a href={x.href}>{x.t}<span>{x.c}</span></a>)}</div></section>}
+</Practice>

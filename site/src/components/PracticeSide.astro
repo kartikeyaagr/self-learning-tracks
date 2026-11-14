@@ -1,0 +1,16 @@
+---
+import { u } from '../lib/url.mjs';
+import { IDX, ALL } from '../lib/practice.mjs';
+const { cur = '', topic = '' } = Astro.props;
+const n = k => IDX.builds.filter(b => b.kind === k).length;
+const items = [['Overview', '/practice/', 'home'], ['All problems', '/practice/problems/', 'all', ALL.length], ['Problem of the day', '/practice/daily/', 'daily'],
+  ['Study plans', '/practice/plans/', 'plans', IDX.plans.length], ['Papers', '/practice/papers/', 'papers', n('paper')], ['Projects', '/practice/projects/', 'projects', n('project')],
+  ['Interview prep', '/practice/interview/', 'interview', IDX.rounds.length], ['Review', '/review/', 'review']].filter(x => x[3] !== 0);
+---
+<div data-ns="practice">
+  {items.map(([t, h, k, c]) => <a class="nv" href={u(h)} aria-current={cur === k ? 'page' : undefined}>{t}{c != null && <span style="margin-left:auto;font:500 11px var(--mono);color:var(--faint)">{c}</span>}</a>)}
+  {IDX.parts.map(P => { const ms = IDX.topics.filter(m => m.part === P); return ms.length > 0 && <>
+    <div class="part lab"><span>{P}</span></div>
+    {ms.map(m => <a class="mr" href={u(`/practice/topics/${m.slug}/`)} aria-current={topic === m.slug ? 'true' : undefined}><span class="n">{m.n}</span><span>{m.name}</span><span class="c">{m.lessons.length}</span></a>)}
+  </>; })}
+</div>

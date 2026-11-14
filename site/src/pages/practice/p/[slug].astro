@@ -1,0 +1,164 @@
+---
+// One problem: statement, examples, hints, solution, explanation (rendered at build time), editor + Pyodide runner or a Colab card.
+import Practice from '../../../layouts/Practice.astro';
+import { IDX, ALL, BY, RT, problem, pHref } from '../../../lib/practice.mjs';
+import { md } from '../../../lib/md.mjs';
+import { inl } from '../../../lib/inline.mjs';
+import { u } from '../../../lib/url.mjs';
+export const getStaticPaths = () => ALL.map(l => ({params: {slug: l.id}, props: {l}}));
+const { l } = Astro.props;
+const p = problem(l.id), m = IDX.topics.find(x => x.n === l.mod);
+const gi = ALL.indexOf(l), prev = ALL[gi - 1], next = ALL[gi + 1];
+const [st, ex] = await Promise.all([md(p.st), md(p.ex_md)]);
+const plans = IDX.plans.filter(pl => pl.sections.some(s => s.problems.includes(l.id)));
+const related = p.related.map(r => BY[r]).filter(Boolean);
+const CM = 'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/';
+---
+<Practice title={p.t} topic={m.slug} description={`${p.d} ${RT[p.rt] || p.rt} problem: ${p.t}.`} crumbs={[[m.name, u(`/practice/topics/${m.slug}/`)], [p.t, Astro.url.pathname]]}>
+  {!p.colab && <Fragment slot="head">
+    <link rel="stylesheet" href={`${CM}codemirror.min.css`}>
+    <script is:inline src={`${CM}codemirror.min.js`}></script>
+    <script is:inline src={`${CM}mode/python/python.min.js`}></script>
+    <script is:inline src={`${CM}mode/sql/sql.min.js`}></script>
+    <script is:inline src={`${CM}addon/edit/matchbrackets.min.js`}></script>
+  </Fragment>}
+  <div class="pgrid">
+    <article>
+      <header class="panel lhead">
+        <a class="back" href={u(`/practice/topics/${m.slug}/`)}>← {m.name}</a>
+        <div class="idrow"><span class="lab">Problem {l.idx + 1} of {m.lessons.length}</span><span class="pill ok" id="okpill" hidden>✓ Solved</span><span class="pill ip" id="duepill" hidden>Due for review</span></div>
+        <h1>{p.t}</h1>
+        <div class="meta"><span class={`pill ${p.d}`}>{p.d}</span><span class="pill">{RT[p.rt] || p.rt}</span>{p.tags.map(t => <a class="pill k" href={u(`/practice/problems/?tag=${encodeURIComponent(t)}`)}>{t}</a>)}</div>
+      </header>
+      <div class="prose" id="prose" data-pagefind-body><Fragment set:html={st} /></div>
+      {p.shown.length > 0 && <><div class="lab" style="margin:26px 0 10px">Examples</div><div class="exs">{p.shown.map((e, i) =>
+        <div class="e"><div class="k">Example {i + 1} · input</div><div class="v">{e.in}</div><div class="k">Expected output</div><div class="v" style="margin:2px 0 0">{e.out}</div></div>)}</div></>}
+      <section class="reveal" id="help" data-pagefind-ignore>
+        <div class="lab">Stuck?</div>
+        {p.hints.map((h, i) => <div class="hint" hidden><b>Hint {i + 1}</b><span set:html={inl(h)} /></div>)}
+        <div class="rbtns" style="margin-top:12px">
+          {p.hints.length > 0 && <button type="button" class="btn ghost" id="hint">Show hint 1 of {p.hints.length}</button>}
+          <button type="button" class="btn ghost" id="solb">Show solution</button>
+          <button type="button" class="btn ghost" id="exb">Show explanation</button>
+        </div>
+        <div class="card" id="sol" hidden><div class="lab">Solution</div><pre class="code solcode">{p.sol}</pre>
+          <p id="solnote" style="color:var(--muted);font-size:13.5px;margin:0">You opened the solution, so solving this now earns the base +10 XP without the difficulty bonus.</p></div>
+        <div class="card prose" id="expl" hidden><Fragment set:html={ex} /></div>
+      </section>
+      {p.lessons.length > 0 && <section class="card blk"><div class="lab">Learn the idea</div><h3>Course lessons on this</h3><div class="links">{p.lessons.map(x => <a href={x.href}>{x.t}<span>{x.c}</span></a>)}</div></section>}
+      {plans.length > 0 && <section class="card blk"><div class="lab">In study plans</div><div class="links">{plans.map(pl => <a href={u(`/practice/plans/${pl.id}/`)}>{pl.title}<span>{pl.group}</span></a>)}</div></section>}
+      {related.length > 0 && <section class="card blk"><div class="lab">Try similar problems</div><div class="links">{related.map(x => <a href={pHref(x.id)}>{x.t}<span>{x.d}</span></a>)}</div></section>}
+      <nav class="pn" aria-label="Problem navigation">
+        {prev && <a class="card" href={pHref(prev.id)}><span class="lab">← Previous</span><b>{prev.t}</b></a>}
+        {next && <a class="card nx" href={pHref(next.id)}><span class="lab">Next →</span><b>{next.t}</b></a>}
+      </nav>
+    </article>
+    <aside class="ide">
+      {p.colab ? <>
+        <div class="card colab"><div class="lab">Runs in Colab</div><h3 style="margin:8px 0 0;font-size:20px;letter-spacing:-.02em">{RT[p.rt]}</h3>
+          <p>This runtime can't run in a browser. The notebook has the statement, the starter code and the same tests. Run it in Colab, then mark the problem solved here.</p>
+          {p.gpu && <p style="margin-top:-8px">Needs a GPU: in Colab choose <b>Runtime → Change runtime type → GPU</b>.</p>}
+          {p.gpu_only && <p style="margin-top:-8px">The tests were generated from a CPU reference implementation of the same spec. The reference solution kernel itself only runs on a GPU, so it has not been executed by the site build.</p>}
+          <div style="display:flex;gap:10px;flex-wrap:wrap"><a class="btn" href={p.colab} target="_blank" rel="noopener">Open in Colab ↗</a>
+          <button type="button" class="btn ghost" id="mark">All tests passed · mark solved</button></div></div>
+        <div class="card"><div class="bar2"><span class="lab">Starter code</span></div><pre class="code" style="margin:0;border-radius:0">{p.starter}</pre></div>
+      </> : <>
+        <div class="card"><div class="bar2"><span class="lab">{p.rt === 'sql' ? 'query.sql' : 'solution.py'}</span>
+          <button type="button" class="btn ghost" id="reset" title="Restore the starter code">Reset</button>
+          <button type="button" class="btn ghost" id="run" title="Run the examples (⌘↵)">Run</button>
+          <button type="button" class="btn" id="submit" title="Run all tests (⌘⇧↵)">Submit</button></div>
+          <textarea id="code" aria-label="Code editor">{p.starter}</textarea></div>
+        <div class="card"><div class="bar2"><span class="lab">Results</span></div><div class="res" id="res"><span class="st">Run checks your code on the {p.nex} example{p.nex === 1 ? '' : 's'}. Submit checks all {p.ntests} tests. Python starts the first time you run.</span></div></div>
+      </>}
+    </aside>
+  </div>
+  <script is:inline define:vars={{ P: {id: p.id, d: p.d, rt: p.rt, fn: p.fn, pkgs: p.pkgs, tol: p.tol, nex: p.nex, starter: p.starter, colab: !!p.colab, nhints: p.hints.length, topic: m.lessons.map(x => x.id), topicName: m.name} }}>window.__prob = P;</script>
+  <script>
+    import { st, toast } from '../../../lib/practice-client.js';
+    import { save, now, today } from '../../../lib/progress.js';
+    import { rate } from '../../../lib/review.js';
+    const P = window.__prob, k = P.id, $ = s => document.querySelector(s), esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+    const DG = {Easy: 1, Medium: 2, Hard: 3}, GB = {1: 3, 2: 8, 3: 15};
+    const CHECK = '<svg width="16" height="16" viewBox="0 0 20 20"><path d="M4.5 10.5l3.6 3.6 7.6-8.2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    const paint = () => {
+      const d = !!st.done[k]; $('#okpill').hidden = !d; $('#duepill').hidden = !(d && st.rev[k]?.due && st.rev[k].due <= today());
+      const hn = st.hints[k] || 0; document.querySelectorAll('.hint').forEach((h, i) => h.hidden = i >= hn);
+      const hb = $('#hint'); if (hb) { hb.hidden = hn >= P.nhints; hb.textContent = `Show hint ${hn + 1} of ${P.nhints}`; }
+      $('#sol').hidden = !st.sol[k]; $('#solb').textContent = st.sol[k] ? 'Hide solution' : 'Show solution'; $('#solnote').hidden = d;
+      $('#expl').hidden = !st.expl[k]; $('#exb').textContent = st.expl[k] ? 'Hide explanation' : 'Show explanation';
+      const mk = $('#mark'); if (mk) mk.hidden = d;
+    };
+    $('#hint')?.addEventListener('click', () => { st.hints[k] = (st.hints[k] || 0) + 1; save(); paint(); });
+    $('#solb').addEventListener('click', () => { st.sol[k] = !st.sol[k]; save(); paint(); });
+    $('#exb').addEventListener('click', () => { st.expl[k] = !st.expl[k]; save(); paint(); });
+    paint();
+
+    function solved() {
+      if (!st.done[k]) {
+        st.done[k] = true; st.at[k] = now();
+        if (!st.sol[k]) st.grades[k] = {g: DG[P.d], at: now()};
+        rate('practice', k, 3);                                   // first review in a day; also saves and counts today's activity
+        st.rev[k].n = 0;                                          // the first solve is not a review
+        save(); toast(`<b>+${10 + (st.sol[k] ? 0 : GB[DG[P.d]])} XP</b> Problem solved`);
+        if (P.topic.every(id => st.done[id])) setTimeout(() => toast(`<b>${esc(P.topicName)}</b> topic cleared`, true), 450);
+      } else if (st.rev[k]?.due && st.rev[k].due <= today()) {
+        rate('practice', k, 3); toast(`<b>+5 XP</b> Reviewed · back in a while`);
+      } else toast('Solved again');
+      paint();
+    }
+    $('#mark')?.addEventListener('click', solved);
+
+    if (!P.colab) {
+      // runner: one Web Worker, killed and respawned on timeout
+      const RUN = {w: null, ready: null, cb: null};
+      const boot = () => {
+        if (RUN.w) return RUN.ready;
+        RUN.w = new Worker(`${window.__base}/practice/runner.js`);
+        RUN.ready = new Promise((res, rej) => {
+          RUN.w.onmessage = e => { const m = e.data; if (m.type === 'ready') res(); else if (m.type === 'status') RUN.cb?.status(m.text); else RUN.cb?.done(m); };
+          RUN.w.onerror = e => { RUN.w = null; rej(new Error(e.message || 'Python failed to start')); };
+        });
+        return RUN.ready;
+      };
+      let tests = null;                                          // full test data, fetched on the first run
+      const getTests = () => tests || (tests = fetch(`${window.__base}/practice/data/${k}.json`).then(r => r.json()));
+      const say = s => { $('#res').innerHTML = `<span class="st">${esc(s)}</span>`; };
+      const exec = (code, tj) => new Promise(async res => {
+        say(RUN.w ? 'Running…' : 'Starting Python (first run downloads ~10 MB)…');
+        try { await boot(); } catch (e) { return res({error: String(e.message)}); }
+        let timer;
+        const arm = ms => { clearTimeout(timer); timer = setTimeout(() => { RUN.w.terminate(); RUN.w = null; RUN.cb = null; res({error: `Time limit: still running after ${ms / 1000} s. Look for an infinite loop or a very slow step.`}); }, ms); };
+        RUN.cb = {status: s => { say(s); arm(90000); }, done: m => { clearTimeout(timer); RUN.cb = null; res(m); }};
+        say('Running…'); arm(10000);
+        RUN.w.postMessage({id: k, code, fn: P.fn, tests: tj, runtime: P.rt, pkgs: P.pkgs, tol: P.tol});
+      });
+      const ed = window.CodeMirror.fromTextArea($('#code'), {mode: P.rt === 'sql' ? 'text/x-sqlite' : 'python', lineNumbers: true, indentUnit: 4, matchBrackets: true,
+        extraKeys: {Tab: c => c.somethingSelected() ? c.indentSelection('add') : c.replaceSelection('    '), 'Cmd-Enter': () => go(false), 'Ctrl-Enter': () => go(false),
+          'Shift-Cmd-Enter': () => go(true), 'Shift-Ctrl-Enter': () => go(true)}});
+      if (st.code[k] != null) ed.setValue(st.code[k]);
+      let t; ed.on('change', () => { clearTimeout(t); t = setTimeout(() => { st.code[k] = ed.getValue(); save(); }, 400); });
+      $('#reset').addEventListener('click', () => { ed.setValue(P.starter); delete st.code[k]; save(); });
+      let busy = false;
+      async function go(all) {
+        if (busy) return; busy = true;
+        const code = ed.getValue(); st.code[k] = code; save();
+        ['#run', '#submit'].forEach(s => $(s).disabled = true);
+        let r; try { const T = await getTests(); r = await exec(code, all ? T.tj : T.tj_ex); }   // JSON text keeps 3.0 a float
+        catch (e) { r = {error: `Couldn't load the tests: ${e.message}`}; tests = null; }
+        busy = false; ['#run', '#submit'].forEach(s => $(s).disabled = false);
+        const box = $('#res'), out = r.stdout ? `<div class="lab" style="margin-top:12px">Printed output</div><pre>${esc(r.stdout.slice(0, 4000))}</pre>` : '';
+        if (r.error) { box.innerHTML = `<div class="sum no">Error</div><pre>${esc(r.error)}</pre>${out}`; return; }
+        const ok = r.results.filter(x => x.ok).length, n = r.results.length, pass = ok === n;
+        const rows = r.results.map((x, i) => x.ok ? (all ? '' : `<div class="t good"><span class="k">✓</span><span class="v">Example ${i + 1} passed</span></div>`)
+          : `<div class="t bad"><span class="k">✗</span><span class="v">${all && i >= P.nex ? 'Hidden test' : 'Example'} ${i + 1}</span>
+            ${x.inp ? `<span class="k">input</span><span class="v">${esc(x.inp)}</span>` : ''}
+            <span class="k">why</span><span class="v">${esc(x.why)}</span>${x.got ? `<span class="k">got</span><span class="v">${esc(x.got)}</span>` : ''}</div>`).join('');
+        box.innerHTML = `<div class="sum ${pass ? 'ok' : 'no'}">${pass ? CHECK : ''}${all ? (pass ? `All ${n} tests passed` : `${ok} / ${n} tests passed`) : (pass ? `Examples pass (${n}/${n}). Now Submit.` : `${ok} / ${n} examples pass`)}</div>${rows}${out}`;
+        if (all && pass) solved();
+      }
+      $('#run').addEventListener('click', () => go(false));
+      $('#submit').addEventListener('click', () => go(true));
+      boot().catch(() => {});                                    // warm Python up while the learner reads; Run reports any failure
+    }
+  </script>
+</Practice>

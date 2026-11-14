@@ -5,14 +5,14 @@
 # Versions match the browser runtime (Pyodide 0.29.5: Python 3.13, numpy 2.2, pandas 2.3) so expected outputs agree.
 """Build the Practice track: verify every problem, then write the site files.
 
-    uv run practice/src/build.py          (then: uv run --no-project build_hub.py)
+    uv run practice/src/build.py          (then rebuild the site: cd site && npm run build)
 
 Each problems/<slug>.py is a module with META, STATEMENT, STARTER, SOLUTION, HINTS, TESTS, EXPLANATION.
 Expected outputs are computed from SOLUTION here, so a problem only ships if:
   - SOLUTION passes every test after a JSON round trip, twice with the same result (deterministic);
   - STARTER fails at least one test (the problem isn't pre-solved);
   - tags, related slugs and lesson links all resolve.
-Writes ../index.html (the app, data inlined), ../data/<slug>.json (one per problem), ../nb/<slug>.ipynb (Colab runtimes).
+Writes site/public/practice/: index.json, data/<slug>.json, quiz/<plan>.json, nb/<slug>.ipynb (Colab), links.json, runner.
 """
 import copy, importlib.util, json, os, re, sys
 # CUDA problems are Numba kernels: verified on the CPU simulator here, run on a real GPU in Colab.
@@ -66,19 +66,25 @@ def compile_fn(code, name):
     return ns
 
 
+SITE = ROOT / 'site'
+WEB = SITE / 'public' / 'practice'                      # what the site serves: data/, quiz/, nb/, index.json, runner
+BASE = '/self-learning-tracks'                          # GitHub Pages base path (site/astro.config.mjs)
+
+
+def site_lessons():
+    """Every lesson on the site: (course key, course title, lesson frontmatter, href). Frontmatter values are JSON."""
+    for cj in sorted((SITE / 'src/content/courses').glob('*/course.json')):
+        cfg = json.loads(cj.read_text(encoding='utf-8'))
+        mods = {m['n']: m['slug'] for m in cfg['modules']}
+        for f in sorted((cj.parent / 'lessons').glob('*.md')):
+            head = f.read_text(encoding='utf-8').split('\n---\n', 1)[0]
+            fm = {k: json.loads(v) for k, v in re.findall(r'^(\w+): (.*)$', head, re.M)}
+            yield cfg['key'], cfg['title'], fm, f"{BASE}/courses/{cj.parent.name}/{mods[fm['module']]}/{fm['slug']}/"
+
+
 def lesson_index():
-    """'trackkey:lessonid' -> link, from hub-data.js (the hub's own export of every course)."""
-    s = (ROOT / 'hub-data.js').read_text(encoding='utf-8')
-    out = {}
-    tracks = json.JSONDecoder().raw_decode(s, s.index('const TRACKS = ') + len('const TRACKS = '))[0]
-    for t in tracks:
-        if t['key'] == 'practice':
-            continue
-        for m in t['modules']:
-            for lid, title, _ in m['lessons']:
-                out[f"{t['key']}:{lid}"] = {'href': f"../{t['dir']}/index.html#l{lid.replace('.', '-', 1)}",
-                                            't': title, 'c': t['name']}
-    return out
+    """'trackkey:lessonid' -> {href, t (title), c (course)} for every lesson on the site."""
+    return {f"{k}:{fm['id']}": {'href': href, 't': fm['title'], 'c': title} for k, title, fm, href in site_lessons()}
 
 
 def build_one(path, lessons):
@@ -148,7 +154,7 @@ def build_one(path, lessons):
     if rt in NEEDS_GPU:
         p['gpu'] = True
     if rt in COLAB:
-        p['colab'] = f'https://colab.research.google.com/github/{REPO}/blob/main/practice/nb/{slug}.ipynb'
+        p['colab'] = f'https://colab.research.google.com/github/{REPO}/blob/main/site/public/practice/nb/{slug}.ipynb'
     return p
 
 
@@ -197,21 +203,6 @@ def build_cached(f, lessons):
     return p
 
 
-# Add-on modules (addons/<export dir>/) belong to these exported courses.
-ADDON_COURSES = {'ml-maths-course': ('mlmaths', 'ML Maths'), 'inference-eng-course': ('ieng', 'Inference Engineering'),
-                 'ai-research-track-web': ('air-fanout-v1', 'AI Research')}
-
-
-def course_modules():
-    """(module file, course dir, track key, course title) for engine courses and add-on modules."""
-    for f in sorted(ROOT.glob('*/src/modules/*.json')):
-        cfg = json.loads((f.parent.parent / 'course.json').read_text(encoding='utf-8'))
-        yield f, f.parent.parent.parent.name, cfg['key'], cfg['title']
-    for f in sorted(ROOT.glob('addons/*/*.json')):
-        key, title = ADDON_COURSES[f.parent.name]
-        yield f, f.parent.name, key, title
-
-
 def main():
     lessons = lesson_index()
     probs = [build_cached(f, lessons) for f in sorted((SRC / 'problems').glob('*.py'))]
@@ -223,17 +214,15 @@ def main():
     # Course lessons can list practice problems ("p"); show those lessons on the problem page too ("Learn the idea").
     byid = {p['id']: p for p in probs}
     curated = {}                                            # "trackkey:lessonid" -> slugs the lesson picked, best first
-    for f, cdir, ckey, ctitle in course_modules():
-        for L in json.loads(f.read_text(encoding='utf-8'))['lessons']:
-            curated[f"{ckey}:{L['id']}"] = [x for x in L.get('p', []) if x in byid]
-            for slug in L.get('p', []):
-                p = byid.get(slug)
-                href = f"../{cdir}/index.html#l{L['id'].replace('.', '-', 1)}"
-                if p and all(x['href'] != href for x in p['lessons']):
-                    p['lessons'].append({'href': href, 't': L['t'], 'c': ctitle})
+    for ckey, ctitle, fm, href in site_lessons():
+        picks = [x for x in fm.get('practice', []) if x in byid]
+        curated[f"{ckey}:{fm['id']}"] = picks
+        for slug in picks:
+            if all(x['href'] != href for x in byid[slug]['lessons']):
+                byid[slug]['lessons'].append({'href': href, 't': fm['title'], 'c': ctitle})
 
-    data_dir, nb_dir = OUT / 'data', OUT / 'nb'
-    data_dir.mkdir(exist_ok=True); nb_dir.mkdir(exist_ok=True)
+    data_dir, nb_dir = WEB / 'data', WEB / 'nb'
+    data_dir.mkdir(parents=True, exist_ok=True); nb_dir.mkdir(parents=True, exist_ok=True)
     for f in [*data_dir.glob('*.json'), *nb_dir.glob('*.ipynb')]:
         f.unlink()                                          # drop files of renamed/removed problems
     for p in probs:
@@ -247,7 +236,7 @@ def main():
             page['tj'] = json.dumps(p['tests']); page['tj_ex'] = json.dumps(p['tests'][:p['nex']])
         (data_dir / f"{p['id']}.json").write_text(json.dumps(page, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
 
-    # DATA follows the course contract (modules -> lessons) so build_hub.py reads it like any course.
+    # index.json follows the course contract (topics -> lessons) for the site's Practice pages.
     # A problem lives in the module of its first tag; its other tags show as filters.
     by_tag = {t: [] for t in TAGS}
     for p in sorted(probs, key=lambda p: (list(DIFFS).index(p['d']), p['t'])):
@@ -258,26 +247,26 @@ def main():
     data = [m for m in data if m['lessons']]               # topics appear as soon as they have a problem
     plans = [load_plan(f, ids) for f in sorted((SRC / 'plans').glob('*.json'))]
     builds, quizzes, rounds = extras(ids, lessons)
-    qdir = OUT / 'quiz'; qdir.mkdir(exist_ok=True)
+    qdir = WEB / 'quiz'; qdir.mkdir(exist_ok=True)
     for f in qdir.glob('*.json'):
         f.unlink()
     for pid, q in quizzes.items():                         # fetched by the plan page when opened
         (qdir / f'{pid}.json').write_text(json.dumps(q, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
     for pl in plans:
         pl['quiz'] = [s['section'] for s in quizzes.get(pl['id'], {}).get('sections', [])]
-    js = lambda x: json.dumps(x, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/')
-    app = (SRC / 'app.html').read_text(encoding='utf-8')
-    app = app.replace('__DATA__', js(data)).replace('__PARTS__', js([pn for pn, _ in PARTS])).replace('__PLANS__', js(plans)).replace('__BUILDS__', js(builds)).replace('__ROUNDS__', js(rounds))
-    app = app.replace('__TOTAL__', str(len(probs)))
-    (OUT / 'index.html').write_text(app, encoding='utf-8')
+    # index.json: everything the Practice pages list (problem bodies stay in data/<slug>.json)
+    (WEB / 'index.json').write_text(json.dumps({'topics': data, 'parts': [pn for pn, _ in PARTS], 'plans': plans, 'builds': builds,
+                                                'rounds': rounds}, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
+    for f in ('runner.js', 'harness.py'):                   # the in-browser runner and the grader it shares with this build
+        (WEB / f).write_text((OUT / f).read_text(encoding='utf-8'), encoding='utf-8')
 
-    # practice/links.json: "trackkey:lessonid" -> [[slug, title, difficulty]], read by course builds and the hub
+    # links.json: "trackkey:lessonid" -> [[slug, title, difficulty]], for "Practice this" on lesson pages
     refs = {k: [[x, byid[x]['t'], byid[x]['d']] for x in v] for k, v in curated.items() if v}
     for p in sorted(probs, key=lambda p: (list(DIFFS).index(p['d']), p['t'])):
         for ref in p['lesson_refs']:
             if all(x[0] != p['id'] for x in refs.get(ref, [])):
                 refs.setdefault(ref, []).append([p['id'], p['t'], p['d']])
-    (OUT / 'links.json').write_text(json.dumps(refs, ensure_ascii=False, indent=0), encoding='utf-8')
+    (WEB / 'links.json').write_text(json.dumps(refs, ensure_ascii=False, indent=0), encoding='utf-8')
 
     by_rt = {}
     for p in probs:

@@ -1,4 +1,5 @@
 ---
+import { u } from '../../../lib/url.mjs';
 import Site from '../../../layouts/Site.astro';
 import CourseSide from '../../../components/CourseSide.astro';
 import { getCollection } from 'astro:content';
@@ -28,7 +29,7 @@ const byN = Object.fromEntries(modules.map(m => [m.n, m]));
   {course.parts.map((P, pi) => <>
     <div class="parth"><span class="lab">Part {pi + 1}</span><h3>{P.t}</h3></div>
     <div class="mods">{P.m.map(n => byN[n]).filter(Boolean).map(m => (
-      <a class="card mcard" href={`/courses/${courseId}/${m.slug}/`}>
+      <a class="card mcard" href={u(`/courses/${courseId}/${m.slug}/`)}>
         <div class="tp"><span class="no" style="font:500 26px/1 var(--mono);color:var(--faint)">{m.n}</span></div>
         <h4>{m.name}</h4>
         <div class="seg" aria-hidden="true">{m.lessons.map(l => <i data-lk={key(l.data.id)}></i>)}</div>
@@ -37,10 +38,13 @@ const byN = Object.fromEntries(modules.map(m => [m.n, m]));
   </>)}
   {course.footnote && <p class="foot-note">{course.footnote}</p>}
   <script define:vars={{ courseKey: course.key, order: lessons.map(l => [key(l.data.id), l.data.title, lessonUrl(courseId, byN[l.data.module], l)]) }}>
-    const st = (() => { try { return JSON.parse(localStorage.getItem(courseKey) || '{}'); } catch { return {}; } })(), done = st.done || {};
+    // runs after the store module has loaded (module scripts run before DOMContentLoaded)
+    document.addEventListener('DOMContentLoaded', () => {
+    const st = window.__store.ns(courseKey), done = st.done || {};
     const n = order.filter(([k]) => done[k]).length, nx = order.find(([k]) => !done[k]);
     document.getElementById('cnt').textContent = `${n} / ${order.length} lessons`;
     if (n && nx) { const c = document.getElementById('cont'); c.href = nx[2]; c.querySelector('h3').textContent = nx[1]; c.querySelector('.lab').textContent = 'Continue'; c.querySelector('.btn').firstChild.textContent = 'Continue '; }
     document.querySelectorAll('.seg i[data-lk]').forEach(i => { if (done[i.dataset.lk]) i.classList.add('on'); });
+    });
   </script>
 </Site>

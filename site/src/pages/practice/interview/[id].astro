@@ -1,0 +1,86 @@
+---
+// A timed interview round: coding problems (solved during the round count) and theory questions from course lessons, self-graded.
+import Practice from '../../../layouts/Practice.astro';
+import ProblemRow from '../../../components/ProblemRow.astro';
+import { IDX, BY } from '../../../lib/practice.mjs';
+import { getCollection } from 'astro:content';
+import { courseData, lessonUrl, inlM } from '../../../lib/course.mjs';
+import { u } from '../../../lib/url.mjs';
+export async function getStaticPaths() {
+  const byKey = Object.fromEntries((await getCollection('courses')).map(c => [c.data.key, c.id]));
+  const theory = async ref => { const [key, id] = ref.split(':'), cid = byKey[key]; if (!cid) return null;
+    const { course, modules, math } = await courseData(cid);
+    for (const m of modules) for (const l of m.lessons) if (l.data.id === id && l.data.question)
+      return {ref, c: course.title, t: l.data.title, q: inlM(l.data.question, math), s: inlM(l.data.answer || '', math), href: lessonUrl(cid, m, l)};
+    return null; };
+  return Promise.all(IDX.rounds.map(async r => ({params: {id: r.id}, props: {r, th: (await Promise.all((r.theory || []).map(theory))).filter(Boolean)}})));
+}
+const { r, th } = Astro.props, coding = (r.coding || []).map(x => BY[x]).filter(Boolean);
+---
+<Practice title={r.title} cur="interview" description={r.blurb} crumbs={[['Interview prep', u('/practice/interview/')], [r.title, Astro.url.pathname]]}>
+  <section class="panel mhead" id="pre"><div><div class="lab">Interview round · {r.role}</div><h1>{r.title}</h1>
+    <p style="margin:0 0 16px;color:var(--muted);max-width:640px;font-size:16.5px">{r.blurb}</p>
+    <div class="meta"><span class="pill">{r.minutes} minutes</span><span class="pill">{coding.length} coding</span><span class="pill">{th.length} theory</span></div>
+    <div style="margin-top:20px"><button class="btn" id="go">Start the timer →</button><p id="busy" hidden style="color:var(--muted)">Finish your other round first: <a>resume it</a>.</p></div></div>
+    <div class="big" aria-hidden="true">{r.minutes}′</div></section>
+  <div id="hist"></div>
+  <div id="live" hidden style="max-width:860px;margin:0 auto">
+    <div class="card" style="position:sticky;top:72px;z-index:5;padding:14px 20px;display:flex;align-items:center;gap:16px;margin-bottom:18px">
+      <div><div class="lab">{r.title}</div><div id="clock" style="font:700 30px var(--mono);letter-spacing:-.03em">--:--</div></div>
+      <span style="flex:1"></span><button class="btn ghost" id="quit">Abandon</button><button class="btn" id="finish">Finish and see report</button></div>
+    {coding.length > 0 && <><div class="parth"><span class="lab">Part 1</span><h3>Coding</h3><span class="lab" style="margin-left:auto">solved during this round count</span></div>
+      <div class="plist" id="coding">{coding.map(l => <ProblemRow l={l} />)}</div></>}
+    {th.length > 0 && <><div class="parth"><span class="lab">Part {coding.length ? 2 : 1}</span><h3>Theory</h3></div>
+      {th.map((x, i) => <section class="card blk th" data-ref={x.ref} data-c={x.c} style="margin-top:14px"><div class="lab">Question {i + 1} · {x.c}</div><p class="q" set:html={x.q} />
+        <details><summary class="btn ghost" style="min-height:38px;font-size:14px;display:inline-flex">Show model answer</summary><div class="sample" style="margin-top:12px"><div class="lab">Model answer</div><p set:html={x.s} />
+          <p style="margin-top:8px;font-size:14px"><a href={x.href} target="_blank" rel="noopener">Open the lesson ↗</a></p></div></details>
+        <div class="grade"><div class="lab">How did you do?</div><div class="gb">{[[1, 'Missed it'], [2, 'Partly'], [3, 'Nailed it']].map(([v, t]) => <button type="button" class="gbtn" data-g={v} aria-pressed="false">{t}</button>)}</div></div></section>)}</>}
+  </div>
+  <div id="report" hidden class="rv" style="max-width:760px"></div>
+  <script is:inline define:vars={{ R: {id: r.id, role: r.role, minutes: r.minutes, coding: coding.map(l => [l.id, l.tags[0]])} }}>window.__round = R;</script>
+  <script>
+    import { st, toast } from '../../../lib/practice-client.js';
+    import { save, now, bump } from '../../../lib/progress.js';
+    const R = window.__round, $ = s => document.getElementById(s), pad = n => String(n).padStart(2, '0');
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+    const hist = st.rounds[R.id] || [];
+    if (hist.length) $('hist').innerHTML = `<div class="parth"><h3>Past attempts</h3></div><div class="plist">${hist.slice().reverse().map(h => `<div class="card" style="padding:14px 18px;display:flex;justify-content:space-between;gap:12px"><span>${h.at.slice(0, 10)}</span><span>Coding ${h.coding[0]}/${h.coding[1]} · Theory ${h.theory[0]}/${h.theory[1]} · <b>${h.pct}%</b> · ${h.mins} min</span></div>`).join('')}</div>`;
+    if (st.live.id && st.live.id !== R.id) { $('go').hidden = true; $('busy').hidden = false; $('busy').querySelector('a').href = `${window.__base}/practice/interview/${st.live.id}/`; }
+    $('go').addEventListener('click', () => { st.live = {id: R.id, start: now(), grades: {}}; save(); live(); });
+    if (st.live.id === R.id) live();
+    function live() {
+      const L = st.live, start = new Date(L.start).getTime(), end = start + R.minutes * 60000;
+      const solvedNow = id => st.done[id] && st.at[id] && new Date(st.at[id]).getTime() >= start;
+      $('pre').hidden = true; $('hist').hidden = true; $('live').hidden = false;
+      // only problems solved since the round started count: re-mark the dots
+      document.querySelectorAll('#coding [data-lk]').forEach(el => el.classList.toggle('on', !!solvedNow(el.dataset.lk)));
+      document.querySelectorAll('.th').forEach(s => { const g = L.grades[s.dataset.ref];
+        s.querySelectorAll('.gbtn').forEach(b => { b.setAttribute('aria-pressed', String(+b.dataset.g === g));
+          b.onclick = () => { L.grades[s.dataset.ref] = +b.dataset.g; save(); s.querySelectorAll('.gbtn').forEach(x => x.setAttribute('aria-pressed', String(x === b))); }; }); });
+      const draw = () => { const left = Math.round((end - Date.now()) / 1000), a = Math.abs(left), c = $('clock');
+        c.textContent = `${left < 0 ? '+' : ''}${pad(Math.floor(a / 60))}:${pad(a % 60)}`; c.style.color = left < 0 ? 'var(--bad)' : left < 300 ? 'var(--flame)' : ''; };
+      draw(); const tick = setInterval(draw, 1000);
+      $('quit').onclick = () => { if (!confirm('Abandon this round? Nothing is recorded.')) return; st.live = {}; save(); location.reload(); };
+      $('finish').onclick = () => {
+        clearInterval(tick);
+        const th = [...document.querySelectorAll('.th')].map(s => [s.dataset.c, Math.max(0, (L.grades[s.dataset.ref] || 1) - 1)]);
+        const cs = R.coding.filter(([id]) => solvedNow(id)).length, tg = th.reduce((a, x) => a + x[1], 0), tmax = th.length * 2;
+        const pct = Math.round(100 * (cs + tg) / Math.max(1, R.coding.length + tmax)), mins = Math.round((Date.now() - start) / 60000);
+        (st.rounds[R.id] = st.rounds[R.id] || []).push({at: now(), coding: [cs, R.coding.length], theory: [tg, tmax], pct, mins});
+        const by = {};
+        R.coding.forEach(([id, t]) => { by[t] = by[t] || [0, 0]; by[t][1]++; if (solvedNow(id)) by[t][0]++; });
+        th.forEach(([t, g]) => { by[t] = by[t] || [0, 0]; by[t][1] += 2; by[t][0] += g; });
+        st.live = {}; bump(st); save();
+        const weak = Object.entries(by).filter(([, [a, b]]) => a / b < 0.6).map(([t]) => t);
+        $('live').hidden = true; $('report').hidden = false;
+        $('report').innerHTML = `<div class="lab">Readiness report · ${esc(R.role)}</div>
+          <h1 style="font-size:38px;letter-spacing:-.045em;margin:6px 0">${pct}% <span style="font-size:20px;color:var(--muted);font-weight:500">${pct >= 80 ? 'interview-ready' : pct >= 60 ? 'nearly there' : 'keep practising'}</span></h1>
+          <p style="color:var(--muted);margin:0 0 18px">${mins} of ${R.minutes} minutes · coding ${cs}/${R.coding.length} · theory ${tg}/${tmax}</p>
+          <div class="card" style="padding:18px 20px"><div class="lab" style="margin-bottom:10px">By topic</div>${Object.entries(by).map(([t, [a, b]]) => `<div style="display:grid;grid-template-columns:200px 1fr 60px;gap:12px;align-items:center;margin:8px 0;font-size:14px"><span>${esc(t)}</span><div class="bar"><i style="width:${100 * a / b}%;background:${a / b >= .6 ? 'var(--go)' : 'var(--flame)'}"></i></div><span class="lab">${a}/${b}</span></div>`).join('')}</div>
+          ${weak.length ? `<p style="margin-top:16px">Work on: <b>${weak.map(esc).join(', ')}</b>. Unsolved problems stay in the round; theory answers link back to their lessons.</p>` : '<p style="margin-top:16px">Strong across the board.</p>'}
+          <div style="display:flex;gap:10px;margin-top:20px"><a class="btn" href="">Back to the round</a><a class="btn ghost" href="${window.__base}/practice/interview/">All rounds</a></div>`;
+        toast(`<b>${pct}%</b> Round recorded`, pct >= 80); scrollTo(0, 0);
+      };
+    }
+  </script>
+</Practice>

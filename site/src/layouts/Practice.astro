@@ -1,0 +1,15 @@
+---
+// Practice Lab pages: the site layout with the Practice sidebar, accent and styles.
+import Site from './Site.astro';
+import PracticeSide from '../components/PracticeSide.astro';
+import { ACCENT } from '../lib/practice.mjs';
+import { u } from '../lib/url.mjs';
+import '../styles/practice.css';
+const { title, crumbs = [], cur, topic, description } = Astro.props;
+---
+<Site title={`${title} · Practice Lab`} description={description} accent={ACCENT} side crumbs={[['Practice', u('/practice/')], ...crumbs]}>
+  <PracticeSide slot="side" cur={cur} topic={topic} />
+  <slot name="head" slot="head" />
+  <div data-ns="practice"><slot /></div>
+  <script>import '../lib/practice-client.js';</script>
+</Site>

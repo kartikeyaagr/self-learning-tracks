@@ -1,3 +1,4 @@
+import { u } from '../lib/url.mjs';
 // Server-side helpers shared by the course pages.
 import { getCollection } from 'astro:content';
 import fs from 'node:fs';
@@ -18,12 +19,12 @@ export async function courseData(courseId) {
   const math = fs.existsSync(mfile) ? JSON.parse(fs.readFileSync(mfile, 'utf8')) : null;
   return (cache[courseId] = {course, lessons, modules, math});
 }
-export const lessonUrl = (courseId, mod, l) => `/courses/${courseId}/${mod.slug}/${l.data.slug}/`;
+export const lessonUrl = (courseId, mod, l) => u(`/courses/${courseId}/${mod.slug}/${l.data.slug}/`);
 // Inline markdown for frontmatter text; exports keep maths as ⟦n⟧ references into the course's MathML table.
 export const inlM = (s, math) => { const h = inl(s); return math ? h.replace(/⟦(\d+)⟧/g, (_, n) => math[+n] || '') : h; };
 
 // Practice problems for a lesson: the lesson's own picks first, then problems that cite it (practice/links.json).
-const PRACTICE = path.resolve(process.cwd(), '../practice');
+const PRACTICE = path.resolve(process.cwd(), 'public/practice');      // written by practice/src/build.py
 const links = JSON.parse(fs.readFileSync(path.join(PRACTICE, 'links.json'), 'utf8'));
 const prob = s => { try { const p = JSON.parse(fs.readFileSync(path.join(PRACTICE, 'data', s + '.json'), 'utf8')); return [s, p.t, p.d]; } catch { return null; } };
 export function practiceFor(courseKey, lesson) {
@@ -31,5 +32,4 @@ export function practiceFor(courseKey, lesson) {
   for (const x of links[`${courseKey}:${lesson.data.id}`] || []) if (!out.some(o => o[0] === x[0])) out.push(x);
   return out;
 }
-// The Practice Lab moves to Astro in phase 3; until then link to the current one.
-export const practiceHref = s => `${import.meta.env.PUBLIC_PRACTICE_BASE ?? '/practice/index.html'}#l${s}`;
+export const practiceHref = s => u(`/practice/p/${s}/`);
