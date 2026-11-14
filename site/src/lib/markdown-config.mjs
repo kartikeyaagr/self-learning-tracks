@@ -5,4 +5,4 @@ import remarkDiagrams from '../plugins/remark-diagrams.mjs';
 import rehypeTables from '../plugins/rehype-tables.mjs';
 export const remarkPlugins = [remarkMath, remarkDiagrams];
 export const rehypePlugins = [[rehypeKatex, {throwOnError: false}], rehypeTables];
-export const shikiConfig = {themes: {light: 'github-light', dark: 'github-dark'}};
+export const shikiConfig = {themes: {light: 'github-light-high-contrast', dark: 'github-dark-high-contrast'}};

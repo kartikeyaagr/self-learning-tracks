@@ -58,7 +58,7 @@ const { concept = null } = Astro.props;
     }
     const done = st.filter(s => s.status === 'done').length, C = R.byId;
     let html = `<div class="u-card lr-route m-rise"><div class="lab">YOUR ROUTE</div><div class="nm">${esc(D.name)}</div>
-      <div class="u-bar"><i class="m-fill" style="width:${Math.round(done / st.length * 100)}%;animation-delay:420ms"></i></div>
+      <div class="u-bar" role="progressbar" aria-label="Route progress" aria-valuemin="0" aria-valuemax="${st.length}" aria-valuenow="${done}"><i class="m-fill" style="width:${Math.round(done / st.length * 100)}%;animation-delay:420ms"></i></div>
       <div class="ft"><span>${done} of ${st.length} concepts</span><a href="${href('/destinations/')}">Change</a></div></div>`;
     let i = 1;
     for (const stage of R.stages) {
@@ -160,7 +160,7 @@ const { concept = null } = Astro.props;
         <div class="mono lt-days">${days.map((d, i) => `<span${i === ti ? ' class="on"' : ''}>${d}</span>`).join('')}</div></section>
       <section class="u-card lt-quests m-rise" style="animation-delay:280ms"><div class="u-h">Today’s quests</div>
         ${q.map(x => `<div class="lt-q"><div class="hd"><span>${x.label}</span><span class="mono">${x.n}/${x.of}</span></div>
-          <div class="u-qbar">${x.of && x.n ? `<i class="m-fill" style="width:${Math.round(x.n / x.of * 100)}%;background:${QC[x.id]};animation-delay:420ms"></i>` : ''}</div></div>`).join('')}</section>
+          <div class="u-qbar" role="progressbar" aria-label="${x.label}" aria-valuemin="0" aria-valuemax="${x.of}" aria-valuenow="${x.n}">${x.of && x.n ? `<i class="m-fill" style="width:${Math.round(x.n / x.of * 100)}%;background:${QC[x.id]};animation-delay:420ms"></i>` : ''}</div></div>`).join('')}</section>
       <a class="lt-review m-rise" href="${href('/review/')}" style="animation-delay:340ms">
         <span class="u-h">${due.length ? `${plural(due.length, 'review card')} due` : 'Review deck clear'}</span>
         <span class="u-sub">${due.length ? `From ${src.slice(0, 2).join(' and ')}${src.length > 2 ? ' and more' : ''}. About ${plural(Math.max(1, Math.round(due.length / 2)), 'minute')}.` : 'New cards arrive as you finish lessons.'}</span>

@@ -15,3 +15,8 @@
 
 /* plotted figures (%%fig): inline SVG, centred, never wider than the column */
 .fig svg{display:block;margin:0 auto;max-width:100%}
+
+/* Contrast (Phase 6): code inside a highlighted block sits on the block's own background, not the inline-code grey,
+   so the high-contrast Shiki colours keep their 4.5:1; the takeaway label uses the accent text colour. */
+.prose pre code { background: transparent; }
+.prose .take .lab { color: var(--accent-text); }

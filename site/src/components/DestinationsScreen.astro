@@ -136,7 +136,7 @@ import '../styles/screens/destinations.css';
         return `<a href="#${id}">${esc(x.title)}${n && n < x.lessons.length ? ` · ${n}/${x.lessons.length}` : ''}</a>`; };
       const list = ids => ids.filter(id => C[id]).map(link).join('') || '<span class="none">Nothing</span>';
       const L = c.lesson_links, mins = L.reduce((s, l) => s + (l.mins || 0), 0);
-      p.innerHTML = `<div><div class="mono k" style="color:${courseVar(c.course)}">FROM ${esc(R.courses[c.course].title.toUpperCase())}</div>
+      p.innerHTML = `<div><div class="mono k ck-course" style="--c:${courseVar(c.course)}">FROM ${esc(R.courses[c.course].title.toUpperCase())}</div>
           <h2>${esc(c.title)}</h2><p>${esc(c.summary)}</p></div>
         <div class="nu"><div><div class="lab">NEEDS</div>${list(c.needs || [])}</div><div><div class="lab">UNLOCKS</div>${list(c.unlocks || [])}</div></div>
         <div><div class="lab">LEARN · ${plural(L.length, 'lesson').toUpperCase()}${mins ? ` · ${mins} MIN` : ''}</div>

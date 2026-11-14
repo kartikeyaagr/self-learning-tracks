@@ -16,7 +16,7 @@
 .dz-goal[aria-checked="true"] { border: 1.5px solid var(--accent); background: var(--accent-soft);
   animation: m-rise var(--t4) var(--e-out) both, m-select var(--t3) var(--e-pop); animation-delay: calc(80ms + var(--i) * var(--stagger)), 0ms; }
 .dz-goal .tg { font-size: 11px; color: var(--muted); }
-.dz-goal[aria-checked="true"] .tg { color: var(--accent); }
+.dz-goal[aria-checked="true"] .tg { color: var(--accent-text); }
 .dz-goal .nm { font-size: 18px; font-weight: 700; letter-spacing: -.02em; }
 .dz-goal .ds { font-size: 13.5px; line-height: 1.4; color: var(--ink-3); }
 .dz-goal .mt { font-size: 11.5px; color: var(--muted); }
@@ -50,7 +50,7 @@
 .cr .t { flex: 1; min-width: 0; }
 .cr .ck { color: var(--go); }
 .cr .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; border: 1.5px solid var(--accent); }
-.cr .n { font-size: 11px; color: var(--accent); }
+.cr .n { font-size: 11px; color: var(--accent-text); }
 .cr.done, .cr.opt { color: var(--muted); }
 .cr.cur { border-color: var(--accent-line); background: var(--accent-soft); }
 .cr.cur .t { font-weight: 600; }
@@ -129,3 +129,7 @@
   .cr.fin { border-color: var(--bad-line); }
   .dz-lib .chips a { background: var(--surface); }
 }
+
+/* course name in the concept panel: the course colour, darkened on the light phone surface (pastels fail on white) */
+.ck-course { color: var(--c); }
+@media (max-width: 640px) { .ck-course { color: color-mix(in srgb, var(--c) 40%, var(--ink)); } }

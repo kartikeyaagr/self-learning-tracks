@@ -16,7 +16,7 @@
   .side :is(.nv, .mr, .li):not([aria-current]):hover { background: var(--surface); color: var(--ink); translate: 2px 0; }
   .side :is(.nv, .mr, .li)[aria-current] { background: var(--accent-soft); border-color: var(--accent-line); color: var(--ink); font-weight: 600; box-shadow: none; }
   .side .mr .n, .side .mr .c { font: 500 11px var(--font-mono); color: var(--muted); }
-  .side .mr[aria-current] .n { color: var(--accent); }
+  .side .mr[aria-current] .n { color: var(--accent-text); }
   .side .part { margin: 22px 8px 6px; }
   .side .ls { margin: 2px 0 8px 19px; padding-left: 10px; border-left: 1px solid var(--line-2); }
   /* status dots: open = accent ring, done = go fill (Site layout adds .on) */
@@ -81,7 +81,7 @@
   /* ---------- pills / chips ---------- */
   .pill { height: 24px; padding: 0 10px; border-radius: var(--radius-full); border: 1px solid var(--line-3); background: transparent;
     font: 500 11.5px var(--font-mono); color: var(--muted); }
-  .pill.k { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+  .pill.k { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-text); }
   .pill.ok { background: var(--go-soft); border-color: var(--go-line); color: var(--go); }
   .pill.ip { background: transparent; border-color: color-mix(in srgb, var(--streak) 40%, transparent); color: var(--streak); }
   .pill.a { background: transparent; border-color: color-mix(in srgb, var(--xp) 40%, transparent); color: var(--xp); }
@@ -102,14 +102,14 @@
   .tbl th { padding: 10px 14px; text-align: left; font: 500 11px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); background: var(--inset); }
   .tbl td { border-top: 1px solid var(--line); }
   .tbl thead + tbody tr:first-child td { font: inherit; letter-spacing: normal; text-transform: none; color: inherit; background: none; }   /* real <thead>: undo the house first-row header */
-  .tbl a { color: var(--accent); }
+  .tbl a { color: var(--accent-text); }
 
   /* ---------- course page ---------- */
   .startcard { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; max-width: 420px; padding: 16px; margin: 0 0 8px;
     border-radius: 14px; background: var(--accent-soft); border: 1px solid var(--accent-line); text-decoration: none;
     transition: translate var(--t2) var(--e-out), filter var(--t2) var(--e-out); }
   .startcard:hover { translate: 0 -2px; filter: brightness(1.15); }
-  .startcard .lab { color: var(--accent); }
+  .startcard .lab { color: var(--accent-text); }
   .startcard h3 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -.02em; line-height: 1.25; }
 
   /* ---------- module page: lesson path (ui.css .node) ---------- */
@@ -126,7 +126,7 @@
   .pnode.cur .t { box-shadow: none; }
   .pnode .t b { font-size: 15px; font-weight: 600; }
   .pnode .t span { font: 500 11px var(--font-mono); letter-spacing: .06em; color: var(--muted); }
-  .pnode.cur .t span { color: var(--accent); }
+  .pnode.cur .t span { color: var(--accent-text); }
   .mnav { max-width: 760px; margin: 30px 0 0; }
 
   /* ---------- lesson page chrome ---------- */
@@ -135,7 +135,7 @@
   .lhead .back { font-size: 13.5px; color: var(--muted); }
   .lhead .back:hover { color: var(--ink); }
   .lhead .idrow { margin: 16px 0 8px; gap: 10px; }
-  .lhead .lid { font: 600 12px var(--font-mono); letter-spacing: .08em; color: var(--accent); }
+  .lhead .lid { font: 600 12px var(--font-mono); letter-spacing: .08em; color: var(--accent-text); }
   .lhead .lid + .lab::before { content: "·"; margin-right: 10px; color: var(--faint); }
   .lhead h1 { margin: 0 0 14px; font-size: clamp(30px, 3.6vw, 40px); line-height: 1.08; font-weight: 700; letter-spacing: -.04em; }
   .q { font-size: 17px; font-weight: 600; letter-spacing: -.01em; line-height: 1.45; }
@@ -160,8 +160,8 @@
   .pn a:hover { transform: none; translate: 0 -2px; filter: brightness(1.2); box-shadow: none; }
   .pn a b { font-size: 15px; font-weight: 600; }
   .srcs li { border: 0; border-radius: 10px; background: var(--inset); padding: 12px 14px; }
-  .srcs .fav { border: 0; border-radius: var(--radius-md); background: var(--surface-3); color: var(--accent); font: 600 13px var(--font-mono); }
-  .srcs a:hover { color: var(--accent); }
+  .srcs .fav { border: 0; border-radius: var(--radius-md); background: var(--surface-3); color: var(--accent-text); font: 600 13px var(--font-mono); }
+  .srcs a:hover { color: var(--accent-text); }
   .srcs .h { font: 500 11px var(--font-mono); color: var(--muted); }
   .rail { top: 84px; gap: 12px; }
   .rail .card { padding: 16px; }
@@ -170,7 +170,7 @@
   .toc a.on { border-color: var(--accent); color: var(--ink); font-weight: 600; }
   .keyideas { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.5; color: var(--ink-3); }
   .keyideas li { margin: 6px 0; }
-  .keyideas li::marker { color: var(--accent); }
+  .keyideas li::marker { color: var(--accent-text); }
 
   /* ---------- quizzes ---------- */
   .qq { border: 0; }
@@ -241,3 +241,6 @@
 :is(.shell > #view, #view[style]) > :nth-child(3) { animation-delay: 120ms; }
 :is(.shell > #view, #view[style]) > :nth-child(4) { animation-delay: 180ms; }
 :is(.shell > #view, #view[style]) > :nth-child(n+5) { animation-delay: 240ms; }
+
+/* Contrast: the house stylesheets use --faint for text (counts, numbers); Unroll keeps --faint for glyphs only. */
+:is(.shell, #view[style]) { --faint: var(--muted); }
