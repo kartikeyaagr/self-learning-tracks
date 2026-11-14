@@ -1,0 +1,9 @@
+---
+// A moved page: forwards to its new URL (keeping any #hash) and tells search engines not to index the old one.
+interface Props { to: string }
+const { to } = Astro.props;
+---
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Moved</title><meta name="robots" content="noindex">
+<link rel="canonical" href={to}><meta http-equiv="refresh" content={`0; url=${to}`}>
+<script is:inline define:vars={{ to }}>location.replace(to + location.hash);</script>
+</head><body><p>This page has moved: <a href={to}>continue</a>.</p></body></html>

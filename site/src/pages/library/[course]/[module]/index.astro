@@ -15,7 +15,7 @@ const m = modules.find(x => x.slug === modSlug), i = modules.indexOf(m), prev = 
 const P = course.parts.findIndex(P => P.m.includes(m.n)) + 1;
 const plans = course.plans?.[m.n] || [];
 ---
-<Site title={`${m.name} · ${course.title}`} course={course} courseId={courseId} side crumbs={[[`Module ${m.n}`, u(`/courses/${courseId}/${m.slug}/`)]]}>
+<Site title={`${m.name} · ${course.title}`} course={course} courseId={courseId} side crumbs={[[`Module ${m.n}`, u(`/library/${courseId}/${m.slug}/`)]]}>
   <CourseSide slot="side" course={course} courseId={courseId} modules={modules} curMod={m.n} />
   <section class="panel mhead"><div>
     <div class="lab">Module {m.n} of {modules.length} · Part {P}</div>
@@ -31,7 +31,7 @@ const plans = course.plans?.[m.n] || [];
       <span class="o">{j + 1}</span><span class="t"><span>{l.data.id}</span><b>{l.data.title}</b></span></a></>)}</div>
   {plans.length > 0 && <section class="card blk" style="max-width:760px;margin:30px auto 0"><div class="lab">Practise this module</div><h3>Study plan sections</h3>
     <div class="plinks">{plans.map(([id, t, sec]) => <a href={u(`/practice/plans/${id}/`)}><span>{t}{sec && ` · ${sec}`}</span><span class="pd">Plan →</span></a>)}</div></section>}
-  <div class="mnav">{prev ? <a class="btn ghost" href={u(`/courses/${courseId}/${prev.slug}/`)}>← {prev.name}</a> : <span></span>}{next && <a class="btn ghost" href={u(`/courses/${courseId}/${next.slug}/`)}>{next.name} →</a>}</div>
+  <div class="mnav">{prev ? <a class="btn ghost" href={u(`/library/${courseId}/${prev.slug}/`)}>← {prev.name}</a> : <span></span>}{next && <a class="btn ghost" href={u(`/library/${courseId}/${next.slug}/`)}>{next.name} →</a>}</div>
   <script define:vars={{ courseKey: course.key, ks: m.lessons.map(l => key(l.data.id)) }}>
     // runs after the store module has loaded (module scripts run before DOMContentLoaded)
     document.addEventListener('DOMContentLoaded', () => {

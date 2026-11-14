@@ -1,0 +1,163 @@
+---
+// Learn (mockups/desktop/Learn.dc.html): your route on the left, one concept as a path in the centre, today on the right.
+// Rendered in the browser: everything on it depends on the chosen destination and on progress (store.js, game.js).
+// concept = the concept to show; null on "/" (the route's current concept; no destination yet → Destinations).
+import '../styles/screens/learn.css';
+interface Props { concept?: string | null }
+const { concept = null } = Astro.props;
+---
+<div class="u-page" id="learn" data-concept={concept ?? ''}>
+  <aside class="u-rail-l" aria-label="Your route" id="lRoute"></aside>
+  <main class="u-main lc" id="lMain" aria-live="polite"></main>
+  <aside class="u-rail-r" aria-label="Today" id="lToday"></aside>
+</div>
+<script>
+  import { routes, dueCards, getRoute, state, lessonHref, conceptHref, problemHref, href, esc, plural, courseVar, shakeLocked } from '../lib/unroll.js';
+  import { events, summary, quests, routeState, refreshers, checkpointPassed, lessonDone, XP, GOAL, CHECKPOINT } from '../lib/game.js';
+  import { today } from '../lib/progress.js';
+  import { ns, save } from '../lib/store.js';
+
+  const root = document.getElementById('learn'), want = root.dataset.concept || null, rid = getRoute();
+  if (!want && !rid) location.replace(href('/destinations/'));          // first visit: picking a destination is the onboarding
+  const $ = id => document.getElementById(id);
+  const ICON = {
+    check: '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0B0B0D" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>',
+    code: c => `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 7l-5 5 5 5"/><path d="M16 7l5 5-5 5"/></svg>`,
+    play: '<svg width="26" height="26" viewBox="0 0 24 24" fill="var(--accent-ink)" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>',
+    lock: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--faint)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
+    flag: c => `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="${c}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 21V4h11l-2 4 2 4H6"/></svg>`,
+    bolt: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0B0B0D" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3L5 14h6l-1 7 8-11h-6z"/></svg>',
+  };
+  const ZIG = [-30, -100, -40, 60, -20, -90];                           // the mockup's path offsets, repeated
+  const STAGE = {foundations: 'Foundations', core: 'Core', systems: 'Systems', serving: 'Serving'};
+  const cap = s => s[0].toUpperCase() + s.slice(1);
+  const lower = s => /^[A-Z][a-z]/.test(s) ? s[0].toLowerCase() + s.slice(1) : s;   // "Calculus" → "calculus", keep "NumPy"
+
+  Promise.all([routes(), dueCards()]).then(([R, due]) => {
+    const A = state(), D = R.dest[rid], C = R.byId;
+    const route = D?.concepts || [], opt = D?.optional || [];
+    const st = route.length ? routeState(A, route, C, opt) : [];
+    const S = Object.fromEntries(st.map(s => [s.id, s]));
+    const cur = want && C[want] ? want : st.find(s => s.status === 'current')?.id ?? route[route.length - 1] ?? R.concepts[0].id;
+    renderRoute(R, D, st, cur);
+    renderConcept(R, D, S, cur, A);
+    renderToday(R, A, due);
+    shakeLocked(root);
+  });
+
+  function renderRoute(R, D, st, cur) {
+    if (!D || !D.concepts.length) {
+      $('lRoute').innerHTML = `<div class="u-card lr-route m-rise"><div class="lab">YOUR ROUTE</div><div class="nm">${D ? esc(D.name) : 'No route yet'}</div>
+        <div class="ft"><span>${D ? 'Open any course in the library' : 'Pick a destination'}</span><a href="${href('/destinations/')}">${D ? 'Change' : 'Choose'}</a></div></div>`;
+      return;
+    }
+    const done = st.filter(s => s.status === 'done').length, C = R.byId;
+    let html = `<div class="u-card lr-route m-rise"><div class="lab">YOUR ROUTE</div><div class="nm">${esc(D.name)}</div>
+      <div class="u-bar"><i class="m-fill" style="width:${Math.round(done / st.length * 100)}%;animation-delay:420ms"></i></div>
+      <div class="ft"><span>${done} of ${st.length} concepts</span><a href="${href('/destinations/')}">Change</a></div></div>`;
+    let i = 1;
+    for (const stage of R.stages) {
+      const rows = st.filter(s => C[s.id].stage === stage);
+      if (!rows.length) continue;
+      const all = rows.every(s => s.status === 'done');
+      html += `<div class="lr-stage m-rise" style="--i:${i++}"><div class="lab">${stage.toUpperCase()}${all ? ' · DONE' : ''}</div>`;
+      if (all) for (let k = 0; k < rows.length; k += 3) {                // a finished stage folds into rows of three
+        const g = rows.slice(k, k + 3), t = g.map((s, j) => j ? lower(C[s.id].title) : C[s.id].title).join(', ');
+        html += `<a href="${conceptHref(g[0].id)}" class="crow muted"><span class="ck">✓</span><span class="t">${esc(t)}</span><span class="mono n">${g.length}</span></a>`;
+      }
+      else for (const s of rows) {
+        const c = C[s.id], on = s.id === cur, name = esc(c.title) + (s.optional ? ' · optional' : '');
+        const lead = s.status === 'done' ? '<span class="ck">✓</span>' : `<span class="dot${on ? ' on' : s.optional ? ' opt' : s.status === 'locked' ? ' lk' : ''}"></span>`;
+        const tail = on ? `<span class="mono n" style="color:var(--accent)">${s.lessons}/${s.of}</span>`
+          : s.status === 'done' ? '' : `<span class="tag" style="background:${courseVar(c.course)}" title="${esc(R.courses[c.course].title)}"></span>`;
+        html += `<a href="${conceptHref(s.id)}" class="crow${s.status === 'done' || s.optional ? ' muted' : ''}"${on ? ' aria-current="true"' : ''}>${lead}<span class="t">${name}</span>${tail}</a>`;
+      }
+      html += '</div>';
+    }
+    $('lRoute').innerHTML = html;
+  }
+
+  function renderConcept(R, D, S, cid, A) {
+    const c = R.byId[cid], route = D?.concepts || [], idx = route.indexOf(cid), course = R.courses[c.course];
+    const locked = S[cid]?.status === 'locked', passed = checkpointPassed(A, cid);
+    const solved = id => !!A.practice?.done?.[id];
+    // lessons in order, Arena builds spread evenly between them, then the checkpoint
+    const L = c.lesson_links, P = c.problem_links, items = L.map((l, i) => ({kind: 'lesson', l, i}));
+    P.forEach((p, j) => items.splice(Math.min(items.length, Math.ceil((j + 1) * L.length / (P.length + 1)) + j), 0, {kind: 'arena', p}));
+    const curL = locked ? -1 : L.findIndex(l => !lessonDone(A, l.lesson));
+    const allDone = L.every(l => lessonDone(A, l.lesson));
+    const refs = route.length ? refreshers(A, route, R.byId, D.optional).filter(r => r.at === cid) : [];
+
+    let n = 0, html = `<section class="lc-banner m-rise" data-course="${c.course}" style="--course:${courseVar(c.course)};animation-delay:80ms">
+      <div><div class="mono k">${idx >= 0 ? `CONCEPT ${idx + 1} OF ${route.length} · ` : ''}FROM ${esc(course.title.toUpperCase())}</div>
+      <h1>${esc(c.title)}</h1>
+      <div class="s">${plural(L.length, 'lesson')} · ${plural(P.length, 'Arena build')} · 1 checkpoint</div></div>
+      <a class="notes" href="${href('/destinations/')}#${cid}">Concept notes</a></section>
+      <ol class="lc-path" aria-label="${esc(c.title)} path">`;
+    const li = (x, inner, cls = '') => `<li class="m-pop ${cls}" style="--i:${3 + n};transform:translateX(${x}px)">${inner}</li>`;
+    for (const r of refs) {                                             // refreshers come first: they're what this concept needs
+      const what = R.byId[r.concept]?.lesson_links.find(x => x.lesson === r.ref)?.t || R.byId[r.concept]?.problem_links.find(x => 'practice:' + x.id === r.ref)?.t || 'a review card';
+      html += li(ZIG[n++ % 6], `<button type="button" class="node" data-refresh="${r.ns}|${r.k}" aria-label="Refresher: ${esc(what)}, ${r.minutes} minutes">${ICON.bolt}</button>
+        <span class="lb2"><span class="lb ink">Refresher · ${esc(what)}</span><span class="mono" style="color:var(--xp)">${r.minutes} MIN · MISSED TWICE IN REVIEW</span></span>`, 'lc-ref');
+    }
+    for (const it of items) {
+      const x = ZIG[n % 6];
+      if (it.kind === 'arena') {
+        const p = it.p, ok = solved(p.id), t = esc(p.t || p.id);
+        html += li(x, ok
+          ? `<a href="${problemHref(p.id)}" class="node sq done" aria-label="Arena build: ${t}, solved">${ICON.code('#0B0B0D')}</a><span class="lb">Arena · ${t}</span>`
+          : `<a href="${problemHref(p.id)}" class="node sq open-arena" aria-label="Arena build: ${t}, open">${ICON.code('var(--arena)')}</a>
+             <span class="lb2"><span class="lb ink">Arena · ${t}</span><span class="mono">OPEN ANYTIME${p.d ? ' · ' + p.d.toUpperCase() : ''}</span></span>`);
+      } else {
+        const l = it.l, t = esc(l.t), done = lessonDone(A, l.lesson), url = lessonHref(cid, l.slug);
+        if (done) html += li(x, `<a href="${url}" class="node done" aria-label="Lesson: ${t}, done">${ICON.check}</a><span class="lb">${t}</span>`);
+        else if (it.i === curL) html += `<li class="m-pop col" style="--i:${3 + n};transform:translateX(${Math.max(-60, Math.min(60, x + 90))}px)">
+          <div class="lc-ring u-here"><a href="${url}" class="node cur" aria-label="Start lesson: ${t}">${ICON.play}</a></div>
+          <div class="lc-start m-pop" style="--i:${5 + n}"><div class="hd"><strong>${t}</strong><span class="mono">${it.i + 1} OF ${L.length}</span></div>
+            <p>${l.mins ? `About ${l.mins} min.` : ''} Read it, then check yourself.</p>
+            <a href="${url}" class="u-btn">Start · +${XP.lesson} XP</a></div></li>`;
+        else html += li(x, `<span class="node lock" role="img" data-locked aria-label="Locked lesson: ${t}">${ICON.lock}</span><span class="lb">${t}</span>`);
+      }
+      n++;
+    }
+    const ck = passed ? 'done' : allDone ? 'open' : '';
+    html += `<li class="m-pop col" style="--i:${3 + n}"><span class="lc-check ${ck}" role="img" ${ck ? '' : 'data-locked'} aria-label="${passed ? 'Checkpoint passed' : allDone ? 'Checkpoint open' : 'Locked checkpoint'}">${ICON.flag(passed ? '#0B0B0D' : allDone ? 'var(--accent)' : 'var(--faint)')}</span>
+      <span class="lb ck">Checkpoint · ${CHECKPOINT.n} questions, no hints · test out early</span></li></ol>`;
+    const next = route[idx + 1] && R.byId[route[idx + 1]], after = route[idx + 2] && R.byId[route[idx + 2]];
+    if (next) html += `<section class="lc-next m-rise" style="animation-delay:${220 + n * 80}ms"><div><div class="lab">NEXT CONCEPT</div><div class="nt">${esc(next.title)}</div></div>
+      ${after ? `<span class="s">Then ${esc(after.title)}${after.stage !== next.stage ? `, where your route turns to ${STAGE[after.stage].toLowerCase()}` : ''}</span>` : ''}</section>`;
+    else if (D?.finalRound && idx === route.length - 1) html += `<section class="lc-next m-rise"><div><div class="lab">FINAL ROUND</div><div class="nt">Your destination's boss round</div></div>
+      <a class="s" href="${href(`/practice/interview/${D.finalRound}/`)}" style="color:var(--accent)">Open it →</a></section>`;
+    $('lMain').innerHTML = html;
+    $('lMain').querySelectorAll('[data-refresh]').forEach(b => b.addEventListener('click', () => {   // doing a refresher clears its misses
+      const [nsName, k] = b.dataset.refresh.split('|'), r = ns(nsName).rev?.[k]; if (r) { r.miss = 0; save(); }
+      const ref = refs.find(x => x.k === k), c0 = R.byId[ref?.concept], l = c0?.lesson_links.find(x => x.lesson === ref.ref);
+      location.href = l ? l.href : nsName === 'practice' ? problemHref(k) : href('/review/');
+    }));
+  }
+
+  function renderToday(R, A, due) {
+    const evs = events(A), s = summary(evs, today()), q = quests(A, evs, today(), due.length);
+    const left = Math.max(0, GOAL - s.today), dash = Math.round(195 * Math.min(1, s.today / GOAL));
+    const days = ['M', 'T', 'W', 'T', 'F', 'S', 'S'], ti = (new Date().getDay() + 6) % 7;
+    const QC = {lesson: 'var(--accent)', solve: 'var(--arena)', deck: 'var(--xp)'};
+    const src = [...new Set(due.map(([n]) => n === 'practice' ? 'the Arena' : Object.values(R.courses).find(c => c.key === n)?.title).filter(Boolean))];
+    $('lToday').innerHTML = `
+      <section class="u-card lt-goal m-rise" style="animation-delay:160ms">
+        <svg width="68" height="68" viewBox="0 0 76 76" role="img" aria-label="Daily goal: ${s.today} of ${GOAL} XP">
+          <circle cx="38" cy="38" r="31" fill="none" stroke="var(--line-2)" stroke-width="9"/>
+          ${dash ? `<circle class="m-ring" style="animation-delay:360ms" cx="38" cy="38" r="31" fill="none" stroke="var(--xp)" stroke-width="9" stroke-linecap="round" stroke-dasharray="${dash} 195" transform="rotate(-90 38 38)"/>` : ''}</svg>
+        <div><div class="u-h">Daily goal</div><div class="u-sub">${Math.min(s.today, GOAL)} / ${GOAL} XP · ${left === 0 ? 'goal reached' : left <= XP.lesson ? 'one lesson left' : `${left} XP to go`}</div></div></section>
+      <section class="u-card lt-streak m-rise" style="animation-delay:220ms">
+        <div class="hd"><div class="u-h">Streak</div><div class="big">${plural(s.streak, 'day')}</div></div>
+        <div class="lt-week">${s.week.met.map((m, i) => `<span class="m-pop ${m ? 'on' : i === ti ? 'today' : ''}" style="animation-delay:${400 + i * 50}ms"></span>`).join('')}</div>
+        <div class="mono lt-days">${days.map((d, i) => `<span${i === ti ? ' class="on"' : ''}>${d}</span>`).join('')}</div></section>
+      <section class="u-card lt-quests m-rise" style="animation-delay:280ms"><div class="u-h">Today’s quests</div>
+        ${q.map(x => `<div class="lt-q"><div class="hd"><span>${x.label}</span><span class="mono">${x.n}/${x.of}</span></div>
+          <div class="u-qbar">${x.of && x.n ? `<i class="m-fill" style="width:${Math.round(x.n / x.of * 100)}%;background:${QC[x.id]};animation-delay:420ms"></i>` : ''}</div></div>`).join('')}</section>
+      <a class="lt-review m-rise" href="${href('/review/')}" style="animation-delay:340ms">
+        <span class="u-h">${due.length ? `${plural(due.length, 'review card')} due` : 'Review deck clear'}</span>
+        <span class="u-sub">${due.length ? `From ${src.slice(0, 2).join(' and ')}${src.length > 2 ? ' and more' : ''}. About ${plural(Math.max(1, Math.round(due.length / 2)), 'minute')}.` : 'New cards arrive as you finish lessons.'}</span>
+        <span class="go">${due.length ? 'Review now →' : 'Open review →'}</span></a>`;
+  }
+</script>

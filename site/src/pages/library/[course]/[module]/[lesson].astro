@@ -29,15 +29,15 @@ const host = u => { try { return new URL(u).hostname.replace(/^www\./, ''); } ca
 const k = key(L.id), I = s => inlM(s, math);
 const own = course.css !== 'house';                       // exports bring their own figure code
 // Old in-page links (#l03-02, #m03) and AI Research's block links resolve through this map.
-const linkMap = Object.fromEntries([...lessons.map(x => [x.data.id, url(x)]), ...modules.map(mm => ['m' + mm.n, u(`/courses/${courseId}/${mm.slug}/`)])]);
+const linkMap = Object.fromEntries([...lessons.map(x => [x.data.id, url(x)]), ...modules.map(mm => ['m' + mm.n, u(`/library/${courseId}/${mm.slug}/`)])]);
 ---
 <Site title={`${L.title} · ${course.title}`} description={(L.keyIdeas[0] || L.lead || L.title).replace(/<[^>]+>|[*`$⟦⟧\d]/g, '').slice(0, 200)} course={course} courseId={courseId} side
-      crumbs={[[`${m.n} · ${m.name}`, u(`/courses/${courseId}/${m.slug}/`)], [L.title, Astro.url.pathname]]}>
+      crumbs={[[`${m.n} · ${m.name}`, u(`/library/${courseId}/${m.slug}/`)], [L.title, Astro.url.pathname]]}>
   <CourseSide slot="side" course={course} courseId={courseId} modules={modules} curMod={m.n} curLesson={L.id} />
   <div class="lgrid">
     <article data-pagefind-body>
       <header class="panel lhead">
-        <a class="back" href={u(`/courses/${courseId}/${m.slug}/`)}>← Module {m.n} · {m.name}</a>
+        <a class="back" href={u(`/library/${courseId}/${m.slug}/`)}>← Module {m.n} · {m.name}</a>
         <div class="idrow"><span class="lid">{L.id}</span><span class="lab">Lesson {m.lessons.indexOf(l) + 1} of {m.lessons.length}{L.topic && ` · Topic ${L.topic.id}`}</span><span class="pill ok" id="donepill" hidden>✓ Completed</span></div>
         <h1>{L.title}</h1>
         <div class="meta"><span class="pill">{mins} min read</span>{L.topic && <span class="pill">{L.topic.title}</span>}{L.tags.map(t => <span class="pill k">{t}</span>)}{L.tools.map(t => <span class="pill">{t}</span>)}</div>

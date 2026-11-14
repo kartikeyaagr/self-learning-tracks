@@ -7,12 +7,12 @@ export async function getStaticPaths() {
   const out = [];
   for (const c of await getCollection('courses')) {
     const { modules } = await courseData(c.id), map = {};
-    for (const m of modules) { map['m' + m.n] = u(`/courses/${c.id}/${m.slug}/`);
+    for (const m of modules) { map['m' + m.n] = u(`/library/${c.id}/${m.slug}/`);
       for (const l of m.lessons) map['l' + l.data.id.replace('.', '-')] ??= lessonUrl(c.id, m, l); }
     // ML Maths was renumbered: its old lesson ids are now topic ids, each pointing at the topic's first lesson
     for (const m of modules) for (const l of m.lessons) if (l.data.topic) map['l' + l.data.topic.id.replace('.', '-')] = map['t' + l.data.topic.id] ??= lessonUrl(c.id, m, l);
-    map.review = u('/review/'); if (c.id === 'ml-maths-course') map.diag = u('/courses/ml-maths-course/diagnostic/');
-    out.push({params: {legacy: c.id}, props: {home: u(`/courses/${c.id}/`), map}});
+    map.review = u('/review/'); if (c.id === 'ml-maths-course') map.diag = u('/library/ml-maths-course/diagnostic/');
+    out.push({params: {legacy: c.id}, props: {home: u(`/library/${c.id}/`), map}});
   }
   return out;
 }

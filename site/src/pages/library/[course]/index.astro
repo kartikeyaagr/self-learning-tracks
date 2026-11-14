@@ -30,7 +30,7 @@ const byN = Object.fromEntries(modules.map(m => [m.n, m]));
   {course.parts.map((P, pi) => <>
     <div class="parth"><span class="lab">Part {pi + 1}</span><h3>{P.t}</h3></div>
     <div class="mods">{P.m.map(n => byN[n]).filter(Boolean).map(m => (
-      <a class="card mcard" href={u(`/courses/${courseId}/${m.slug}/`)}>
+      <a class="card mcard" href={u(`/library/${courseId}/${m.slug}/`)}>
         <div class="tp"><span class="no" style="font:500 26px/1 var(--mono);color:var(--faint)">{m.n}</span></div>
         <h4>{m.name}</h4>
         <div class="seg" aria-hidden="true">{m.lessons.map(l => <i data-lk={key(l.data.id)}></i>)}</div>

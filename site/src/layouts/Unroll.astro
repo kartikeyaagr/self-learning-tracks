@@ -1,0 +1,10 @@
+---
+// Redesigned Unroll screens: the site layout, always dark (a light desktop theme isn't designed), Unroll base styles only.
+import Site from './Site.astro';
+import '../styles/ui.css';
+const { title, description } = Astro.props;
+---
+<Site title={title} description={description} unroll>
+  <slot name="head" slot="head" />
+  <slot />
+</Site>

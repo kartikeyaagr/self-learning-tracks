@@ -1,0 +1,8 @@
+---
+// One concept of a route, as a path (same screen as Learn, showing this concept).
+import Unroll from '../../../layouts/Unroll.astro';
+import LearnScreen from '../../../components/LearnScreen.astro';
+import concepts from '../../../content/concepts.json';
+export const getStaticPaths = () => concepts.concepts.map(c => ({params: {concept: c.id}, props: {title: c.title}}));
+---
+<Unroll title={Astro.props.title}><LearnScreen concept={Astro.params.concept} /></Unroll>

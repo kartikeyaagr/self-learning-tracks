@@ -11,7 +11,7 @@ export function getStaticPaths() {
 }
 const { pl, sec, si, qs } = Astro.props;
 ---
-<Practice title={`${sec.name} quiz`} cur="plans" crumbs={[['Study plans', u('/practice/plans/')], [pl.title, u(`/practice/plans/${pl.id}/`)], ['Quiz', Astro.url.pathname]]}>
+<Practice title={`${sec.name} quiz`} cur="plans" crumbs={[['Study plans', u('/arena/')], [pl.title, u(`/practice/plans/${pl.id}/`)], ['Quiz', Astro.url.pathname]]}>
   <div class="rv" style="max-width:760px">
     <div class="lab">{pl.title} · Section {si + 1}</div>
     <h1 style="font-size:34px;letter-spacing:-.045em;margin:6px 0 4px">{sec.name} quiz</h1>

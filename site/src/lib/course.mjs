@@ -19,7 +19,7 @@ export async function courseData(courseId) {
   const math = fs.existsSync(mfile) ? JSON.parse(fs.readFileSync(mfile, 'utf8')) : null;
   return (cache[courseId] = {course, lessons, modules, math});
 }
-export const lessonUrl = (courseId, mod, l) => u(`/courses/${courseId}/${mod.slug}/${l.data.slug}/`);
+export const lessonUrl = (courseId, mod, l) => u(`/library/${courseId}/${mod.slug}/${l.data.slug}/`);
 // Inline markdown for frontmatter text; exports keep maths as ⟦n⟧ references into the course's MathML table.
 export const inlM = (s, math) => { const h = inl(s); return math ? h.replace(/⟦(\d+)⟧/g, (_, n) => math[+n] || '') : h; };
 
@@ -32,4 +32,4 @@ export function practiceFor(courseKey, lesson) {
   for (const x of links[`${courseKey}:${lesson.data.id}`] || []) if (!out.some(o => o[0] === x[0])) out.push(x);
   return out;
 }
-export const practiceHref = s => u(`/practice/p/${s}/`);
+export const practiceHref = s => u(`/arena/p/${s}/`);

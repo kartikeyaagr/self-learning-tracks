@@ -44,7 +44,7 @@ import '../../styles/practice.css';
       if (i === deck.length) { const g = ns('game'); g.clear ||= {}; if (!g.clear[today()]) { g.clear[today()] = now(); save(); } }
       show(); });
     if (probs.length) $('probs').innerHTML = `<div class="sh"><h2>Problems to re-solve</h2><span class="lab">pass every test again</span></div><div class="plist">${probs.map(([, k]) =>
-      `<a class="card prow" href="${B}/practice/p/${k}/"><span class="sd on"></span><span><b>${P[k].t.replace(/</g, '&lt;')}</b></span><span class="rt"><span class="pill ${P[k].d}">${P[k].d}</span></span></a>`).join('')}</div>`;
+      `<a class="card prow" href="${B}/arena/p/${k}/"><span class="sd on"></span><span><b>${P[k].t.replace(/</g, '&lt;')}</b></span><span class="rt"><span class="pill ${P[k].d}">${P[k].d}</span></span></a>`).join('')}</div>`;
     show();
     });
   </script>
