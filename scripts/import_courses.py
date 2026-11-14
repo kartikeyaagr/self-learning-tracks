@@ -66,7 +66,7 @@ def convert(a, raw=frozenset(), single=frozenset(), math=None, dollars=False):
             if L.startswith('```'):
                 fence = not fence
             elif not fence and re.match(r'^%%(\w+)', L):          # figure blocks: labels are escaped by their renderer
-                rawb = re.match(r'^%%(\w+)', L).group(1) not in single
+                rawb = re.match(r'^%%(\w+)', L).group(1) not in single | {'fig'}
             elif rawb and L.strip() == '%%':
                 rawb = False
             elif not fence and not rawb and not re.match(r'^%%(\w+)', L):
@@ -77,6 +77,9 @@ def convert(a, raw=frozenset(), single=frozenset(), math=None, dollars=False):
     while i < len(lines):
         L = lines[i]
         m = re.match(r'^%%(\w+)\b\s*(.*)$', L)
+        if m and m.group(1) == 'fig':                                # %%fig name.svg | caption → plotted SVG from figs/
+            name, _, cap = m.group(2).partition('|')
+            block([f'~~~dg-fig {name.strip()}', cap.strip(), '~~~']); i += 1; continue
         if m and m.group(1) in single:
             block(['~~~dg-raw', L, '~~~']); i += 1; continue
         if m:
@@ -132,6 +135,9 @@ def sources(r):
 def write(dirname, cfg, mods, render_lesson, math=None):
     dest = OUT / dirname
     (dest / 'lessons').mkdir(parents=True, exist_ok=True)
+    for figs in (SRC / dirname / 'src' / 'figs', SRC / 'addons' / dirname / 'figs'):   # plotted SVGs for %%fig
+        for f in figs.glob('*.svg'):
+            (dest / 'figs').mkdir(exist_ok=True); (dest / 'figs' / f.name).write_bytes(f.read_bytes())
     for f in (dest / 'lessons').glob('*.md'):
         f.unlink()
     n = 0
