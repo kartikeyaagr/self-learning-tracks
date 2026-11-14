@@ -231,3 +231,13 @@
     .pnode .t { min-width: 0; }
   }
 }
+
+/* Between screens (Motion reference): older pages play an entrance too. The sidebar fades in and the page's sections rise
+   in reading order. Fill is "backwards" only, so no transform stays on #view's children once they land (a lingering
+   transform would trap their position: fixed descendants). Reduced motion: the house stylesheet's rule turns these off. */
+.shell > .side { animation: m-fade var(--t3) var(--e-out) backwards; }
+:is(.shell > #view, #view[style]) > * { animation: m-rise var(--t4) var(--e-out) backwards; }
+:is(.shell > #view, #view[style]) > :nth-child(2) { animation-delay: 60ms; }
+:is(.shell > #view, #view[style]) > :nth-child(3) { animation-delay: 120ms; }
+:is(.shell > #view, #view[style]) > :nth-child(4) { animation-delay: 180ms; }
+:is(.shell > #view, #view[style]) > :nth-child(n+5) { animation-delay: 240ms; }
