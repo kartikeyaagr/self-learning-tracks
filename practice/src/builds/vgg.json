@@ -1,0 +1,14 @@
+{"id": "vgg", "kind": "paper", "group": "Convolutional networks",
+ "title": "Very Deep Convolutional Networks for Large-Scale Image Recognition", "authors": "Simonyan & Zisserman", "year": 2014,
+ "url": "https://arxiv.org/abs/1409.1556",
+ "blurb": "Showed that depth built from nothing but stacked 3×3 convolutions and 2×2 pooling steadily improves image classification.",
+ "intro": "VGG networks are described by a single configuration list of convolution widths and pooling layers, followed by three fully connected layers. The steps cover the 3×3 convolution, the VGG block, pooling, initialisation and dropout in the classifier; the capstone builds any VGG variant from its list and counts its parameters.",
+ "steps": [
+  {"name": "Convolution with padding", "problem": "2d-convolution"},
+  {"name": "VGG block: stacked 3×3 convs, then pool", "problem": "vgg-convolution-block"},
+  {"name": "Max pooling", "problem": "max-pool-2d"},
+  {"name": "Initialisation for deep ReLU stacks", "problem": "weight-initialization"},
+  {"name": "Dropout in the classifier", "problem": "dropout"}
+ ],
+ "capstone": "vgg-from-config",
+ "lessons": ["dlcore:03.03", "dlcore:03.01"]}

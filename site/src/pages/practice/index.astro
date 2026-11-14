@@ -1,0 +1,52 @@
+---
+import Practice from '../../layouts/Practice.astro';
+import PCard from '../../components/PCard.astro';
+import { IDX, ALL, counts, planItems } from '../../lib/practice.mjs';
+import { u } from '../../lib/url.mjs';
+const hue = m => { const pi = IDX.parts.indexOf(m.part); return `hsl(${Math.round(330 + pi * 37) % 360} 42% ${pi % 2 ? 46 : 52}%)`; };
+---
+<Practice title="Overview" cur="home">
+  <section class="hero panel" data-ids={ALL.map(l => l.id).join('|')}>
+    <div class="lab">{ALL.length} problems · {IDX.topics.length} topics · runs in your browser</div>
+    <h1>Learn ML by writing it, <span class="px">one problem at a time.</span></h1>
+    <div class="hrow">
+      <div class="note" id="daily"><div class="lab">Problem of the day</div><h3>&nbsp;</h3><p></p><a class="btn" href={u('/practice/daily/')}>Solve it</a></div>
+      <div><p class="hbody">Each problem has a <b>statement, starter code and tests</b>. Python and NumPy run right here in the page. When you're stuck, open a <b>hint</b>, or read the full <b>solution and explanation</b>. Solved problems come back for review.</p>
+        <p class="lab"><span class="dn">0</span> / {ALL.length} solved</p>
+        <div class="hlinks"><a class="btn ghost" href={u('/practice/problems/')}>All problems</a><a class="btn ghost" href={u('/review/')}>Review</a><a class="btn ghost" data-next="Start|Next unsolved|Practise again">Next unsolved → </a></div></div>
+    </div>
+  </section>
+  <div class="sh"><h2>Study plans</h2><a class="lab" href={u('/practice/plans/')} style="text-decoration:none">All {IDX.plans.length} plans →</a></div>
+  <div class="mods">{IDX.plans.slice(0, 6).map(pl => <PCard href={u(`/practice/plans/${pl.id}/`)} lab={pl.group} title={pl.title} blurb={pl.blurb} ids={planItems(pl).map(l => l.id)} right={`${pl.sections.length} sections`} />)}</div>
+  <div class="sh"><h2>Topics</h2></div>
+  {IDX.parts.map((P, pi) => { const ms = IDX.topics.filter(x => x.part === P); return ms.length > 0 && <>
+    <div class="parth"><span class="lab">Part {pi + 1}</span><h3>{P}</h3></div>
+    <div class="mods">{ms.map(m => <a class="card mcard" href={u(`/practice/topics/${m.slug}/`)} data-ids={m.lessons.map(l => l.id).join('|')}>
+      <div class="pcover" style={`--c:${hue(m)};--ci:#fff`}><span>{m.n}</span><span class="ck okb" hidden>✓</span></div>
+      <h4>{m.name}</h4><div class="seg" aria-hidden="true">{m.lessons.map(l => <i data-lk={l.id}></i>)}</div>
+      <div class="ft"><span><span class="dn">0</span>/{m.lessons.length} solved</span><span class="dif">{counts(m.lessons).map(([k, v]) => <i>{v}{k[0]}</i>)}</span></div></a>)}</div>
+  </>; })}
+  <p class="foot-note">Problems are written for this site. Each one links to the course lessons that teach its idea.</p>
+  <script>
+    // Old Practice Lab links (#l<slug>, #plan-…, #t07, …) land here: send them to their new pages.
+    const h = location.hash.slice(1), B = `${window.__base}/practice`;
+    if (h) fetch(`${B}/index.json`).then(r => r.json()).then(I => {
+      const t = I.topics.find(m => m.n === h.slice(1)), [pid, si] = h.slice(5).split('~');
+      const to = h[0] === 'l' ? `${B}/p/${h.slice(1)}/` : h.startsWith('plan-') ? `${B}/plans/${h.slice(5)}/`
+        : /^t\d+$/.test(h) && t ? `${B}/topics/${t.slug}/` : h.startsWith('build-') ? `${B}/builds/${h.slice(6)}/`
+        : h.startsWith('quiz-') ? `${B}/plans/${pid}/quiz/${+si + 1}/` : h.startsWith('round-') ? `${B}/interview/${h.slice(6)}/`
+        : {all: `${B}/problems/`, plans: `${B}/plans/`, papers: `${B}/papers/`, projects: `${B}/projects/`, interview: `${B}/interview/`, review: `${window.__base}/review/`}[h];
+      if (to) location.replace(to);
+    });
+  </script>
+  <script>
+    // Problem of the day: the same for everyone on a given date
+    import { today } from '../../lib/progress.js';
+    fetch(`${window.__base}/practice/index.json`).then(r => r.json()).then(I => {
+      const all = I.topics.flatMap(m => m.lessons), d = today(); let h = 0; for (const c of d) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+      const l = all[h % all.length], el = document.getElementById('daily');
+      el.querySelector('.lab').textContent = `Problem of the day · ${l.d} · ${l.mins} min`; el.querySelector('h3').textContent = l.t;
+      el.querySelector('p').textContent = l.tags.join(' · '); el.querySelector('a').href = `${window.__base}/practice/p/${l.id}/`;
+    });
+  </script>
+</Practice>

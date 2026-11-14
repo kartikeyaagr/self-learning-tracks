@@ -1,0 +1,470 @@
+{
+ "plan": "pandas",
+ "sections": [
+  {
+   "section": "Loading & Inspecting Data",
+   "questions": [
+    {
+     "q": "`pd.DataFrame.from_dict({'u1': {'age': 30}, 'u2': {'age': 41}}, orient='index')` produces what?",
+     "options": [
+      "Columns `u1`, `u2` and one row `age`",
+      "Rows `u1`, `u2` and one column `age`",
+      "A single row with columns `u1.age` and `u2.age`",
+      "A Series indexed by `u1`, `u2`"
+     ],
+     "answer": 1,
+     "why": "`orient='index'` treats the outer keys as row labels and the inner keys as columns. The default (`orient='columns'`) would make `u1` and `u2` the columns."
+    },
+    {
+     "q": "Which call gives the number of missing values in each column?",
+     "options": [
+      "`df.isna().sum(axis=1)`",
+      "`len(df) - df.nunique()`",
+      "`df.count()`",
+      "`df.isna().sum()`"
+     ],
+     "answer": 3,
+     "why": "`isna()` gives a boolean frame and summing it counts the `True` values per column. `count()` gives the **non**-missing counts; `axis=1` counts per row."
+    },
+    {
+     "q": "`df.describe()` on a frame with numeric and string columns returns statistics for which columns by default?",
+     "options": [
+      "It raises an error for mixed types",
+      "Only the numeric columns",
+      "Only the string columns",
+      "All columns, with NaN for strings"
+     ],
+     "answer": 1,
+     "why": "By default `describe` summarises numeric columns. Pass `include='all'` or `include='object'` to describe the others."
+    },
+    {
+     "q": "What does `df.dtypes.value_counts()` tell you?",
+     "options": [
+      "How many rows have each dtype",
+      "How many columns have each dtype",
+      "The memory used per dtype",
+      "The number of distinct values per column"
+     ],
+     "answer": 1,
+     "why": "`df.dtypes` is a Series of one dtype per column, so counting its values groups the columns by type. `df.select_dtypes(include='number')` then selects one group."
+    },
+    {
+     "q": "A column holds `['1', '2', 'n/a']`. What does `pd.to_numeric(s, errors='coerce')` return?",
+     "options": [
+      "A `ValueError` on `'n/a'`",
+      "`[1, 2, 0]`",
+      "`[1, 2, 'n/a']`",
+      "`[1.0, 2.0, NaN]`"
+     ],
+     "answer": 3,
+     "why": "`errors='coerce'` turns unparseable entries into NaN, which forces a float dtype. The default `errors='raise'` would fail on `'n/a'`."
+    },
+    {
+     "q": "You want to look up a column whose name might be `' Price '`, `'price'` or `'PRICE'`. Which approach is robust?",
+     "options": [
+      "`df['price']`",
+      "`df.get('Price')`",
+      "Compare `c.strip().lower()` for each name in `df.columns` with the wanted name",
+      "`df.filter(like='price')`"
+     ],
+     "answer": 2,
+     "why": "Normalising both sides handles whitespace and case. `filter(like=...)` is case-sensitive and matches substrings, so it would also pick `'unit_price'` and miss `'PRICE'`."
+    },
+    {
+     "q": "`pd.concat([df.head(2), df.tail(2)])` on a 3-row frame returns how many rows?",
+     "options": [
+      "It raises because the index repeats",
+      "2",
+      "4, with the middle row appearing twice",
+      "3, since duplicates are dropped"
+     ],
+     "answer": 2,
+     "why": "`head(2)` and `tail(2)` overlap on the middle row, and `concat` doesn't deduplicate. Check `len(df)` before previewing both ends."
+    },
+    {
+     "q": "`df.info()` reports `Non-Null Count 980` for a column in a 1,000-row frame. What does that tell you?",
+     "options": [
+      "20 values in that column are missing",
+      "980 rows passed type validation",
+      "The column has 980 distinct values",
+      "20 rows are duplicated"
+     ],
+     "answer": 0,
+     "why": "`info()` shows the count of non-null entries per column alongside the dtype. Distinct values come from `nunique()`."
+    }
+   ]
+  },
+  {
+   "section": "Indexing & Selection",
+   "questions": [
+    {
+     "q": "After `df = df.sort_values('score')`, what does `df.loc[0]` return?",
+     "options": [
+      "The row whose index **label** is 0, wherever it is now",
+      "An error, because the index is unsorted",
+      "The row with the lowest score, always",
+      "The first row of the sorted frame"
+     ],
+     "answer": 0,
+     "why": "`loc` is label-based; sorting moves rows but keeps their labels. Use `df.iloc[0]` for the first position."
+    },
+    {
+     "q": "Which filter is correct for rows where `a > 1` and `b == 'x'`?",
+     "options": [
+      "`df[(df.a > 1) and (df.b == 'x')]`",
+      "`df[df.a > 1 & df.b == 'x']`",
+      "`df[df.a > 1 and df.b == 'x']`",
+      "`df[(df.a > 1) & (df.b == 'x')]`"
+     ],
+     "answer": 3,
+     "why": "Element-wise logic needs `&` with parentheses (because `&` binds tighter than comparisons). Python's `and` tries to convert a whole Series to one boolean and raises `ValueError`."
+    },
+    {
+     "q": "What does `df[['a', 'b']]` return compared with `df['a']`?",
+     "options": [
+      "Two Series in a tuple, versus a DataFrame",
+      "A view, versus a copy",
+      "A DataFrame with two columns, versus a Series",
+      "The same type both times"
+     ],
+     "answer": 2,
+     "why": "A list of labels selects columns as a DataFrame; a single label returns a Series. `df[['a']]` returns a one-column DataFrame."
+    },
+    {
+     "q": "`s1` has index `[a, b, c]` and `s2` has index `[b, c, d]`. What is `(s1 + s2).index`?",
+     "options": [
+      "`[a, b, c, d]`, with NaN at `a` and `d`",
+      "Positions 0, 1, 2 added element-wise",
+      "`[b, c]`",
+      "`[a, b, c]`"
+     ],
+     "answer": 0,
+     "why": "Arithmetic aligns on labels and takes the union; labels present on only one side produce NaN. Use `s1.add(s2, fill_value=0)` to treat missing as 0."
+    },
+    {
+     "q": "You get `SettingWithCopyWarning` from `df[df.x > 0]['y'] = 1`. What is happening?",
+     "options": [
+      "`df` has duplicate index labels",
+      "The column `y` is read-only",
+      "The assignment may go to a temporary copy and leave `df` unchanged",
+      "Pandas is converting `y` to float"
+     ],
+     "answer": 2,
+     "why": "Chained indexing first produces a filtered frame (possibly a copy) and then assigns into it. `df.loc[df.x > 0, 'y'] = 1` does it in one step on `df` itself."
+    },
+    {
+     "q": "After filtering rows and sorting, you want to keep each row's original position in the source frame. Which is simplest?",
+     "options": [
+      "Keep the original index, or call `reset_index()` before filtering to store it as a column",
+      "Use `iloc` positions from the filtered frame",
+      "It's impossible once filtered",
+      "Use `reset_index(drop=True)` after sorting"
+     ],
+     "answer": 0,
+     "why": "Filtering and sorting preserve index labels, which are the original positions if the index was the default range. `drop=True` throws them away."
+    },
+    {
+     "q": "`df.loc[2:4]` on a default integer index returns how many rows?",
+     "options": [
+      "3 (labels 2, 3 and 4)",
+      "It depends on the dtype",
+      "2 (labels 2 and 3)",
+      "4"
+     ],
+     "answer": 0,
+     "why": "Label slicing with `loc` includes both endpoints, unlike `iloc` and Python slices, which exclude the stop."
+    },
+    {
+     "q": "To build a feature matrix in a fixed column order `cols`, which call raises if a column is missing?",
+     "options": [
+      "`df[cols]`",
+      "`df.reindex(columns=cols)`",
+      "`df.filter(items=cols)`",
+      "`df.get(cols)`"
+     ],
+     "answer": 0,
+     "why": "Selecting a missing label raises `KeyError`, which is what you want for a model's inputs. `reindex` silently adds NaN columns and `filter` silently drops missing ones."
+    }
+   ]
+  },
+  {
+   "section": "Data Cleaning",
+   "questions": [
+    {
+     "q": "Per-station mean imputation: which line fills each NaN with its own station's mean?",
+     "options": [
+      "`df['v'] = df.groupby('station')['v'].mean()`",
+      "`df['v'] = df['v'].fillna(df['v'].mean())`",
+      "`df['v'] = df['v'].fillna(df.groupby('station')['v'].transform('mean'))`",
+      "`df['v'] = df['v'].ffill()`"
+     ],
+     "answer": 2,
+     "why": "`transform` returns a value per original row, aligned to the frame, so `fillna` can use it directly. `groupby(...).mean()` returns one row per station, which doesn't align with the original rows."
+    },
+    {
+     "q": "To keep the latest event per user, which is correct?",
+     "options": [
+      "`df.drop_duplicates('user')`",
+      "`df.sort_values('ts').drop_duplicates('user', keep='last')`",
+      "`df.sort_values('ts').drop_duplicates('user', keep='first')`",
+      "`df.groupby('user').first()`"
+     ],
+     "answer": 1,
+     "why": "After sorting by time ascending, the last occurrence for each user is the latest. Without sorting, `drop_duplicates` keeps whichever row happens to come first."
+    },
+    {
+     "q": "What does `s.str.strip().str.lower().str.replace(r'\\s+', '_', regex=True)` do to `'  Total Revenue '`?",
+     "options": [
+      "`'totalrevenue'`",
+      "`'total_revenue'`",
+      "`'Total_Revenue'`",
+      "`'__total_revenue_'`"
+     ],
+     "answer": 1,
+     "why": "Stripping first removes the outer spaces, lowering handles case, and replacing runs of whitespace gives single underscores."
+    },
+    {
+     "q": "A survey column uses `-99` for \"no answer\". Which is the right cleaning step before computing a mean?",
+     "options": [
+      "`s.dropna()`",
+      "`s.replace(-99, np.nan)`",
+      "`s.fillna(-99)`",
+      "`s.clip(lower=0)`"
+     ],
+     "answer": 1,
+     "why": "Sentinel values are real numbers to pandas, so they pull the mean down until they are converted to NaN. `clip` would turn them into 0, which is still a wrong value."
+    },
+    {
+     "q": "`df.dropna()` with no arguments drops which rows?",
+     "options": [
+      "No rows; it drops columns",
+      "Only rows missing the first column",
+      "Only rows where every value is missing",
+      "Any row with at least one missing value"
+     ],
+     "answer": 3,
+     "why": "The default is `how='any'` along rows. Use `how='all'` or `subset=[...]` to be less aggressive."
+    },
+    {
+     "q": "You read CSV text into a frame with `pd.read_csv(io.StringIO(text))`. Why `StringIO`?",
+     "options": [
+      "It converts the text to UTF-8",
+      "It is required for any header row",
+      "`read_csv` expects a path or file-like object, and `StringIO` wraps the string as a file",
+      "It speeds up parsing"
+     ],
+     "answer": 2,
+     "why": "Passing the raw string would be treated as a file path. `StringIO` gives the parser an in-memory file."
+    },
+    {
+     "q": "`s.astype(int)` on a float column that contains NaN does what?",
+     "options": [
+      "Drops the NaN rows",
+      "Converts NaN to 0",
+      "Leaves NaN as NaN in an int64 column",
+      "Raises, because NaN can't be an int; use the nullable `'Int64'` dtype"
+     ],
+     "answer": 3,
+     "why": "NumPy integers have no missing value. Pandas' nullable `Int64` dtype (capital I) stores integers with `<NA>`."
+    },
+    {
+     "q": "Which call standardises `'Yes'`, `'y'`, `'YES '` and `'no'` into booleans?",
+     "options": [
+      "`s == 'Yes'`",
+      "`s.astype(bool)`",
+      "`s.replace('Yes', True)`",
+      "`s.str.strip().str.lower().map({'yes': True, 'y': True, 'no': False})`"
+     ],
+     "answer": 3,
+     "why": "Normalise first, then map the known spellings. `astype(bool)` makes every non-empty string `True`, including `'no'`."
+    }
+   ]
+  },
+  {
+   "section": "Aggregation & Grouping",
+   "questions": [
+    {
+     "q": "What is the difference between `groupby('g')['x'].transform('sum')` and `groupby('g')['x'].sum()`?",
+     "options": [
+      "`transform` sorts the groups; `sum` doesn't",
+      "They are identical",
+      "`transform` returns one value per original row; `sum` returns one per group",
+      "`sum` ignores NaN and `transform` doesn't"
+     ],
+     "answer": 2,
+     "why": "`transform` broadcasts each group's result back to its rows, which is what you need for ratios like `x / group_total`."
+    },
+    {
+     "q": "`df.groupby('team').agg(pts=('points', 'sum'), games=('game_id', 'nunique'))` returns what columns?",
+     "options": [
+      "A MultiIndex of `(points, sum)` and `(game_id, nunique)`",
+      "`pts` and `games`, indexed by team",
+      "One column per aggregation function name",
+      "`points` and `game_id`"
+     ],
+     "answer": 1,
+     "why": "Named aggregation sets output column names directly and avoids the MultiIndex that `agg({'points': ['sum']})` creates."
+    },
+    {
+     "q": "A pivot table of revenue by `region` × `quarter` with a total row and column uses which argument?",
+     "options": [
+      "`totals=True`",
+      "`margins=True`",
+      "`aggfunc='sum'` alone",
+      "`fill_value=0`"
+     ],
+     "answer": 1,
+     "why": "`pivot_table(..., margins=True)` adds an `All` row and column using the same aggregation. `fill_value` only replaces empty cells."
+    },
+    {
+     "q": "`pd.crosstab(y_true, y_pred)` produces what?",
+     "options": [
+      "A table of counts with true labels as rows and predictions as columns",
+      "A table of proportions summing to 1",
+      "The accuracy",
+      "A list of misclassified indices"
+     ],
+     "answer": 0,
+     "why": "`crosstab` counts co-occurrences, which for labels and predictions is the confusion matrix. `normalize='index'` gives per-class recall rows."
+    },
+    {
+     "q": "To rank stores within each region by sales, which call is correct?",
+     "options": [
+      "`df.sort_values(['region', 'sales'])`",
+      "`df['sales'].rank(ascending=False)`",
+      "`df.groupby('region')['sales'].rank(ascending=False)`",
+      "`df.groupby('region').rank()['sales'].sum()`"
+     ],
+     "answer": 2,
+     "why": "A grouped `rank` restarts the ranking within each region and returns one rank per row. Sorting orders rows but doesn't produce ranks."
+    },
+    {
+     "q": "What does `groupby('g').size()` count that `groupby('g')['x'].count()` doesn't?",
+     "options": [
+      "Groups with no rows",
+      "Nothing; they are always equal",
+      "Distinct values of `x`",
+      "Rows where `x` is NaN"
+     ],
+     "answer": 3,
+     "why": "`size` counts every row in each group; `count` counts the non-null values of the column."
+    },
+    {
+     "q": "By default, are rows with a NaN group key included in `groupby` results?",
+     "options": [
+      "Yes, merged into the first group",
+      "Yes, as a group labelled NaN",
+      "It raises an error",
+      "No, they are dropped unless you pass `dropna=False`"
+     ],
+     "answer": 3,
+     "why": "Missing keys are excluded by default, which can silently lose rows from totals. `dropna=False` keeps them as their own group."
+    },
+    {
+     "q": "You compute `df.groupby('g')['x'].mean()` and the result index is `g`. Which call turns it back into a column?",
+     "options": [
+      "`.reset_index()`",
+      "`.to_frame()` alone",
+      "`.unstack()`",
+      "`.T`"
+     ],
+     "answer": 0,
+     "why": "`reset_index` moves the group labels from the index into a regular column. `unstack` pivots an inner index level into columns."
+    }
+   ]
+  },
+  {
+   "section": "Merging & Reshaping",
+   "questions": [
+    {
+     "q": "`orders.merge(users, on='user_id', how='left')` returns more rows than `orders` had. Why?",
+     "options": [
+      "`user_id` is duplicated in `users`",
+      "Merging always sorts and duplicates rows",
+      "Some orders have no matching user",
+      "`how='left'` adds unmatched users"
+     ],
+     "answer": 0,
+     "why": "A left join keeps every left row and repeats it for each matching right row. Use `validate='many_to_one'` to catch duplicate keys early."
+    },
+    {
+     "q": "Which merge keeps only rows whose key appears in both frames?",
+     "options": [
+      "`how='left'`",
+      "`how='outer'`",
+      "`how='cross'`",
+      "`how='inner'`"
+     ],
+     "answer": 3,
+     "why": "Inner joins keep matches only. Left keeps all left rows, outer keeps everything, and cross makes every pair."
+    },
+    {
+     "q": "`pd.concat([a, b])` where `b` has an extra column `z`. What happens?",
+     "options": [
+      "The frames are joined side by side",
+      "The result has all columns; rows from `a` get NaN in `z`",
+      "It raises because the columns differ",
+      "Column `z` is dropped"
+     ],
+     "answer": 1,
+     "why": "`concat` along rows takes the union of columns by default (`join='outer'`). `join='inner'` keeps only shared columns."
+    },
+    {
+     "q": "A gradebook has columns `student, math, physics`. Which call makes it long with columns `student, subject, score`?",
+     "options": [
+      "`df.pivot(index='student', columns='subject')`",
+      "`df.T`",
+      "`df.melt(id_vars='student', var_name='subject', value_name='score')`",
+      "`df.stack('student')`"
+     ],
+     "answer": 2,
+     "why": "`melt` unpivots the value columns into rows. `pivot` goes the other way, from long to wide."
+    },
+    {
+     "q": "`long.pivot(index='step', columns='metric', values='value')` raises `ValueError: Index contains duplicate entries`. What does that mean?",
+     "options": [
+      "`value` contains NaN",
+      "`metric` has too many categories",
+      "Some `(step, metric)` pair appears more than once",
+      "`step` is not sorted"
+     ],
+     "answer": 2,
+     "why": "`pivot` needs a unique cell for each pair. Deduplicate first or use `pivot_table` with an aggregation."
+    },
+    {
+     "q": "To start a new session whenever a user is idle for more than 30 minutes, which building block gives the time since the user's previous event?",
+     "options": [
+      "`df['ts'].shift(-1)`",
+      "`df.groupby('user')['ts'].diff()`",
+      "`df.groupby('user')['ts'].rank()`",
+      "`df['ts'].diff()`"
+     ],
+     "answer": 1,
+     "why": "A grouped `diff` restarts at each user, so the first event of each user gets NaT instead of a gap from another user's event. Then `(gap > 30min).cumsum()` per user numbers the sessions."
+    },
+    {
+     "q": "`merge(..., indicator=True)` adds which column?",
+     "options": [
+      "`_merge`, saying whether each row came from left, right or both",
+      "`_index`, the original positions",
+      "The count of matches per key",
+      "A boolean `matched` column"
+     ],
+     "answer": 0,
+     "why": "The indicator column is useful for anti-joins: `df[df._merge == 'left_only']` finds rows with no match."
+    },
+    {
+     "q": "After `df.set_index(['a', 'b'])['v'].unstack()`, what becomes the columns?",
+     "options": [
+      "`v` only",
+      "The values of `a`",
+      "The values of `b`",
+      "`a` and `b`"
+     ],
+     "answer": 2,
+     "why": "`unstack` moves the innermost index level (here `b`) into the columns, leaving `a` as the row index."
+    }
+   ]
+  }
+ ]
+}

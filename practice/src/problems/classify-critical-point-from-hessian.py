@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Classify a critical point of a polynomial', tags=['Optimization', 'Calculus'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:09.08', 'mlmaths:07.01'],
+            lessons=['mlmaths:09.52', 'mlmaths:07.01'],
             related=['convexity-certificate-via-hessian', 'newton-s-method'])
 
 STATEMENT = r"""

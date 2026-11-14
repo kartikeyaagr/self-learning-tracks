@@ -1,0 +1,13 @@
+{"id": "dit", "kind": "paper", "group": "Generative models",
+ "title": "Scalable Diffusion Models with Transformers", "authors": "Peebles and Xie", "year": 2022,
+ "url": "https://arxiv.org/abs/2212.09748",
+ "blurb": "Replaced the diffusion U-Net with a plain transformer over latent patches and showed sample quality improves steadily with compute.",
+ "intro": "DiT patchifies a latent like a ViT, runs transformer blocks over the tokens and unpatchifies the output into a noise prediction and a variance. The timestep and class label condition every block through adaptive LayerNorm: they regress a shift, a scale and a residual gate per sublayer, initialised so each block starts as the identity. The steps build patchification, the timestep embedding, one adaLN-Zero block and classifier-free guidance; the capstone is the full forward pass from latent to output.",
+ "steps": [
+  {"name": "Patchify", "problem": "vit-patchify"},
+  {"name": "Timestep embedding", "problem": "sinusoidal-timestep-embedding"},
+  {"name": "adaLN-Zero block", "problem": "dit-patchify-and-adaln-zero-block"},
+  {"name": "Classifier-free guidance", "problem": "classifier-free-guidance", "note": "DiT's best results use guidance with a null class label."}
+ ],
+ "capstone": "dit-full-forward",
+ "lessons": ["ieng:26.08", "dlcore:07.07"]}

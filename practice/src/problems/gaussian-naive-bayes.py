@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Gaussian naive Bayes posteriors', tags=['Classification', 'Probability'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:10.01', 'mlmaths:12.02'], related=['linear-discriminant-analysis', 'softmax-rows'])
+            lessons=['mlmaths:10.01', 'mlmaths:12.10'], related=['linear-discriminant-analysis', 'softmax-rows'])
 
 STATEMENT = r"""
 Gaussian naive Bayes assumes that, within each class, every feature is an independent normal variable. Bayes' rule then gives

@@ -1,0 +1,14 @@
+{"id": "bahdanau-attention", "kind": "paper", "group": "Sequence models and embeddings",
+ "title": "Neural Machine Translation by Jointly Learning to Align and Translate", "authors": "Bahdanau, Cho & Bengio", "year": 2014,
+ "url": "https://arxiv.org/abs/1409.0473",
+ "blurb": "Introduced attention to neural translation: the decoder computes a fresh weighted average of all encoder states at every output step.",
+ "intro": "A bidirectional RNN encoder produces one annotation per source word. At each output step a small network scores every annotation against the previous decoder state, the softmax of the scores weights the annotations into a context vector, and the decoder consumes it together with the previous word. The steps build the GRU, the encoder-decoder and additive attention; the capstone wires the full teacher-forced model and returns the alignment matrix.",
+ "steps": [
+  {"name": "GRU over a sequence", "problem": "gru-cell"},
+  {"name": "Encoder-decoder without attention", "problem": "sequence-to-sequence-forward-pass", "note": "The fixed-vector bottleneck attention removes."},
+  {"name": "Additive attention", "problem": "attention-mechanism"},
+  {"name": "Softmax", "problem": "softmax-rows"},
+  {"name": "Beam search decoding", "problem": "beam-search-decoding"}
+ ],
+ "capstone": "bahdanau-attention-decoder",
+ "lessons": ["dlcore:05.03", "air-fanout-v1:06.01"]}

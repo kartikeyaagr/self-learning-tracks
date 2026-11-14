@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Hessian and convexity of the ridge loss', tags=['Optimization', 'Regression'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:07.01', 'mlmaths:08.02'],
+            lessons=['mlmaths:07.01', 'mlmaths:08.03'],
             related=['gradient-of-multivariate-linear-regression-loss', 'learning-rate-stability-and-convergence-bounds',
                      'pca-projection'])
 

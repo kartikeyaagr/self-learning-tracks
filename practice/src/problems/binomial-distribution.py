@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Binomial pmf and cdf for large n', tags=['Probability'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:10.05'], related=['permutations-and-combinations', 'poisson-distribution', 'b-test-significance'])
+            lessons=['mlmaths:10.25'], related=['permutations-and-combinations', 'poisson-distribution', 'b-test-significance'])
 
 STATEMENT = r"""
 The number of successes in $n$ independent trials, each succeeding with probability $p$, follows a binomial distribution:

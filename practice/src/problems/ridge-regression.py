@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Ridge regression with an unpenalised intercept', tags=['Regression', 'Optimization'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:08.02', 'air-fanout-v1:02.04'], related=['linear-regression', 'lasso-regression'])
+            lessons=['mlmaths:08.03', 'air-fanout-v1:02.04'], related=['linear-regression', 'lasso-regression'])
 
 STATEMENT = r"""
 Ridge regression adds an L2 penalty on the weights, but **not** on the intercept:

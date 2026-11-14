@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='LU decomposition with partial pivoting', tags=['Linear Algebra'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:03.03'], related=['solve-linear-system', 'matrix-determinant', 'cholesky-decomposition'])
+            lessons=['mlmaths:03.16'], related=['solve-linear-system', 'matrix-determinant', 'cholesky-decomposition'])
 
 STATEMENT = r"""
 Gaussian elimination, recorded as matrices, is the factorisation

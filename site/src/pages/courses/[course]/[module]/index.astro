@@ -1,0 +1,43 @@
+---
+import { u } from '../../../../lib/url.mjs';
+import Site from '../../../../layouts/Site.astro';
+import CourseSide from '../../../../components/CourseSide.astro';
+import { getCollection } from 'astro:content';
+import { courseData, lessonUrl, key } from '../../../../lib/course.mjs';
+export async function getStaticPaths() {
+  const out = [];
+  for (const c of await getCollection('courses')) for (const m of c.data.modules) out.push({params: {course: c.id, module: m.slug}});
+  return out;
+}
+const { course: courseId, module: modSlug } = Astro.params;
+const { course, modules } = await courseData(courseId);
+const m = modules.find(x => x.slug === modSlug), i = modules.indexOf(m), prev = modules[i - 1], next = modules[i + 1];
+const P = course.parts.findIndex(P => P.m.includes(m.n)) + 1;
+const plans = course.plans?.[m.n] || [];
+---
+<Site title={`${m.name} · ${course.title}`} course={course} courseId={courseId} side crumbs={[[`Module ${m.n}`, u(`/courses/${courseId}/${m.slug}/`)]]}>
+  <CourseSide slot="side" course={course} courseId={courseId} modules={modules} curMod={m.n} />
+  <section class="panel mhead"><div>
+    <div class="lab">Module {m.n} of {modules.length} · Part {P}</div>
+    <h1>{m.name}</h1>
+    <div class="meta"><span class="pill">{m.lessons.length} lessons</span><span class="pill k">+{m.lessons.length * 10} XP</span></div>
+    <div style="margin-top:20px"><a class="btn" href={lessonUrl(courseId, m, m.lessons[0])}>Start module →</a></div>
+  </div><div class="big" aria-hidden="true" style="font:500 110px/.8 var(--mono);color:var(--line2)">{m.n}</div></section>
+  <div class="path">{m.lessons.map((l, j) => <>
+    {/* ML Maths groups lessons into topics: a heading wherever the topic changes */}
+    {l.data.topic && (j === 0 || m.lessons[j - 1].data.topic?.id !== l.data.topic.id) && m.lessons.some(q => q.data.topic?.id !== l.data.topic.id) &&
+      <div class="parth" style="margin:26px 0 14px"><span class="lab">Topic {l.data.topic.id}</span><h3>{l.data.topic.title}</h3><span class="lab" style="margin-left:auto">{m.lessons.filter(q => q.data.topic?.id === l.data.topic.id).length} lessons</span></div>}
+    <a class="pnode" href={lessonUrl(courseId, m, l)} style={`--dx:${Math.round(Math.sin(j * 0.9) * 70)}px`}>
+      <span class="o">{j + 1}</span><span class="t"><span>{l.data.id}</span><b>{l.data.title}</b></span></a></>)}</div>
+  {plans.length > 0 && <section class="card blk" style="max-width:760px;margin:30px auto 0"><div class="lab">Practise this module</div><h3>Study plan sections</h3>
+    <div class="plinks">{plans.map(([id, t, sec]) => <a href={u(`/practice/plans/${id}/`)}><span>{t}{sec && ` · ${sec}`}</span><span class="pd">Plan →</span></a>)}</div></section>}
+  <div class="mnav">{prev ? <a class="btn ghost" href={u(`/courses/${courseId}/${prev.slug}/`)}>← {prev.name}</a> : <span></span>}{next && <a class="btn ghost" href={u(`/courses/${courseId}/${next.slug}/`)}>{next.name} →</a>}</div>
+  <script define:vars={{ courseKey: course.key, ks: m.lessons.map(l => key(l.data.id)) }}>
+    // runs after the store module has loaded (module scripts run before DOMContentLoaded)
+    document.addEventListener('DOMContentLoaded', () => {
+    const done = window.__store.ns(courseKey).done || {};
+    document.querySelectorAll('.pnode').forEach((a, i) => { if (done[ks[i]]) { a.classList.add('done'); a.querySelector('.o').textContent = '✓'; } });
+    const cur = document.querySelectorAll('.pnode')[ks.findIndex(k => !done[k])]; if (cur) cur.classList.add('cur');
+    });
+  </script>
+</Site>

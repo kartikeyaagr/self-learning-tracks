@@ -1,0 +1,13 @@
+{"id": "llada", "kind": "paper", "group": "Generative models",
+ "title": "Large Language Diffusion Models", "authors": "Nie et al.", "year": 2025,
+ "url": "https://arxiv.org/abs/2502.09992",
+ "blurb": "Trains an 8B masked diffusion language model from scratch and shows it competes with autoregressive models of similar size, including on in-context learning and instruction following.",
+ "intro": "LLaDA replaces next-token prediction with masked diffusion: a bidirectional Transformer predicts all masked tokens of a sequence corrupted at a random rate $t$, with a $1/t$-weighted loss. Sampling starts from an all-mask answer and unmasks it over several steps. The steps build the corruption and loss, guidance and the bidirectional mask predictor; the capstone is the semi-autoregressive sampler with low-confidence remasking.",
+ "steps": [
+  {"name": "BERT-style masking, for contrast", "problem": "masked-language-modeling"},
+  {"name": "Masked diffusion loss", "problem": "masked-diffusion-lm-loss"},
+  {"name": "Bidirectional mask predictor (encoder block)", "problem": "transformer-encoder-block"},
+  {"name": "Classifier-free guidance", "problem": "classifier-free-guidance"},
+  {"name": "Response-only masks for SFT", "problem": "build-assistant-only-sft-loss-mask"}
+ ],
+ "capstone": "llada-semi-autoregressive-sampler"}

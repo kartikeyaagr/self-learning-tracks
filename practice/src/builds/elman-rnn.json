@@ -1,0 +1,13 @@
+{"id": "elman-rnn", "kind": "paper", "group": "Sequence models and embeddings",
+ "title": "Finding Structure in Time", "authors": "Elman", "year": 1990,
+ "url": "https://doi.org/10.1207/s15516709cog1402_1",
+ "blurb": "Introduced the simple recurrent network, whose hidden state feeds back as context so the network can discover structure in sequences.",
+ "intro": "An Elman network copies its hidden layer into a context layer that is fed back at the next step, giving the recurrence $h_t = \\tanh(x_tW_{xh} + h_{t-1}W_{hh} + b)$. Training it means backpropagating through the unrolled sequence, and the gradients through many steps tend to vanish or explode. The steps build the cell, a language model and training with truncated BPTT and clipping; the capstone computes full BPTT gradients and shows the vanishing effect.",
+ "steps": [
+  {"name": "Elman RNN over padded sequences", "problem": "vanilla-rnn-cell"},
+  {"name": "Score a batch with an RNN language model", "problem": "language-modeling"},
+  {"name": "Truncated backprop through time", "problem": "rnn-cell"},
+  {"name": "Gradient clipping", "problem": "gradient-clipping"}
+ ],
+ "capstone": "rnn-bptt-gradients",
+ "lessons": ["dlcore:05.02"]}

@@ -1,0 +1,563 @@
+{
+ "plan": "probability-statistics",
+ "sections": [
+  {
+   "section": "Describing data",
+   "questions": [
+    {
+     "q": "Incomes are strongly right-skewed. Which ordering is typical?",
+     "options": [
+      "Median > mean > mode",
+      "Mean < median < mode",
+      "Mean > median > mode",
+      "Mean = median = mode"
+     ],
+     "answer": 2,
+     "why": "A long right tail pulls the mean towards large values while the median stays with the bulk of the data."
+    },
+    {
+     "q": "Why does the sample variance divide by $n - 1$?",
+     "options": [
+      "It makes the estimator unbiased, since the deviations are measured from the sample mean",
+      "It avoids dividing by zero when $n = 1$",
+      "It makes it smaller than the population variance",
+      "It is required for the standard deviation to be positive"
+     ],
+     "answer": 0,
+     "why": "Deviations from $\\bar x$ are on average smaller than from the true mean; Bessel's correction compensates. NumPy's `var` defaults to `ddof=0`, pandas' to `ddof=1`."
+    },
+    {
+     "q": "Adding 10 to every value changes which statistics?",
+     "options": [
+      "Only the variance",
+      "All of them",
+      "None of them",
+      "The mean and median, but not the variance or standard deviation"
+     ],
+     "answer": 3,
+     "why": "Shifting the data moves location measures by 10 and leaves spread measures unchanged."
+    },
+    {
+     "q": "Multiplying every value by 3 changes the variance by what factor?",
+     "options": [
+      "$\\sqrt3$",
+      "3",
+      "9",
+      "1"
+     ],
+     "answer": 2,
+     "why": "Variance is in squared units, so scaling by $c$ multiplies it by $c^2$. The standard deviation scales by $|c|$."
+    },
+    {
+     "q": "A dataset has excess kurtosis of 5. What does that suggest?",
+     "options": [
+      "Strong right skew",
+      "Heavier tails than a normal distribution",
+      "Lighter tails than a normal",
+      "A bimodal distribution"
+     ],
+     "answer": 1,
+     "why": "Excess kurtosis subtracts the normal's value of 3, so 0 means normal-like tails and positive means more extreme values than a normal of the same variance."
+    },
+    {
+     "q": "Pearson correlation between $x$ and $y = x^2$ for $x$ symmetric around 0 is about...",
+     "options": [
+      "0.5",
+      "1",
+      "-1",
+      "0, even though $y$ is a function of $x$"
+     ],
+     "answer": 3,
+     "why": "Pearson measures linear association. The positive and negative halves cancel, so a perfect nonlinear dependence can have zero correlation."
+    },
+    {
+     "q": "Which statistic is most robust to a single extreme outlier?",
+     "options": [
+      "The range",
+      "The standard deviation",
+      "The median",
+      "The mean"
+     ],
+     "answer": 2,
+     "why": "Moving one value arbitrarily far changes the mean, the standard deviation and the range without bound, but the median only shifts by at most one position."
+    },
+    {
+     "q": "The 25th percentile of `[1, 2, 3, 4, 5]` with linear interpolation (NumPy's default) is...",
+     "options": [
+      "2",
+      "2.25",
+      "1.5",
+      "1"
+     ],
+     "answer": 0,
+     "why": "The position is $0.25\\cdot(n - 1) = 1$ in 0-based indexing, which lands exactly on the value 2."
+    }
+   ]
+  },
+  {
+   "section": "Probability basics",
+   "questions": [
+    {
+     "q": "$P(A) = 0.5$, $P(B) = 0.4$, $P(A\\cap B) = 0.2$. What is $P(A\\cup B)$?",
+     "options": [
+      "0.9",
+      "0.7",
+      "0.5",
+      "0.2"
+     ],
+     "answer": 1,
+     "why": "Inclusion-exclusion: $0.5 + 0.4 - 0.2 = 0.7$. Adding without subtracting the overlap counts it twice."
+    },
+    {
+     "q": "With the same numbers, are $A$ and $B$ independent?",
+     "options": [
+      "It can't be determined",
+      "Yes, because $P(A\\cap B) = P(A)P(B) = 0.2$",
+      "No, because $P(A) \\ne P(B)$",
+      "No, because they overlap"
+     ],
+     "answer": 1,
+     "why": "Independence means the joint equals the product. Overlapping events can be independent; disjoint events with positive probability can't."
+    },
+    {
+     "q": "A test has 99% sensitivity and 95% specificity, and 1% of people have the disease. Roughly what is $P(\\text{disease}|\\text{positive})$?",
+     "options": [
+      "About 17%",
+      "About 50%",
+      "About 95%",
+      "About 99%"
+     ],
+     "answer": 0,
+     "why": "Per 10,000 people: 99 true positives and 495 false positives, so $99/594 \\approx 0.17$. A low base rate makes most positives false."
+    },
+    {
+     "q": "How many ways can you choose 3 items from 5 if order doesn't matter?",
+     "options": [
+      "60",
+      "125",
+      "15",
+      "10"
+     ],
+     "answer": 3,
+     "why": "$\\binom{5}{3} = 5!/(3!\\,2!) = 10$. If order mattered it would be $5\\cdot4\\cdot3 = 60$."
+    },
+    {
+     "q": "How many ways can you choose 3 items from 5 **with** replacement, order not mattering?",
+     "options": [
+      "10",
+      "15",
+      "35",
+      "125"
+     ],
+     "answer": 2,
+     "why": "Multisets of size $k$ from $n$ types number $\\binom{n + k - 1}{k} = \\binom{7}{3} = 35$."
+    },
+    {
+     "q": "From a joint table, how do you get $P(Y = y|X = x)$?",
+     "options": [
+      "The joint entry itself",
+      "$P(X = x)P(Y = y)$",
+      "$P(X = x, Y = y)/P(Y = y)$",
+      "$P(X = x, Y = y)/P(X = x)$, dividing the joint by the row total"
+     ],
+     "answer": 3,
+     "why": "Conditioning on $X = x$ restricts to that row and renormalises it to sum to 1."
+    },
+    {
+     "q": "Two fair dice are rolled. What is $P(\\text{sum} = 7)$?",
+     "options": [
+      "7/36",
+      "1/12",
+      "1/6",
+      "1/36"
+     ],
+     "answer": 2,
+     "why": "Six of the 36 equally likely ordered pairs sum to 7: (1,6), (2,5), (3,4), (4,3), (5,2), (6,1)."
+    },
+    {
+     "q": "$P(A|B) = 0.8$. What can you say about $P(B|A)$?",
+     "options": [
+      "It is 0.2",
+      "Nothing without $P(A)$ and $P(B)$",
+      "It is also 0.8",
+      "It is at least 0.8"
+     ],
+     "answer": 1,
+     "why": "Bayes' rule says $P(B|A) = P(A|B)P(B)/P(A)$. Confusing the two directions is the prosecutor's fallacy."
+    }
+   ]
+  },
+  {
+   "section": "Distributions",
+   "questions": [
+    {
+     "q": "A Poisson variable with rate $\\lambda = 4$ has what mean and variance?",
+     "options": [
+      "Both 4",
+      "Mean 4, variance 2",
+      "Mean 2, variance 4",
+      "Mean 4, variance 16"
+     ],
+     "answer": 0,
+     "why": "The Poisson's mean equals its variance. Count data with variance much larger than the mean is called overdispersed and needs another model, such as the negative binomial."
+    },
+    {
+     "q": "Why compute binomial probabilities for large $n$ through `gammaln` instead of `math.comb(n, k) * p**k * (1-p)**(n-k)`?",
+     "options": [
+      "`comb` doesn't accept large $n$",
+      "The direct formula overflows or underflows; logs keep it finite",
+      "`gammaln` is exact while `comb` is approximate",
+      "It changes the result for small $n$"
+     ],
+     "answer": 1,
+     "why": "For $n = 10^5$, $\\binom{n}{k}$ is astronomically large and $p^k$ is astronomically small. Working in log space and exponentiating once avoids both."
+    },
+    {
+     "q": "For far-tail normal probabilities such as $P(Z > 10)$, why is `1 - cdf(10)` a bad idea?",
+     "options": [
+      "`cdf(10)` rounds to 1.0, so the difference is 0; use the survival function or `erfc`",
+      "The normal cdf is undefined at 10",
+      "It gives a negative number",
+      "It is slower"
+     ],
+     "answer": 0,
+     "why": "$P(Z > 10) \\approx 7.6\\times10^{-24}$, far below double precision near 1. `norm.sf` or `0.5 * erfc(x / sqrt(2))` computes it directly."
+    },
+    {
+     "q": "What is the variance of a Bernoulli($p$) variable?",
+     "options": [
+      "$p^2$",
+      "$p$",
+      "$1 - p$",
+      "$p(1 - p)$"
+     ],
+     "answer": 3,
+     "why": "$E[X^2] = p$ and $E[X]^2 = p^2$, so the variance is $p - p^2$. It peaks at $p = 0.5$."
+    },
+    {
+     "q": "The exponential distribution is called memoryless. What does that mean?",
+     "options": [
+      "Its pdf is constant",
+      "It has no variance",
+      "Its mean is 0",
+      "$P(T > s + t | T > s) = P(T > t)$"
+     ],
+     "answer": 3,
+     "why": "Having already waited $s$ doesn't change the distribution of the remaining wait. It is the only continuous distribution with this property."
+    },
+    {
+     "q": "Fitting an exponential lifetime with right-censored data, the MLE of the rate is...",
+     "options": [
+      "(number of units) / (total time)",
+      "1 / mean of the failure times only",
+      "(number of observed failures) / (total observed time, including censored units)",
+      "The median failure time"
+     ],
+     "answer": 2,
+     "why": "Censored units contribute survival time but no failure. Dropping them, or treating censoring times as failures, biases the rate."
+    },
+    {
+     "q": "If $X \\sim N(\\mu, \\sigma^2)$, what fraction of values lies within $\\mu \\pm 2\\sigma$?",
+     "options": [
+      "About 68%",
+      "About 95%",
+      "Exactly 90%",
+      "About 99.7%"
+     ],
+     "answer": 1,
+     "why": "The 68-95-99.7 rule; more precisely, $\\pm1.96\\sigma$ covers 95%."
+    },
+    {
+     "q": "The sum of two independent Poisson variables with rates 2 and 3 is...",
+     "options": [
+      "Poisson with rate 5",
+      "Normal with mean 5",
+      "Binomial",
+      "Poisson with rate 6"
+     ],
+     "answer": 0,
+     "why": "Independent Poisson counts add, as their rates do. This is why arrivals from merged streams are Poisson again."
+    }
+   ]
+  },
+  {
+   "section": "Sampling and the CLT",
+   "questions": [
+    {
+     "q": "The standard error of the mean of $n$ i.i.d. samples with standard deviation $\\sigma$ is...",
+     "options": [
+      "$\\sigma$",
+      "$\\sigma/\\sqrt n$",
+      "$\\sigma/n$",
+      "$\\sigma\\sqrt n$"
+     ],
+     "answer": 1,
+     "why": "The variance of an average of $n$ independent terms is $\\sigma^2/n$. Quadrupling the sample halves the standard error."
+    },
+    {
+     "q": "The CLT says the sample mean is approximately normal for large $n$. Which population makes it converge slowest?",
+     "options": [
+      "A symmetric distribution with light tails",
+      "A normal distribution",
+      "A highly skewed one, such as a lognormal",
+      "A uniform distribution"
+     ],
+     "answer": 2,
+     "why": "Skewness shrinks like $1/\\sqrt n$, so heavily skewed data needs a large $n$ before the mean looks normal. For normal data the mean is exactly normal at any $n$."
+    },
+    {
+     "q": "For normal data, how does the standard error of the median compare with the mean's?",
+     "options": [
+      "It is smaller",
+      "They are equal",
+      "The median has no standard error",
+      "It is larger, about $\\sqrt{\\pi/2}\\approx1.25$ times"
+     ],
+     "answer": 3,
+     "why": "The mean is the most efficient estimator of a normal's centre. For heavy-tailed data the median can win."
+    },
+    {
+     "q": "A bootstrap resample of $n$ observations is drawn how?",
+     "options": [
+      "$n/2$ draws without replacement",
+      "$n$ draws from a fitted normal",
+      "$n$ draws with replacement from the observed data",
+      "A random permutation of the data"
+     ],
+     "answer": 2,
+     "why": "Sampling with replacement at the original size mimics drawing a new sample from the population. A permutation would give the same statistic every time."
+    },
+    {
+     "q": "A percentile bootstrap 95% interval is...",
+     "options": [
+      "The minimum and maximum bootstrap statistic",
+      "The 2.5th and 97.5th percentiles of the bootstrap statistics",
+      "The mean ± 1.96 standard deviations of the data",
+      "The 5th and 95th percentiles"
+     ],
+     "answer": 1,
+     "why": "The percentile method reads the interval straight from the bootstrap distribution. It can be poor for small samples or biased statistics."
+    },
+    {
+     "q": "Stratified sampling improves on simple random sampling when...",
+     "options": [
+      "All strata have the same mean",
+      "The population is small",
+      "There is only one stratum",
+      "Strata differ in their means, so removing between-strata variation reduces variance"
+     ],
+     "answer": 3,
+     "why": "Stratified estimates combine within-stratum means weighted by population share, so between-strata differences no longer add noise."
+    },
+    {
+     "q": "Why does the CLT not apply to the mean of a Cauchy distribution?",
+     "options": [
+      "Its samples are dependent",
+      "It is symmetric",
+      "It is not continuous",
+      "The Cauchy has no finite variance (or mean)"
+     ],
+     "answer": 3,
+     "why": "The CLT needs finite variance. The average of Cauchy samples is itself Cauchy, with the same spread as one sample."
+    },
+    {
+     "q": "Rolling one die gives a uniform distribution on 1 to 6. The exact distribution of the mean of two rolls is...",
+     "options": [
+      "Triangular on 1, 1.5, ..., 6, peaking at 3.5",
+      "Uniform on 1 to 6",
+      "Bimodal",
+      "Normal"
+     ],
+     "answer": 0,
+     "why": "The sum of two dice is triangular, peaking at 7. Convolving the pmf with itself gives the exact sampling distribution, a step towards the CLT's bell shape."
+    }
+   ]
+  },
+  {
+   "section": "Hypothesis testing",
+   "questions": [
+    {
+     "q": "What does a p-value of 0.03 mean?",
+     "options": [
+      "The effect size is 0.03",
+      "If the null were true, data at least this extreme would occur 3% of the time",
+      "There is a 97% chance the alternative is true",
+      "There is a 3% chance the null is true"
+     ],
+     "answer": 1,
+     "why": "A p-value is computed assuming the null. It isn't the probability of the null; that needs a prior and Bayes' rule."
+    },
+    {
+     "q": "When should you use a t-test instead of a z-test for a mean?",
+     "options": [
+      "When $\\sigma$ is unknown and estimated from the sample",
+      "When there are two groups",
+      "When the data are binary",
+      "When $n$ is large"
+     ],
+     "answer": 0,
+     "why": "Estimating $\\sigma$ adds uncertainty, which the t distribution's heavier tails account for. For large $n$ the two converge."
+    },
+    {
+     "q": "You run 20 independent tests at $\\alpha = 0.05$ with all nulls true. What is the chance of at least one false positive?",
+     "options": [
+      "About 64%",
+      "5%",
+      "20%",
+      "100%"
+     ],
+     "answer": 0,
+     "why": "$1 - 0.95^{20}\\approx 0.64$. Bonferroni tests each at $0.05/20$ to keep the family-wise rate at 5%."
+    },
+    {
+     "q": "Benjamini-Hochberg controls what?",
+     "options": [
+      "The probability of any false positive",
+      "The power of each test",
+      "The false discovery rate: the expected fraction of rejections that are false",
+      "The type II error rate"
+     ],
+     "answer": 2,
+     "why": "BH is less conservative than Bonferroni and suits screening many hypotheses, accepting that a controlled fraction of discoveries are wrong."
+    },
+    {
+     "q": "An A/B test compares conversion rates 10.0% and 10.5% with 1,000 users per arm. What is the likely outcome?",
+     "options": [
+      "The test can't be run with unequal rates",
+      "Not significant; the standard error of the difference (about 1.4 points) is far larger than 0.5 points",
+      "Significant at 1%",
+      "Significant at 5%"
+     ],
+     "answer": 1,
+     "why": "$\\sqrt{2\\cdot0.1\\cdot0.9/1000}\\approx0.013$, so $z \\approx 0.37$. Detecting a half-point lift needs tens of thousands of users per arm."
+    },
+    {
+     "q": "A chi-square goodness-of-fit test needs which condition for its approximation to hold?",
+     "options": [
+      "At least 30 categories",
+      "Expected counts that are not too small (commonly at least 5 per cell)",
+      "Equal observed counts",
+      "Normally distributed data"
+     ],
+     "answer": 1,
+     "why": "The chi-square distribution approximates the statistic well only when expected counts are reasonably large. Merge sparse categories or use an exact test otherwise."
+    },
+    {
+     "q": "Increasing the sample size while keeping $\\alpha$ fixed does what?",
+     "options": [
+      "Increases power",
+      "Changes $\\alpha$",
+      "Increases the type I error rate",
+      "Decreases power"
+     ],
+     "answer": 0,
+     "why": "More data shrinks the standard error, so a real effect produces larger test statistics. $\\alpha$ is set by you, not by $n$."
+    },
+    {
+     "q": "You peek at an A/B test every day and stop as soon as $p < 0.05$. What happens to the false-positive rate?",
+     "options": [
+      "It becomes exactly 0",
+      "It stays at 5%",
+      "It falls below 5%",
+      "It rises well above 5%"
+     ],
+     "answer": 3,
+     "why": "Each peek is another chance to cross the threshold by luck. Sequential designs or alpha-spending rules correct for repeated looks."
+    }
+   ]
+  },
+  {
+   "section": "Estimation and applied statistics",
+   "questions": [
+    {
+     "q": "The maximum likelihood estimate of a normal's variance is...",
+     "options": [
+      "$\\frac1n\\sum x_i^2$",
+      "$\\frac1{n-1}\\sum(x_i - \\bar x)^2$",
+      "$\\frac1n\\sum(x_i - \\bar x)^2$, which is biased",
+      "The median absolute deviation"
+     ],
+     "answer": 2,
+     "why": "Maximising the likelihood gives the $1/n$ version. It is consistent but slightly biased low."
+    },
+    {
+     "q": "A Beta(2, 2) prior on a conversion rate sees 8 successes and 2 failures. What is the posterior?",
+     "options": [
+      "Beta(8, 2)",
+      "Beta(10, 4)",
+      "Beta(2, 2)",
+      "Beta(10, 10)"
+     ],
+     "answer": 1,
+     "why": "The beta is conjugate to the binomial: add successes to $\\alpha$ and failures to $\\beta$. Updating batch by batch gives the same result as all at once."
+    },
+    {
+     "q": "Why apply Fisher's $z$-transform $\\tanh^{-1}(r)$ before building a confidence interval for a correlation?",
+     "options": [
+      "It is required to get a value between -1 and 1",
+      "It removes outliers",
+      "The sampling distribution of $r$ is skewed near ±1; $z$ is approximately normal with known variance",
+      "It makes $r$ larger"
+     ],
+     "answer": 2,
+     "why": "$z$ has standard error about $1/\\sqrt{n - 3}$. Build the interval in $z$ space and transform the ends back with $\\tanh$."
+    },
+    {
+     "q": "A one-way ANOVA F statistic compares...",
+     "options": [
+      "Between-group variance to within-group variance",
+      "The largest and smallest group means only",
+      "Each pair of groups with a t-test",
+      "Group medians"
+     ],
+     "answer": 0,
+     "why": "A large F means group means differ more than the noise within groups would explain. A significant F doesn't say which groups differ."
+    },
+    {
+     "q": "Estimating $\\pi$ by throwing $n$ random points into a square and counting those inside the circle has error that shrinks like...",
+     "options": [
+      "$1/n^2$",
+      "It doesn't shrink",
+      "$1/\\sqrt n$",
+      "$1/n$"
+     ],
+     "answer": 2,
+     "why": "The fraction inside is a binomial proportion, whose standard error is $O(1/\\sqrt n)$. Each extra digit of accuracy costs 100 times more samples."
+    },
+    {
+     "q": "What is the bias of an estimator?",
+     "options": [
+      "The average error on one sample",
+      "Its variance",
+      "The difference between two estimates",
+      "The difference between its expected value and the true parameter"
+     ],
+     "answer": 3,
+     "why": "Mean squared error equals bias squared plus variance, so a slightly biased estimator can still be better if it has much lower variance."
+    },
+    {
+     "q": "A 95% confidence interval for a mean is $[2.1, 3.4]$. Which interpretation is correct?",
+     "options": [
+      "The procedure that produced it captures the true mean in 95% of repeated samples",
+      "The sample mean is in the interval with probability 95%",
+      "There is a 95% probability the true mean is in $[2.1, 3.4]$",
+      "95% of the data lie in $[2.1, 3.4]$"
+     ],
+     "answer": 0,
+     "why": "In the frequentist view the true mean is fixed and the interval is random. A Bayesian credible interval supports the probability statement."
+    },
+    {
+     "q": "Variance of a Monte Carlo estimate can be reduced without more samples by...",
+     "options": [
+      "Rounding the samples",
+      "Dropping the largest samples",
+      "Using fewer random digits",
+      "Using control variates, antithetic sampling or stratification"
+     ],
+     "answer": 3,
+     "why": "These methods remove known or symmetric parts of the variation. Dropping samples biases the estimate."
+    }
+   ]
+  }
+ ]
+}

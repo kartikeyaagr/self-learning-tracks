@@ -1,0 +1,13 @@
+---
+import Practice from '../../../layouts/Practice.astro';
+import PCard from '../../../components/PCard.astro';
+import { IDX, planItems } from '../../../lib/practice.mjs';
+import { u } from '../../../lib/url.mjs';
+const groups = [...new Set(IDX.plans.map(p => p.group))];
+---
+<Practice title="Study plans" cur="plans">
+  <h1 style="font-size:40px;letter-spacing:-.045em;margin:4px 0 6px">Study plans</h1>
+  <p style="color:var(--muted);margin:0 0 8px;max-width:640px">Curated sequences of problems, ordered so each one builds on the last. Work through a plan section by section, or jump to any problem.</p>
+  {groups.map(g => <><div class="parth"><h3>{g}</h3></div><div class="mods">{IDX.plans.filter(p => p.group === g).map(pl =>
+    <PCard href={u(`/practice/plans/${pl.id}/`)} lab={pl.group} title={pl.title} blurb={pl.blurb} ids={planItems(pl).map(l => l.id)} right={`${pl.sections.length} sections`} />)}</div></>)}
+</Practice>

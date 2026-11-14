@@ -1,0 +1,11 @@
+---
+// One problem in a list. The dot turns green for solved problems (Site layout marks [data-lk] inside [data-ns="practice"]).
+import { RT, pHref } from '../lib/practice.mjs';
+const { l, n, note } = Astro.props;
+---
+<a class={`card prow${n ? ' num' : ''}`} href={pHref(l.id)} data-id={l.id} data-d={l.d} data-rt={l.rt} data-tags={l.tags.join('|')} data-q={`${l.t} ${l.tags.join(' ')}`.toLowerCase()}>
+  {n && <span class="lab">{String(n).padStart(2, '0')}</span>}
+  <span class="sd" data-lk={l.id}></span>
+  <span><b>{l.t}</b>{note && <span style="display:block;color:var(--muted);font-size:13.5px;margin-top:3px">{note}</span>}<span class="tg">{l.tags.map((t, i) => <>{i > 0 && <span>·</span>}<span>{t}</span></>)}</span></span>
+  <span class="rt"><span class="pill">{RT[l.rt] || l.rt}</span><span class={`pill ${l.d}`}>{l.d}</span></span>
+</a>

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='PCA by SVD with a variance target', tags=['Linear Algebra', 'Feature Engineering'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:08.03', 'mlmaths:07.02'], related=['pca-projection', 'low-rank-approximation', 'whitening-transform'])
+            lessons=['mlmaths:08.06', 'mlmaths:07.07'], related=['pca-projection', 'low-rank-approximation', 'whitening-transform'])
 
 STATEMENT = r"""
 PCA keeps the few directions that explain most of the variance. Instead of fixing the number of components, practitioners often ask for "enough components to explain 95% of the variance". Implement that with an SVD of the centred data, and return the compressed-then-restored data.

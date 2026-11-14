@@ -1,0 +1,15 @@
+{"id": "adam", "kind": "paper", "group": "Training and optimization",
+ "title": "Adam: A Method for Stochastic Optimization", "authors": "Kingma and Ba", "year": 2014,
+ "url": "https://arxiv.org/abs/1412.6980",
+ "blurb": "Combined momentum with per-parameter step sizes from a running average of squared gradients, plus a bias correction, giving the default optimiser for most of deep learning.",
+ "intro": "Adam tracks exponential averages of the gradient and of its square, corrects both for their zero initialisation, and steps each parameter by the ratio of the two. The paper also introduces AdaMax, which uses an infinity norm in place of the second moment. The steps build momentum, RMSProp, the Adam update, the full optimiser and decoupled weight decay, then compare them; the capstone runs Adam, Adam without bias correction and AdaMax on a noisy ill-conditioned quadratic.",
+ "steps": [
+  {"name": "Classical momentum", "problem": "classical-momentum"},
+  {"name": "RMSProp", "problem": "rmsprop"},
+  {"name": "One Adam step", "problem": "adam-step"},
+  {"name": "Adam over many steps", "problem": "adam-optimizer"},
+  {"name": "AdamW: decoupled weight decay", "problem": "adamw-decoupled-weight-decay", "note": "The later fix that modern LLM training uses."},
+  {"name": "Optimiser comparison", "problem": "optimizer-showdown"}
+ ],
+ "capstone": "adam-adamax-trajectories",
+ "lessons": ["mlmaths:14.03", "air-fanout-v1:05.06"]}

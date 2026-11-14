@@ -1,0 +1,14 @@
+{"id": "seq2seq", "kind": "paper", "group": "Sequence models and embeddings",
+ "title": "Sequence to Sequence Learning with Neural Networks", "authors": "Sutskever, Vinyals & Le", "year": 2014,
+ "url": "https://arxiv.org/abs/1409.3215",
+ "blurb": "Showed that a deep LSTM encoder and decoder can translate end to end, with source reversal and beam search as key tricks.",
+ "intro": "One LSTM reads the source (reversed) into a fixed-size state; a second LSTM, initialised with that state, generates the translation one token at a time, and beam search picks the output. The steps build the LSTM cell, batching and teacher-forced training, and beam search; the capstone translates with the full pipeline.",
+ "steps": [
+  {"name": "LSTM cell", "problem": "lstm-cell"},
+  {"name": "Pad and truncate a batch", "problem": "padding-and-truncation"},
+  {"name": "Encoder-decoder with teacher forcing", "problem": "sequence-to-sequence-forward-pass"},
+  {"name": "LSTM language model loss", "problem": "lstm-language-model-loss"},
+  {"name": "Beam search with length normalisation", "problem": "beam-search-decoding"}
+ ],
+ "capstone": "seq2seq-lstm-beam-translate",
+ "lessons": ["dlcore:05.03"]}

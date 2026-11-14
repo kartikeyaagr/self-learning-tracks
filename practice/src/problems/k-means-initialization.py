@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='K-means++ seeding', tags=['Clustering', 'Sampling'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:10.05'], related=['k-means-clustering', 'kmeans-step'])
+            lessons=['mlmaths:10.25'], related=['k-means-clustering', 'kmeans-step'])
 
 STATEMENT = r"""
 K-means is sensitive to where it starts. K-means++ picks starting centroids from the data so that they tend to be spread out: each new centre is sampled with probability proportional to its **squared distance to the nearest centre chosen so far**.

@@ -1,0 +1,14 @@
+{"id": "batchnorm", "kind": "paper", "group": "Training and optimization",
+ "title": "Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift", "authors": "Ioffe and Szegedy", "year": 2015,
+ "url": "https://arxiv.org/abs/1502.03167",
+ "blurb": "Normalised each layer's pre-activations over the mini-batch, which allowed much higher learning rates and made deep networks far less sensitive to initialisation.",
+ "intro": "BatchNorm standardises every unit with the batch mean and variance, then applies a learned scale and shift. Because each example's output depends on the whole batch, the backward pass must differentiate through the batch statistics, and at test time the layer switches to running averages. The steps build per-channel statistics, the layer itself, its per-example cousin LayerNorm, manual backprop and initialisation; the capstone trains a small classifier for one step and evaluates it in inference mode.",
+ "steps": [
+  {"name": "Per-channel mean and standard deviation", "problem": "per-channel-mean-and-std"},
+  {"name": "BatchNorm in train and eval mode", "problem": "batch-normalization"},
+  {"name": "LayerNorm for comparison", "problem": "layer-normalization", "note": "Normalises over features instead of the batch, so it has no train/eval difference."},
+  {"name": "Backprop through a hidden layer", "problem": "backpropagation-single-hidden-layer"},
+  {"name": "Weight initialisation", "problem": "weight-initialization", "note": "What BatchNorm makes much less critical."}
+ ],
+ "capstone": "batchnorm-mlp-training-step",
+ "lessons": ["dlcore:02.01", "dlcore:02.02"]}

@@ -1,0 +1,17 @@
+{"id": "ddpm", "kind": "paper", "group": "Generative models",
+ "title": "Denoising Diffusion Probabilistic Models", "authors": "Ho, Jain and Abbeel", "year": 2020,
+ "url": "https://arxiv.org/abs/2006.11239",
+ "blurb": "Showed that a model trained to predict the noise added to an image, then run as a long reverse chain, produces samples competitive with GANs.",
+ "intro": "The forward process adds Gaussian noise over $T$ steps on a fixed schedule, and has a closed form for jumping from $x_0$ straight to any $x_t$. A network learns to predict the added noise with a plain mean-squared error, and sampling runs the reverse chain from pure noise, removing predicted noise and adding a little fresh noise at each step. The steps build the schedule, the forward jump, the posterior, the loss, the timestep embedding and both algorithms; the capstone trains a toy model and samples from it.",
+ "steps": [
+  {"name": "Linear $\\beta$ schedule", "problem": "linear-beta-schedule"},
+  {"name": "Jumping to $x_t$ in closed form", "problem": "forward-diffusion-sample"},
+  {"name": "The forward-process posterior", "problem": "posterior-mean-and-variance"},
+  {"name": "The simple noise-prediction loss", "problem": "noise-prediction-loss"},
+  {"name": "Timestep embedding", "problem": "sinusoidal-timestep-embedding", "note": "How a real denoiser is told which step it is on."},
+  {"name": "One training step", "problem": "toy-diffusion-training-step"},
+  {"name": "One ancestral sampling step", "problem": "ddpm-ancestral-step"},
+  {"name": "The full sampling chain", "problem": "toy-ddpm-sampler"}
+ ],
+ "capstone": "ddpm-train-and-sample",
+ "lessons": ["dlcore:07.03", "dlcore:07.04", "dlcore:07.05"]}

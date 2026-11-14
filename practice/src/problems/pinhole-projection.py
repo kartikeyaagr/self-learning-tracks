@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Project 3D points through a pinhole camera', tags=['3D Geometry', 'Computer Vision'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:03.05'], related=['chain-rigid-poses', 'iou-matrix'])
+            lessons=['mlmaths:03.33'], related=['chain-rigid-poses', 'iou-matrix'])
 
 STATEMENT = r"""
 A calibrated pinhole camera maps a world point $X_w$ to a pixel in three steps.

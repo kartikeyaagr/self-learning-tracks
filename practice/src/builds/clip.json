@@ -1,0 +1,14 @@
+{"id": "clip", "kind": "paper", "group": "Vision and detection",
+ "title": "Learning Transferable Visual Models From Natural Language Supervision", "authors": "Radford et al.", "year": 2021,
+ "url": "https://arxiv.org/abs/2103.00020",
+ "blurb": "Trained image and text encoders on 400 million image-caption pairs with a contrastive loss, producing a joint embedding space that classifies images zero-shot from class names.",
+ "intro": "CLIP embeds a batch of images and their captions, normalises both, and trains so that each image's most similar caption in the batch is its own, and vice versa. The result is a pair of encoders whose cosine similarity measures image-text agreement. The steps build the ViT input embedding, masked pooling for text features, the symmetric contrastive loss and its sigmoid alternative, and retrieval; the capstone turns class names and prompt templates into a zero-shot classifier.",
+ "steps": [
+  {"name": "ViT patch embedding", "problem": "vision-transformer-patch-embedding", "note": "CLIP's best image encoders are ViTs."},
+  {"name": "Pooling token features", "problem": "masked-mean-pooling"},
+  {"name": "Symmetric contrastive loss", "problem": "symmetric-clip-contrastive-loss"},
+  {"name": "SigLIP's pairwise sigmoid loss", "problem": "siglip-pairwise-loss", "note": "A later replacement that drops the batch-wide softmax."},
+  {"name": "Cosine retrieval", "problem": "clip-cosine-retrieval"}
+ ],
+ "capstone": "clip-zero-shot-classifier",
+ "lessons": ["ieng:26.03"]}

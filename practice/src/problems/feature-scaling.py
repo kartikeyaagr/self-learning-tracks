@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Standard, min-max and robust scaling', tags=['Feature Engineering', 'Data Processing'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:10.04'], related=['missing-value-imputation', 'knn-classifier'])
+            lessons=['mlmaths:10.15'], related=['missing-value-imputation', 'knn-classifier'])
 
 STATEMENT = r"""
 Write `scale(X_train, X_test, method)` that learns a per-column shift $c_j$ and scale $s_j$ from `X_train`, then returns $(X - c)/s$ for both arrays.

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='How fast does the CLT kick in?', tags=['Probability and Statistics', 'Probability'], diff='Medium',
-            runtime='numpy', lessons=['mlmaths:12.01', 'mlmaths:10.06'], related=['sampling-distribution-of-mean', 'normal-distribution'])
+            runtime='numpy', lessons=['mlmaths:12.01', 'mlmaths:10.35'], related=['sampling-distribution-of-mean', 'normal-distribution'])
 
 STATEMENT = r"""
 Let $X$ take integer value `values[i]` with probability `probs[i]`, with mean $\mu$ and standard deviation $\sigma$. The central limit theorem says the standardised sum of $n$ independent copies,

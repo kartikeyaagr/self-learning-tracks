@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='L-BFGS on the Rosenbrock function', tags=['Optimization'], diff='Hard', runtime='numpy',
-            lessons=['mlmaths:07.01', 'mlmaths:09.08'],
+            lessons=['mlmaths:07.01', 'mlmaths:09.52'],
             related=['newton-s-method', 'rmsprop', 'optimizer-showdown'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Least squares with an intercept and ridge', tags=['Regression', 'Linear Algebra'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:08.02', 'mlmaths:08.01'], related=['orthogonal-projection-matrix', 'moore-penrose-pseudoinverse', 'qr-decomposition'])
+            lessons=['mlmaths:08.03', 'mlmaths:08.01'], related=['orthogonal-projection-matrix', 'moore-penrose-pseudoinverse', 'qr-decomposition'])
 
 STATEMENT = r"""
 Fit a linear model $\hat y = Xw + b$ by minimising squared error plus an L2 penalty on the **weights only** (the intercept is never penalised):

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Points inside a convex polytope', tags=['Optimization', 'Linear Algebra'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:03.01', 'mlmaths:09.08'],
+            lessons=['mlmaths:03.01', 'mlmaths:09.52'],
             related=['convexity-certificate-via-hessian', 'lasso-regression-using-ista'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Mahalanobis distance for outlier scoring', tags=['Probability and Statistics', 'Linear Algebra'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:11.04', 'mlmaths:11.05'], related=['euclidean-distance', 'cholesky-decomposition', 'whitening-transform'])
+            lessons=['mlmaths:11.21', 'mlmaths:11.25'], related=['euclidean-distance', 'cholesky-decomposition', 'whitening-transform'])
 
 STATEMENT = r"""
 Euclidean distance treats every direction alike. When features are correlated or on different scales, a point can be "close" in Euclidean terms yet wildly unusual for the data. The Mahalanobis distance measures distance in units of the data's own spread:

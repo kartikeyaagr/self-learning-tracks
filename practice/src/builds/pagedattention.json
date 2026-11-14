@@ -1,0 +1,14 @@
+{"id": "pagedattention", "kind": "paper", "group": "Efficient inference",
+ "title": "Efficient Memory Management for Large Language Model Serving with PagedAttention", "authors": "Kwon et al.", "year": 2023,
+ "url": "https://arxiv.org/abs/2309.06180",
+ "blurb": "Applied virtual-memory paging to the KV cache, nearly eliminating memory waste in LLM serving and enabling the vLLM engine's large throughput gains.",
+ "intro": "Each sequence's keys and values are stored in fixed-size blocks allocated on demand from a shared pool, with a block table translating logical positions to physical blocks. That removes the over-reservation and fragmentation of contiguous allocation, lets sequences share prefix blocks with copy-on-write, and lets the scheduler batch many more requests. The steps build the block allocator, capacity planning, attention over a paged cache, prefix caching and a continuous-batching scheduler; the capstone runs a paged decode loop that appends, allocates and attends.",
+ "steps": [
+  {"name": "KV-cache capacity in blocks", "problem": "plan-kv-cache-capacity"},
+  {"name": "Block allocator with copy-on-write", "problem": "pagedattention-block-allocation"},
+  {"name": "Attention over a paged cache", "problem": "paged-kv-cache-gather"},
+  {"name": "Prefix caching", "problem": "prefix-cache-matching-and-reuse"},
+  {"name": "Continuous batching", "problem": "simulate-continuous-batching", "note": "The scheduling that paging makes practical."}
+ ],
+ "capstone": "paged-attention-decode-loop",
+ "lessons": ["ieng:08.01", "ieng:08.03", "ieng:08.04", "ieng:14.05"]}

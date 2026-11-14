@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Least-squares linear regression with an intercept', tags=['Regression', 'Linear Algebra'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:08.02', 'mlmaths:08.01'], related=['ridge-regression', 'regression-metrics'])
+            lessons=['mlmaths:08.03', 'mlmaths:08.01'], related=['ridge-regression', 'regression-metrics'])
 
 STATEMENT = r"""
 Ordinary least squares fits $\hat y = Xw + b$ by minimising the sum of squared residuals

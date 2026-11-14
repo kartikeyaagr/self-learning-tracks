@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Reparameterized Gaussian sample', tags=['Generative Models', 'Probability'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:11.05'], related=['diagonal-gaussian-kl-divergence', 'forward-diffusion-sample'])
+            lessons=['mlmaths:11.25'], related=['diagonal-gaussian-kl-divergence', 'forward-diffusion-sample'])
 
 STATEMENT = r"""
 You cannot backpropagate through "draw a sample from $\mathcal N(\mu, \sigma^2)$". The **reparameterization trick** moves the randomness into a fixed input $\varepsilon \sim \mathcal N(0, 1)$ and writes the sample as a deterministic, differentiable function of the parameters:

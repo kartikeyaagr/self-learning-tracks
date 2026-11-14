@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Gradient of a sandwiched least-squares loss', tags=['Calculus', 'Linear Algebra'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:09.05'],
+            lessons=['mlmaths:09.34'],
             related=['gradient-of-multivariate-linear-regression-loss', 'jacobian-of-neural-network-layer'])
 
 STATEMENT = r"""

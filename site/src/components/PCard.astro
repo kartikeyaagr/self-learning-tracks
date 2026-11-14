@@ -1,0 +1,11 @@
+---
+// A plan / paper / project / round card. ids: the problems it covers (progress filled in by practice-client.js).
+const { href, lab, title, blurb, ids = [], right = '', unit = 'solved', badge = 'Done' } = Astro.props;
+---
+<a class="card mcard" href={href} data-ids={ids.join('|')}>
+  <div class="tp"><span class="lab">{lab}</span><span class="pill ok okb" hidden>✓ {badge}</span><slot name="badge" /></div>
+  <h4>{title}</h4>
+  {blurb && <p style="margin:0;color:var(--muted);font-size:14px;line-height:1.45;flex:1">{blurb}</p>}
+  {ids.length > 0 && <div class="bar"><i></i></div>}
+  <div class="ft"><span>{ids.length > 0 ? <><span class="dn">0</span>/{ids.length} {unit}</> : <slot name="left" />}</span><span>{right}</span></div>
+</a>

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Chi-square goodness-of-fit test', tags=['Probability and Statistics'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:12.03'], related=['independence-testing', 'p-values-and-significance'])
+            lessons=['mlmaths:12.17'], related=['independence-testing', 'p-values-and-significance'])
 
 STATEMENT = r"""
 You rolled a die 600 times, or logged which of $k$ servers a load balancer picked. Do the counts match the distribution you expected?

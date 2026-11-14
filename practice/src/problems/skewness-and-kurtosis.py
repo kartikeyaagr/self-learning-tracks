@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Skewness and excess kurtosis', tags=['Probability and Statistics'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:10.04'], related=['sample-variance-and-standard-deviation', 'discrete-moments'])
+            lessons=['mlmaths:10.15'], related=['sample-variance-and-standard-deviation', 'discrete-moments'])
 
 STATEMENT = r"""
 Skewness measures asymmetry and kurtosis measures how heavy the tails are. Both are built from the **central moments** of a sample,

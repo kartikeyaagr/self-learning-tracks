@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Forward-process posterior: mean and variance', tags=['Diffusion Models', 'Probability'], diff='Medium',
-            runtime='numpy', lessons=['mlmaths:11.05'],
+            runtime='numpy', lessons=['mlmaths:11.25'],
             related=['diagonal-gaussian-kl-divergence', 'ddpm-ancestral-step', 'linear-beta-schedule'])
 
 STATEMENT = r"""

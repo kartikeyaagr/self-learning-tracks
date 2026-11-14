@@ -1,0 +1,470 @@
+{
+ "plan": "numpy",
+ "sections": [
+  {
+   "section": "Array Creation",
+   "questions": [
+    {
+     "q": "What does `np.arange(0, 1, 0.1).shape` return, and why is `arange` risky for float ranges?",
+     "options": [
+      "`(9,)`, because the start is excluded",
+      "`(10,)`, and `arange` is always exact for floats",
+      "`(10,)`, but rounding in the step can add or drop an endpoint for other float ranges",
+      "`(11,)`, because `arange` includes the stop value"
+     ],
+     "answer": 2,
+     "why": "`arange` excludes the stop and computes the length as `ceil((stop - start) / step)`. With floats that division can land just above or below an integer, so the count can be off by one. `np.linspace` with an explicit count avoids this."
+    },
+    {
+     "q": "You need 5 evenly spaced points from 0 to 1 **including both ends**. Which call gives `[0, 0.25, 0.5, 0.75, 1]`?",
+     "options": [
+      "`np.arange(0, 1.25, 5)`",
+      "`np.linspace(0, 1, 5)`",
+      "`np.arange(0, 1, 0.25)`",
+      "`np.linspace(0, 1, 4)`"
+     ],
+     "answer": 1,
+     "why": "`linspace(start, stop, num)` includes the stop by default and spaces `num` points evenly. `arange(0, 1, 0.25)` stops before 1, giving only 4 points."
+    },
+    {
+     "q": "What is the dtype of `np.array([1, 2, 3.0])`?",
+     "options": [
+      "`int64`, since most elements are integers",
+      "It raises a `TypeError`",
+      "`float64`, since one float upcasts the whole array",
+      "`object`, since the types are mixed"
+     ],
+     "answer": 2,
+     "why": "NumPy picks one dtype that can hold every element. A single float makes the array `float64`; mixing numbers doesn't produce an object array."
+    },
+    {
+     "q": "`a = np.zeros((2, 3)); b = np.zeros_like(a, dtype=int)`. What are `b.shape` and `b.dtype`?",
+     "options": [
+      "`(2, 3)` and `float64`, because `_like` copies the dtype",
+      "`(6,)` and an integer dtype",
+      "`(2, 3)` and an integer dtype",
+      "`(3, 2)` and an integer dtype"
+     ],
+     "answer": 2,
+     "why": "`zeros_like` copies the shape and, by default, the dtype, but an explicit `dtype` argument overrides the dtype while keeping the shape."
+    },
+    {
+     "q": "You pad ragged token lists `[[5, 2], [7], [1, 4, 9]]` into a `(3, 3)` array filled with `-1`. What is the second row?",
+     "options": [
+      "`[7, -1, -1]`",
+      "`[7, 0, 0]`",
+      "`[-1, -1, 7]`",
+      "`[7, 7, 7]`"
+     ],
+     "answer": 0,
+     "why": "Right-padding keeps the tokens at the start and fills the rest with the pad value. Left-padding would give `[-1, -1, 7]`; filling with zeros would confuse padding with a real token id 0."
+    },
+    {
+     "q": "Two calls to `np.random.default_rng(0).normal(size=3)` are made in a row (a new generator each time). What do they return?",
+     "options": [
+      "Different numbers, because the global state advances",
+      "The same numbers only if `np.random.seed(0)` was also called",
+      "Zeros, because seed 0 disables randomness",
+      "The same three numbers both times"
+     ],
+     "answer": 3,
+     "why": "Each call builds a fresh `Generator` from the same seed, so it starts in the same state. Calling `.normal` twice on **one** generator would give different numbers."
+    },
+    {
+     "q": "An image of shape `(4, 4)` is cut into non-overlapping `2 × 2` patches with `img.reshape(2, 2, 2, 2).transpose(0, 2, 1, 3).reshape(4, 4)`. What does each output row hold?",
+     "options": [
+      "One flattened `2 × 2` patch, in row-major patch order",
+      "Every fourth pixel of the image",
+      "One column of the original image",
+      "One row of the original image"
+     ],
+     "answer": 0,
+     "why": "The first reshape splits rows and columns into (block, offset) pairs; the transpose brings the two block indices together and the two offsets together, so the last reshape flattens each patch into a row."
+    },
+    {
+     "q": "Which call creates a `(3, 3)` array whose border is 1 and interior is 0?",
+     "options": [
+      "`m = np.pad(np.ones((1, 1)), 1)`",
+      "`m = np.zeros((3, 3)); m[0] = 1`",
+      "`m = np.eye(3)`",
+      "`m = np.ones((3, 3)); m[1:-1, 1:-1] = 0`"
+     ],
+     "answer": 3,
+     "why": "Setting the interior slice to zero leaves a ring of ones. `np.pad(np.ones((1, 1)), 1)` does the opposite: a 1 in the centre surrounded by zeros."
+    }
+   ]
+  },
+  {
+   "section": "Indexing & Slicing",
+   "questions": [
+    {
+     "q": "`a = np.arange(10); b = a[2:5]; b[0] = 99`. What is `a[2]` afterwards?",
+     "options": [
+      "It raises an error: slices are read-only",
+      "`2`, because slicing copies",
+      "`99` only if `a` is a float array",
+      "`99`, because basic slicing returns a view"
+     ],
+     "answer": 3,
+     "why": "Basic slices share memory with the original array, so writing through `b` changes `a`. Use `.copy()` when you need independence."
+    },
+    {
+     "q": "`a = np.arange(10); b = a[[2, 3, 4]]; b[0] = 99`. What is `a[2]` afterwards?",
+     "options": [
+      "It raises an error",
+      "`2`, because fancy indexing returns a copy",
+      "`99`, because it is the same elements as `a[2:5]`",
+      "`99`, because integer arrays index by reference"
+     ],
+     "answer": 1,
+     "why": "Indexing with an integer array (fancy indexing) always produces a new array. Only basic slices and views like `reshape` share memory."
+    },
+    {
+     "q": "`x = np.arange(12).reshape(3, 4)`. What is `x[:, 1::2]`?",
+     "options": [
+      "`[[1, 3], [5, 7], [9, 11]]`",
+      "`[[0, 2], [4, 6], [8, 10]]`",
+      "`[[4, 5, 6, 7]]`",
+      "`[[1, 2, 3], [5, 6, 7], [9, 10, 11]]`"
+     ],
+     "answer": 0,
+     "why": "All rows, columns starting at 1 with step 2: columns 1 and 3."
+    },
+    {
+     "q": "You add gradients into an embedding table with `G[ids] += g` where `ids = [3, 3, 1]`. What goes wrong?",
+     "options": [
+      "Row 1 is updated twice",
+      "Row 3 receives only one of its two updates; use `np.add.at(G, ids, g)`",
+      "Nothing; repeated indices accumulate",
+      "It raises an error for repeated indices"
+     ],
+     "answer": 1,
+     "why": "`G[ids] += g` is a read, add, write on a fancy-indexed copy, so for a repeated index the last write wins. `np.add.at` performs unbuffered accumulation."
+    },
+    {
+     "q": "`x = np.array([3, -1, 4, -2])`. What is `x[x > 0]` and its shape?",
+     "options": [
+      "`[0, 2]`, the indices",
+      "`[True, False, True, False]`",
+      "`[3, 0, 4, 0]`, shape `(4,)`",
+      "`[3, 4]`, shape `(2,)`"
+     ],
+     "answer": 3,
+     "why": "Boolean masking keeps the selected elements and returns a 1-D copy. `np.where(x > 0)` or `np.flatnonzero` would give the indices."
+    },
+    {
+     "q": "For BERT-style masking you set `inputs[mask] = MASK_ID` and want the labels to keep the original ids. Which ordering is correct?",
+     "options": [
+      "`labels = inputs` (no copy) before modifying",
+      "`labels = inputs.copy()` first, then modify `inputs`",
+      "`labels = inputs[:]` before modifying",
+      "Modify `inputs`, then `labels = inputs`"
+     ],
+     "answer": 1,
+     "why": "`labels = inputs` and `inputs[:]` both alias the same buffer, so masking inputs would also overwrite the labels. Only an explicit copy preserves the originals."
+    },
+    {
+     "q": "`x` has shape `(5, 3)`. What is the shape of `x[:, None, :]`?",
+     "options": [
+      "`(5, 3, 1)`",
+      "`(5, 1, 3)`",
+      "`(1, 5, 3)`",
+      "`(5, 3)`, since `None` is ignored"
+     ],
+     "answer": 1,
+     "why": "`None` (alias `np.newaxis`) inserts a length-1 axis at that position, here between the two existing axes."
+    },
+    {
+     "q": "To take a centre crop of size `h × w` from an image `(H, W)`, which start row is right when `H - h` is odd?",
+     "options": [
+      "`(H - h) // 2`, which puts the extra pixel at the bottom",
+      "`H // 2 - h`",
+      "`(H - h) / 2`, a float index",
+      "`(H + h) // 2`"
+     ],
+     "answer": 0,
+     "why": "Slicing needs integers; floor division gives a consistent rule. `(H - h) / 2` is a float and raises an `IndexError` in NumPy."
+    }
+   ]
+  },
+  {
+   "section": "Broadcasting",
+   "questions": [
+    {
+     "q": "Which pair of shapes broadcasts?",
+     "options": [
+      "`(4,)` and `(3,)`",
+      "`(4, 1)` and `(3,)`, giving `(4, 3)`",
+      "`(4, 2)` and `(3,)`",
+      "`(2, 3)` and `(3, 2)`"
+     ],
+     "answer": 1,
+     "why": "Shapes are aligned from the right; each dimension pair must be equal or contain a 1. `(4, 1)` with `(3,)` becomes `(4, 1)` with `(1, 3)`, which broadcasts to `(4, 3)`."
+    },
+    {
+     "q": "`X` is `(n, d)`. You compute `X - X.mean(axis=1)`. What happens?",
+     "options": [
+      "It subtracts each row's mean from that row",
+      "It always works because NumPy aligns by name",
+      "It fails for `n ≠ d`; row means need `keepdims=True` or `[:, None]`",
+      "It subtracts each column's mean"
+     ],
+     "answer": 2,
+     "why": "`X.mean(axis=1)` has shape `(n,)`, which aligns with the **last** axis of length `d`. Unless `n == d` (where it silently does the wrong thing) it fails. Keep the reduced axis so it broadcasts over columns."
+    },
+    {
+     "q": "For a pairwise Manhattan distance matrix between `A` `(m, d)` and `B` `(n, d)`, which expression is correct?",
+     "options": [
+      "`np.abs(A[:, None, :] - B[None, :, :]).sum(-1)`",
+      "`np.abs(A[None] - B[None]).sum(-1)`",
+      "`np.abs(A - B).sum(-1)`",
+      "`np.abs(A @ B.T)`"
+     ],
+     "answer": 0,
+     "why": "Inserting axes gives `(m, 1, d)` and `(1, n, d)`, which broadcast to `(m, n, d)`; summing the last axis gives `(m, n)`. The memory cost is $m\\cdot n\\cdot d$."
+    },
+    {
+     "q": "You min-max scale each column of `X` with `(X - X.min(0)) / (X.max(0) - X.min(0))`. One column is constant. What do you get in that column?",
+     "options": [
+      "A `ZeroDivisionError`",
+      "Zeros, because NumPy treats 0/0 as 0",
+      "Ones",
+      "`nan` (0/0), so guard the denominator"
+     ],
+     "answer": 3,
+     "why": "Float division by zero in NumPy produces `nan` or `inf` with a warning instead of raising. A common guard is `np.where(rng == 0, 1, rng)`."
+    },
+    {
+     "q": "Standardising a test set, which statistics should you use?",
+     "options": [
+      "No statistics; standardise each test row by its own values",
+      "The test set's own mean and std",
+      "The training set's mean and std",
+      "The mean and std of train and test combined"
+     ],
+     "answer": 2,
+     "why": "Using test statistics leaks information about the test distribution and makes train and test features inconsistent. Fit on train, apply everywhere."
+    },
+    {
+     "q": "`counts` is `(n, k)`. Which line turns each row into a probability distribution?",
+     "options": [
+      "`counts / counts.sum()`",
+      "`counts / counts.sum(axis=1)`",
+      "`counts / counts.sum(axis=0)`",
+      "`counts / counts.sum(axis=1, keepdims=True)`"
+     ],
+     "answer": 3,
+     "why": "Row sums with `keepdims` have shape `(n, 1)` and broadcast across columns. Without `keepdims` the `(n,)` vector aligns with the columns instead."
+    },
+    {
+     "q": "`a` has shape `(3, 1)` and `b` has shape `(1, 4)`. How many elements does `a * b` have?",
+     "options": [
+      "12",
+      "It raises a broadcasting error",
+      "7",
+      "4"
+     ],
+     "answer": 0,
+     "why": "Both length-1 axes are stretched: the result is `(3, 4)`, the outer product."
+    },
+    {
+     "q": "Pairs of item prices whose sum is within a budget: `p[:, None] + p[None, :] <= budget`. What shape is the boolean result for `p` of length `n`?",
+     "options": [
+      "`(2, n)`",
+      "`(n * (n - 1) / 2,)`, the unique pairs only",
+      "`(n, n)`, including each item paired with itself on the diagonal",
+      "`(n,)`"
+     ],
+     "answer": 2,
+     "why": "Broadcasting builds the full matrix, diagonal included. Take `np.triu(..., k=1)` or the indices with `i < j` to keep each unordered pair once."
+    }
+   ]
+  },
+  {
+   "section": "Vectorized Operations",
+   "questions": [
+    {
+     "q": "Which is the fastest correct way to compute $\\sum_i x_i^2$ for a large float array?",
+     "options": [
+      "`for v in x: total += v * v`",
+      "`np.sum([v ** 2 for v in x])`",
+      "`x @ x` (or `np.dot(x, x)`)",
+      "`sum([v * v for v in x])`"
+     ],
+     "answer": 2,
+     "why": "`x @ x` runs a single compiled BLAS loop. The other options run a Python-level loop over every element."
+    },
+    {
+     "q": "Cyclical encoding of hour of day uses $(\\sin(2\\pi h/24), \\cos(2\\pi h/24))$. Why both?",
+     "options": [
+      "Two features always train faster than one",
+      "The cosine adds a bias term",
+      "Each alone maps two different hours to the same value; together they are unique",
+      "The sine is undefined at midnight"
+     ],
+     "answer": 2,
+     "why": "$\\sin$ takes each value twice per cycle (for example hours 3 and 9), so a single feature is ambiguous; the pair places the hours on a circle, keeping 23 and 0 close."
+    },
+    {
+     "q": "What does `np.argsort(np.argsort(x))` give for `x = [30, 10, 20]`?",
+     "options": [
+      "`[0, 1, 2]`",
+      "`[2, 0, 1]`, the rank of each element",
+      "`[1, 2, 0]`, the sorting permutation",
+      "`[10, 20, 30]`"
+     ],
+     "answer": 1,
+     "why": "The first `argsort` gives the order `[1, 2, 0]`; the second inverts that permutation, giving each element's rank. Ties need extra handling (averaged ranks) because this breaks them by position."
+    },
+    {
+     "q": "For a normalised difference index $(a - b)/(a + b)$ on arrays with some $a + b = 0$, which is safest?",
+     "options": [
+      "`try: ... except ZeroDivisionError`",
+      "`np.where(a + b != 0, (a - b) / (a + b), 0)`",
+      "`np.divide(a - b, a + b, out=np.zeros_like(a, dtype=float), where=(a + b) != 0)`",
+      "`(a - b) / (a + b)` and ignore the warning"
+     ],
+     "answer": 2,
+     "why": "`np.where` still evaluates the division everywhere and emits warnings (the bad values are only discarded afterwards). `np.divide` with `where=` skips those entries entirely and leaves the `out` value."
+    },
+    {
+     "q": "RMSNorm computes `x / np.sqrt((x ** 2).mean(-1, keepdims=True) + eps)`. What does it **not** do that LayerNorm does?",
+     "options": [
+      "Subtract the mean",
+      "Divide by a scale",
+      "Add `eps` for stability",
+      "Operate on the last axis"
+     ],
+     "answer": 0,
+     "why": "RMSNorm only rescales by the root mean square; LayerNorm also centres each row. Dropping the mean saves a reduction and works as well in practice for LLMs."
+    },
+    {
+     "q": "`np.percentile(x, 50)` and `np.median(x)` for `x = [1, 2, 3, 4]` return what?",
+     "options": [
+      "Both `2`",
+      "`3` and `2.5`",
+      "`2` and `2.5`",
+      "Both `2.5`"
+     ],
+     "answer": 3,
+     "why": "With the default linear interpolation, the 50th percentile of an even-length array is the mean of the two middle values, the same as the median."
+    },
+    {
+     "q": "A loop computes `y[i] = x[i] - x[i - 1]` for `i ≥ 1`. Which vectorized form matches it?",
+     "options": [
+      "`x[:-1] - x[1:]`",
+      "`np.cumsum(x)`",
+      "`x - np.roll(x, 1)`",
+      "`np.diff(x)` (or `x[1:] - x[:-1]`)"
+     ],
+     "answer": 3,
+     "why": "`np.diff` gives length `n - 1` differences. `x - np.roll(x, 1)` also wraps the first element around against the last, which the loop never computes."
+    },
+    {
+     "q": "`a.sum(axis=0)` on a `(3, 4)` array returns what shape?",
+     "options": [
+      "`(4,)`, summing down the rows",
+      "`(1, 4)`",
+      "`()`, a scalar",
+      "`(3,)`, summing across each row"
+     ],
+     "answer": 0,
+     "why": "The reduced axis disappears: summing over axis 0 collapses the 3 rows, leaving one total per column."
+    }
+   ]
+  },
+  {
+   "section": "Array Utilities",
+   "questions": [
+    {
+     "q": "`np.nanmax([[1, np.nan], [np.nan, np.nan]], axis=1)` returns what?",
+     "options": [
+      "`[1, nan]` with a warning for the all-NaN row",
+      "It raises a `ValueError`",
+      "`[nan, nan]`",
+      "`[1, 0]`"
+     ],
+     "answer": 0,
+     "why": "`nanmax` ignores NaNs, but an all-NaN slice has no value to return, so it gives NaN and emits a `RuntimeWarning`. Handle that case explicitly if it matters."
+    },
+    {
+     "q": "Winsorizing a column at the 5th and 95th percentiles does what?",
+     "options": [
+      "Replaces outliers with the median",
+      "Clips values to those percentile values",
+      "Rescales the column to the range `[0.05, 0.95]`",
+      "Drops rows outside the percentiles"
+     ],
+     "answer": 1,
+     "why": "Winsorizing keeps every row and caps extreme values, which `np.clip(x, lo, hi)` does once the two percentiles are known."
+    },
+    {
+     "q": "Splitting a 1-D signal of length 10 into frames of length 4 with hop 2 gives how many full frames?",
+     "options": [
+      "3",
+      "4",
+      "2",
+      "5"
+     ],
+     "answer": 1,
+     "why": "Frame starts are 0, 2, 4, 6; a frame at 8 would need samples 8 to 11. The count is $\\lfloor(10 - 4)/2\\rfloor + 1 = 4$."
+    },
+    {
+     "q": "Which function produces overlapping windows of an array without copying data?",
+     "options": [
+      "`np.split`",
+      "`np.tile`",
+      "`np.repeat`",
+      "`np.lib.stride_tricks.sliding_window_view`"
+     ],
+     "answer": 3,
+     "why": "`sliding_window_view` returns a view with adjusted strides, so each window shares memory with the original. `np.split` makes non-overlapping pieces."
+    },
+    {
+     "q": "To remove a weekly seasonality from daily data you take `x[7:] - x[:-7]`. What length is the result for $n$ days?",
+     "options": [
+      "$n - 7$",
+      "$n - 1$",
+      "$7$",
+      "$n$"
+     ],
+     "answer": 0,
+     "why": "Seasonal differencing at lag 7 pairs each day with the same weekday a week earlier, losing the first 7 days."
+    },
+    {
+     "q": "`np.correlate(a, b, mode='full')` for lengths $n$ and $m$ has how many entries?",
+     "options": [
+      "$n + m - 1$, one per possible lag",
+      "$\\max(n, m)$",
+      "$n \\cdot m$",
+      "$\\min(n, m)$"
+     ],
+     "answer": 0,
+     "why": "Full mode evaluates every relative shift where the two signals overlap by at least one sample. Finding the peak index and subtracting $m - 1$ gives the lag."
+    },
+    {
+     "q": "What does `np.clip(x, 0, None)` do?",
+     "options": [
+      "Removes negative values from the array",
+      "Sets negative values to 0 and leaves the rest",
+      "Raises an error, because both bounds are required",
+      "Sets every value to 0"
+     ],
+     "answer": 1,
+     "why": "`None` means no bound on that side, so this is equivalent to `np.maximum(x, 0)` (a ReLU). The array keeps its shape."
+    },
+    {
+     "q": "`np.unique([3, 1, 3, 2], return_counts=True)` returns what?",
+     "options": [
+      "`[1, 2, 3]` only",
+      "`([3, 1, 2], [2, 1, 1])`, in first-seen order",
+      "`([1, 2, 3], [1, 1, 2])`",
+      "`([1, 2, 3], [0, 1, 2])`, the indices"
+     ],
+     "answer": 2,
+     "why": "`np.unique` returns the sorted unique values; with `return_counts` it also returns how often each occurs. Use `return_index` and sort by it if you need first-seen order."
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+{"id": "attention-is-all-you-need", "kind": "paper", "group": "Transformers and LLMs",
+ "title": "Attention Is All You Need", "authors": "Vaswani et al.", "year": 2017,
+ "url": "https://arxiv.org/abs/1706.03762",
+ "blurb": "Replaced recurrence in machine translation with stacks of self-attention and feed-forward layers, so a whole sentence is processed in parallel.",
+ "intro": "The paper's encoder-decoder is built from four ideas: token embeddings plus a fixed sinusoidal position signal, scaled dot-product attention split into several heads, a position-wise feed-forward network, and residual connections wrapped in LayerNorm. The steps build each piece and then the two block types; the capstone stacks them into a full translation model whose output is next-token logits. Decoding with a beam closes the loop.",
+ "steps": [
+  {"name": "Build a vocabulary", "problem": "vocabulary-building", "note": "Map tokens to ids, with special tokens for padding and sentence start."},
+  {"name": "Sinusoidal positional encoding", "problem": "sinusoidal-positional-encoding"},
+  {"name": "Scaled dot-product attention", "problem": "scaled-dot-product-attention", "note": "The $QK^\\top/\\sqrt{d_k}$ core, with a mask."},
+  {"name": "Multi-head attention", "problem": "multi-head-attention-mha"},
+  {"name": "Layer normalization", "problem": "layer-norm"},
+  {"name": "Encoder block", "problem": "transformer-encoder-block", "note": "Self-attention and FFN sublayers, pre-LN and post-LN."},
+  {"name": "Decoder block", "problem": "transformer-decoder-block", "note": "Adds causal masking and cross-attention to the encoder output."},
+  {"name": "Beam search", "problem": "beam-search-decoding", "note": "How the paper decodes translations, with a length penalty."}
+ ],
+ "capstone": "transformer-translation-forward",
+ "lessons": ["aieng:04.01", "aieng:04.02", "aieng:04.03", "dlcore:05.04"]}

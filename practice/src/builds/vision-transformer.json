@@ -1,0 +1,15 @@
+{"id": "vision-transformer", "kind": "paper", "group": "Transformers and LLMs",
+ "title": "An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale", "authors": "Dosovitskiy et al.", "year": 2020,
+ "url": "https://arxiv.org/abs/2010.11929",
+ "blurb": "Classifies images with an almost unmodified Transformer encoder by treating fixed-size image patches as tokens.",
+ "intro": "ViT's only image-specific component is the patch embedding: cut the image into $P \\times P$ patches, flatten each, and project it to the model width. A learned `[CLS]` token and a learned position table are added, a pre-LN encoder runs over the sequence, and a linear head reads `[CLS]`. The steps build the input side and the attention sublayer; the capstone runs the full model from pixels to logits.",
+ "steps": [
+  {"name": "Cut an image into patches", "problem": "reshaping-arrays"},
+  {"name": "Patch embedding with a class token", "problem": "vit-patchify"},
+  {"name": "Projection, class token and positions", "problem": "vision-transformer-patch-embedding"},
+  {"name": "2-D position embeddings (alternative)", "problem": "2d-sinusoidal-positional-embedding", "note": "The paper found 1-D learned positions work as well; this is the fixed 2-D variant later models use."},
+  {"name": "Pre-norm self-attention sublayer", "problem": "vit-multi-head-self-attention"},
+  {"name": "Encoder block", "problem": "transformer-encoder-block"}
+ ],
+ "capstone": "vit-classifier-forward",
+ "lessons": ["dlcore:04.05"]}

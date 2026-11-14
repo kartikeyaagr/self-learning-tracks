@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Hessian of a two-variable polynomial', tags=['Calculus'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:09.01', 'mlmaths:09.02'],
+            lessons=['mlmaths:09.01', 'mlmaths:09.08'],
             related=['jacobian-of-vector-valued-polynomial', 'hessian-tensor-of-vector-valued-function'])
 
 STATEMENT = r"""

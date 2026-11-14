@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title="Is this correlation real? Fisher's z", tags=['Probability and Statistics'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:11.04', 'mlmaths:12.03'], related=['pearson-correlation-matrix', 'z-test-one-sample'])
+            lessons=['mlmaths:11.21', 'mlmaths:12.17'], related=['pearson-correlation-matrix', 'z-test-one-sample'])
 
 STATEMENT = r"""
 A sample correlation $r$ from $n$ pairs is noisy, and its sampling distribution is skewed when $|r|$ is near 1. Fisher's transformation fixes both problems:

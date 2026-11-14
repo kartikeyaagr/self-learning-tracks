@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Logistic regression by gradient descent', tags=['Classification', 'Optimization'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:12.02'], related=['sigmoid-stable', 'log-loss-binary-cross-entropy', 'softmax-regression'])
+            lessons=['mlmaths:12.10'], related=['sigmoid-stable', 'log-loss-binary-cross-entropy', 'softmax-regression'])
 
 STATEMENT = r"""
 Binary logistic regression models $P(y=1 \mid x) = \sigma(x^\top w + b)$ with $\sigma(z) = 1/(1+e^{-z})$, and is trained by minimising the mean log loss

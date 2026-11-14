@@ -1,0 +1,563 @@
+{
+ "plan": "triton",
+ "sections": [
+  {
+   "section": "Foundations and the block model",
+   "questions": [
+    {
+     "q": "In Triton, what does one program instance (one value of `tl.program_id(0)`) usually process?",
+     "options": [
+      "An entire tensor",
+      "A whole block of elements, operated on as a vector",
+      "A single element, like a CUDA thread",
+      "One warp's worth of rows only"
+     ],
+     "answer": 1,
+     "why": "Triton's unit of work is a block. The compiler decides how to spread the block across threads and warps."
+    },
+    {
+     "q": "What does `offs = pid * BLOCK + tl.arange(0, BLOCK)` compute?",
+     "options": [
+      "A pointer to shared memory",
+      "The element indices covered by this program instance",
+      "A random permutation of indices",
+      "The size of the grid"
+     ],
+     "answer": 1,
+     "why": "`tl.arange` gives a vector 0..BLOCK-1, shifted by the block's start. Adding it to a base pointer gives a block of pointers."
+    },
+    {
+     "q": "Why is a mask passed to `tl.load` and `tl.store`?",
+     "options": [
+      "To mark values for autograd",
+      "To enable atomics",
+      "To select which GPU to use",
+      "The last block may extend past the end of the tensor, and masked lanes must not touch memory"
+     ],
+     "answer": 3,
+     "why": "`mask = offs < n` disables out-of-range lanes. `tl.load` also takes `other=` to fill them, for example with 0 for sums or -inf for max."
+    },
+    {
+     "q": "Why must `BLOCK` usually be declared as `tl.constexpr`?",
+     "options": [
+      "It is stored in constant memory",
+      "It makes the value changeable inside the kernel",
+      "Block shapes must be known at compile time so the compiler can lay out registers and generate code",
+      "So it can be a float"
+     ],
+     "answer": 2,
+     "why": "Each distinct constexpr value compiles a separate kernel. Block sizes in `tl.arange` must also be powers of two."
+    },
+    {
+     "q": "What does a fused multiply-add kernel computing `x * y + z` save compared with two separate kernels?",
+     "options": [
+      "Arithmetic operations",
+      "Nothing; the work is identical",
+      "One full write and read of the intermediate tensor from global memory",
+      "Compile time only"
+     ],
+     "answer": 2,
+     "why": "Element-wise ops are memory-bound, so removing a round trip through global memory gives a large speedup."
+    },
+    {
+     "q": "How is the launch grid usually specified for a 1-D Triton kernel?",
+     "options": [
+      "As `(triton.cdiv(n, BLOCK),)`, often through a lambda over the meta-parameters",
+      "It is inferred from the tensor automatically",
+      "As the number of warps",
+      "As the total number of threads"
+     ],
+     "answer": 0,
+     "why": "A lambda such as `lambda meta: (triton.cdiv(n, meta['BLOCK']),)` lets autotuning change BLOCK without recomputing the grid by hand."
+    },
+    {
+     "q": "How does SiLU relate to sigmoid?",
+     "options": [
+      "$\\text{SiLU}(x) = \\sigma(x) - x$",
+      "$\\text{SiLU}(x) = \\max(0, x)$",
+      "$\\text{SiLU}(x) = \\sigma(x)^2$",
+      "$\\text{SiLU}(x) = x \\cdot \\sigma(x)$"
+     ],
+     "answer": 3,
+     "why": "It is smooth, non-monotonic for negative x, and is the gate used in SwiGLU."
+    },
+    {
+     "q": "What is the tanh approximation of GELU?",
+     "options": [
+      "$0.5x(1 + \\tanh(\\sqrt{2/\\pi}(x + 0.044715x^3)))$",
+      "$\\max(0, x) + 0.044715x^3$",
+      "$x \\cdot \\tanh(x)$",
+      "$0.5(1 + \\tanh(x))$"
+     ],
+     "answer": 0,
+     "why": "Exact GELU uses the normal CDF via erf. The tanh form was used in GPT-2 and is cheap to compute."
+    }
+   ]
+  },
+  {
+   "section": "Reductions",
+   "questions": [
+    {
+     "q": "How does a Triton kernel reduce a loaded block to one number?",
+     "options": [
+      "It can't; reductions need CUDA",
+      "With `tl.sum(x, axis=0)` (or `tl.max`, `tl.min`), which the compiler lowers to warp and shared-memory reductions",
+      "With `__syncthreads()` and manual indexing",
+      "With a Python for loop over elements"
+     ],
+     "answer": 1,
+     "why": "The cross-thread details are handled by the compiler. You still have to combine results across program instances."
+    },
+    {
+     "q": "For a full-vector sum across many program instances, how are the partial sums combined?",
+     "options": [
+      "`tl.sum` automatically sums across all programs",
+      "Programs share registers",
+      "Each program does `tl.atomic_add` into an output, or writes partials for a second pass",
+      "With a barrier across the grid"
+     ],
+     "answer": 2,
+     "why": "Triton has no grid-wide synchronisation. Atomics are simple but not bitwise deterministic."
+    },
+    {
+     "q": "In a masked max reduction, what should `other=` be for out-of-range lanes?",
+     "options": [
+      "`-float('inf')`",
+      "1",
+      "`float('nan')`",
+      "0"
+     ],
+     "answer": 0,
+     "why": "Zero would win whenever every real value is negative. NaN would poison the result."
+    },
+    {
+     "q": "Why can a row-wise softmax be done in a single program per row when the row fits in one block?",
+     "options": [
+      "Softmax needs no reduction",
+      "Each element is independent",
+      "Triton caches the row in global memory",
+      "The whole row is loaded once; max, exponentials, sum and division all happen on-chip before one store"
+     ],
+     "answer": 3,
+     "why": "This reads and writes the row once, against three or more passes for an unfused version."
+    },
+    {
+     "q": "Why subtract the row max before exponentiating in softmax?",
+     "options": [
+      "To speed up exp",
+      "To make the output sum to 1",
+      "It changes the probabilities slightly but improves training",
+      "To keep every exponent ≤ 0 so exp can't overflow; the result is mathematically unchanged"
+     ],
+     "answer": 3,
+     "why": "$e^{z_i - m}/\\sum_j e^{z_j - m} = e^{z_i}/\\sum_j e^{z_j}$. In float32, $e^{89}$ already overflows."
+    },
+    {
+     "q": "What does row-wise logsumexp return?",
+     "options": [
+      "$\\log \\max_j z_j$",
+      "$\\sum_j \\log z_j$",
+      "$\\sum_j e^{z_j}$",
+      "$m + \\log\\sum_j e^{z_j - m}$ with $m = \\max_j z_j$"
+     ],
+     "answer": 3,
+     "why": "It is a smooth maximum, and it is what cross-entropy and attention normalisers need."
+    },
+    {
+     "q": "A single-pass mean and variance kernel accumulates which quantities per block before merging?",
+     "options": [
+      "Count, mean and the sum of squared deviations (M2), merged with Welford's formula",
+      "The sum and product",
+      "Only the sum",
+      "Only the maximum"
+     ],
+     "answer": 0,
+     "why": "Merging (n_a, μ_a, M2_a) with (n_b, μ_b, M2_b) uses δ = μ_b - μ_a and M2 = M2_a + M2_b + δ²·n_a n_b/n."
+    },
+    {
+     "q": "Rows are longer than the largest block you want to use. How does a row-wise reduction handle this?",
+     "options": [
+      "Increase BLOCK beyond any limit",
+      "Launch one program per element",
+      "Truncate the row",
+      "Loop over the row in chunks inside the program, accumulating a running result"
+     ],
+     "answer": 3,
+     "why": "For softmax this needs an online update: keep a running max and rescale the running sum when the max changes."
+    }
+   ]
+  },
+  {
+   "section": "Matrix multiply and autotuning",
+   "questions": [
+    {
+     "q": "In a Triton matmul, what does `tl.dot(a, b)` operate on?",
+     "options": [
+      "A vector and a scalar",
+      "Two 2-D blocks loaded from A and B, producing a tile of partial products (using tensor cores where possible)",
+      "Two scalars",
+      "Two full matrices in global memory"
+     ],
+     "answer": 1,
+     "why": "The kernel loops over K, loads a BLOCK_M×BLOCK_K tile of A and a BLOCK_K×BLOCK_N tile of B, and accumulates `tl.dot` results."
+    },
+    {
+     "q": "Why is the matmul accumulator usually float32 even for float16 inputs?",
+     "options": [
+      "Summing many half-precision products in half precision loses accuracy",
+      "float16 can't be stored",
+      "It saves memory",
+      "Tensor cores only output float32"
+     ],
+     "answer": 0,
+     "why": "Accumulate in float32 and cast once at the end when storing."
+    },
+    {
+     "q": "What does `@triton.autotune` do?",
+     "options": [
+      "Benchmarks a list of configurations (block sizes, num_warps, num_stages) and caches the fastest for each key",
+      "Picks the GPU",
+      "Tunes the learning rate",
+      "Changes the algorithm to a different one"
+     ],
+     "answer": 0,
+     "why": "The `key` argument lists the shape arguments; a new key value triggers a fresh benchmark."
+    },
+    {
+     "q": "What does `num_stages` control?",
+     "options": [
+      "The number of GPUs",
+      "How many tiles are prefetched ahead in a software pipeline, overlapping loads with compute",
+      "The precision of the accumulator",
+      "The number of program instances"
+     ],
+     "answer": 1,
+     "why": "More stages hide memory latency but use more shared memory, which can reduce occupancy."
+    },
+    {
+     "q": "How does a tiled transpose avoid uncoalesced writes?",
+     "options": [
+      "It reads one element per program",
+      "Transposes are always coalesced",
+      "Load a 2-D block with coalesced reads, transpose it in registers with `tl.trans`, and store it to the transposed location",
+      "It uses atomics for every write"
+     ],
+     "answer": 2,
+     "why": "Both the load and store then touch contiguous memory along their fast axis."
+    },
+    {
+     "q": "For GEMV (matrix times vector), why don't tensor cores help much?",
+     "options": [
+      "GEMV needs no reduction",
+      "Tensor cores can't handle vectors at all",
+      "The operation does only about one multiply-add per matrix element loaded, so it is memory-bound",
+      "It is compute-bound"
+     ],
+     "answer": 2,
+     "why": "Its runtime is set by how fast A can be read. This is why decoding (batch 1) in LLM inference is memory-bound."
+    },
+    {
+     "q": "What does a fused matmul + bias + ReLU kernel gain?",
+     "options": [
+      "It changes the result",
+      "The bias add and ReLU are applied to the accumulator before the store, avoiding extra passes over the output",
+      "It removes the need for tiling",
+      "It doubles the matmul's FLOPs"
+     ],
+     "answer": 1,
+     "why": "Applying epilogue ops in registers is nearly free compared with writing and re-reading the output."
+    },
+    {
+     "q": "Why do Triton matmul kernels often require block sizes of at least 16?",
+     "options": [
+      "Smaller blocks are not powers of two",
+      "Smaller blocks overflow registers",
+      "`tl.dot` maps to tensor-core instructions that work on tiles of at least 16 in each dimension",
+      "Global memory reads must be 16 bytes"
+     ],
+     "answer": 2,
+     "why": "The minimum depends on the hardware and data type, but 16 is the usual floor for `tl.dot` shapes."
+    }
+   ]
+  },
+  {
+   "section": "Normalisation and training ops",
+   "questions": [
+    {
+     "q": "In a LayerNorm forward kernel, what is typically saved for the backward pass?",
+     "options": [
+      "Nothing",
+      "The gradients",
+      "The full normalised output only",
+      "The per-row mean and reciprocal standard deviation"
+     ],
+     "answer": 3,
+     "why": "Saving two numbers per row lets backward recompute $\\hat x$ cheaply instead of storing it."
+    },
+    {
+     "q": "Why does RMSNorm need only one reduction instead of two?",
+     "options": [
+      "It works on columns",
+      "It uses the mean of squares directly and doesn't subtract a mean",
+      "It doesn't divide",
+      "It has no learned weights"
+     ],
+     "answer": 1,
+     "why": "LayerNorm needs the mean before the variance (or a Welford pass). RMSNorm needs only $\\sum x^2$."
+    },
+    {
+     "q": "In the LayerNorm backward pass, why are dW and db hard to compute efficiently?",
+     "options": [
+      "They sum over all rows, so many programs contribute to the same parameter gradient",
+      "They need the second derivative",
+      "They are always zero",
+      "They depend on the learning rate"
+     ],
+     "answer": 0,
+     "why": "Common approaches are atomics, or writing per-block partial sums and reducing them in a second kernel."
+    },
+    {
+     "q": "What is the input gradient of LayerNorm (with $\\hat x$, rstd and $g = dy \\cdot w$)?",
+     "options": [
+      "$g \\cdot \\text{rstd}$",
+      "$\\text{rstd}\\,(g - \\hat x)$",
+      "$g - \\hat x$",
+      "$\\text{rstd}\\,(g - \\text{mean}(g) - \\hat x\\,\\text{mean}(g \\hat x))$"
+     ],
+     "answer": 3,
+     "why": "The two mean terms come from differentiating through the row's mean and variance. Both are row reductions."
+    },
+    {
+     "q": "In inverted dropout with p = 0.2, a kept activation of 1.0 becomes what?",
+     "options": [
+      "0.8",
+      "1.25",
+      "0.2",
+      "1.0"
+     ],
+     "answer": 1,
+     "why": "Kept values are divided by 1 - p = 0.8 so the expected value is unchanged and inference needs no scaling."
+    },
+    {
+     "q": "How does Triton generate random numbers for a dropout mask?",
+     "options": [
+      "It reads random numbers from host memory",
+      "It can't; masks must be passed in",
+      "It uses the clock register",
+      "`tl.rand(seed, offsets)`, a counter-based generator that gives the same value for the same seed and offset"
+     ],
+     "answer": 3,
+     "why": "Because the mask is a function of (seed, offset), the backward pass can regenerate it instead of storing it."
+    },
+    {
+     "q": "For mean-reduced cross-entropy over a batch, how should the division by batch size be handled in a fused kernel?",
+     "options": [
+      "Divide each row's loss (or its gradient) by N, or sum per-row losses and divide once at the end",
+      "Ignore it; it doesn't affect gradients",
+      "Divide inside every exponential",
+      "Divide by the vocabulary size"
+     ],
+     "answer": 0,
+     "why": "Forgetting the 1/N makes gradients scale with batch size. Rows with an ignore label should also be excluded from N."
+    },
+    {
+     "q": "The gradient of softmax cross-entropy with respect to the logits is what?",
+     "options": [
+      "The logits themselves",
+      "softmax(z) times the target",
+      "softmax(z) minus the one-hot target",
+      "The one-hot target"
+     ],
+     "answer": 2,
+     "why": "This simple form lets a fused kernel compute loss and gradient from the same on-chip values."
+    }
+   ]
+  },
+  {
+   "section": "Attention and LLM kernels",
+   "questions": [
+    {
+     "q": "What problem does online softmax solve?",
+     "options": [
+      "It computes softmax over a row in chunks, rescaling the running sum whenever a larger max appears",
+      "It removes the need for exponentials",
+      "It approximates softmax with a polynomial",
+      "It sorts the row"
+     ],
+     "answer": 0,
+     "why": "With running max m and sum ℓ, a new chunk with max m' updates ℓ ← ℓ·e^{m - m'} + Σ e^{z - m'}."
+    },
+    {
+     "q": "FlashAttention's forward pass avoids writing which tensor to global memory?",
+     "options": [
+      "The queries",
+      "The T×T attention score and probability matrices",
+      "The output",
+      "The log-sum-exp per row"
+     ],
+     "answer": 1,
+     "why": "It keeps a running max, running sum and output accumulator per query block. The per-row log-sum-exp is saved for backward."
+    },
+    {
+     "q": "In FlashAttention, when the running max changes from m to m', what happens to the output accumulator?",
+     "options": [
+      "It is divided by the new max",
+      "It is reset to zero",
+      "It is multiplied by $e^{m - m'}$ before the new block's contribution is added",
+      "Nothing"
+     ],
+     "answer": 2,
+     "why": "All earlier contributions used the old max, so they must be rescaled to the new reference to stay consistent."
+    },
+    {
+     "q": "How does causal masking let FlashAttention skip work?",
+     "options": [
+      "Causal attention needs no softmax",
+      "It reduces the head dimension",
+      "Key blocks entirely after the query block are never loaded, roughly halving the compute",
+      "It masks every element individually and computes everything"
+     ],
+     "answer": 2,
+     "why": "Only the diagonal blocks need element-wise masking. The upper-right blocks are skipped entirely."
+    },
+    {
+     "q": "Rotary position embedding rotates which pairs of values?",
+     "options": [
+      "Adjacent tokens",
+      "Whole vectors relative to each other",
+      "Pairs of dimensions within each query and key vector, by angles proportional to the position",
+      "The values, not the queries and keys"
+     ],
+     "answer": 2,
+     "why": "Because the dot product of two rotated vectors depends only on the angle difference, scores depend on relative position."
+    },
+    {
+     "q": "What does a KV-cache append kernel do at each decode step?",
+     "options": [
+      "Deletes the oldest entry",
+      "Computes attention scores",
+      "Recomputes keys for the whole sequence",
+      "Writes the new token's key and value vectors into the cache at the current position for each sequence"
+     ],
+     "answer": 3,
+     "why": "With variable-length batches each sequence has its own write position, so the kernel needs per-sequence offsets."
+    },
+    {
+     "q": "Why is attention during decoding (one query per sequence) memory-bound?",
+     "options": [
+      "The softmax is expensive",
+      "Decoding uses float64",
+      "Each step reads the whole KV cache to do little arithmetic per value read",
+      "Queries are very large"
+     ],
+     "answer": 2,
+     "why": "Grouped-query attention, cache quantisation and paging reduce the bytes read per step."
+    },
+    {
+     "q": "In a Triton SDPA kernel, why is the score matrix scaled by $1/\\sqrt{d}$ before the softmax?",
+     "options": [
+      "It isn't; scaling is applied after",
+      "To make scores integers",
+      "To normalise the output",
+      "To keep score variance near 1 so softmax doesn't saturate"
+     ],
+     "answer": 3,
+     "why": "Folding the scale into Q (or using $\\log_2 e/\\sqrt d$ with `exp2`) is a common micro-optimisation."
+    }
+   ]
+  },
+  {
+   "section": "Performance patterns",
+   "questions": [
+    {
+     "q": "What does grouping program IDs (\"super-grouping\") in a matmul improve?",
+     "options": [
+      "Register usage",
+      "L2 cache reuse, by having consecutive programs compute nearby output tiles that share rows of A and columns of B",
+      "The number of FLOPs",
+      "Numerical precision"
+     ],
+     "answer": 1,
+     "why": "Row-major program order sweeps a whole row of tiles, evicting B before it is reused. Grouping launches a compact block of tiles together."
+    },
+    {
+     "q": "When does split-K help a matmul?",
+     "options": [
+      "When M and N are small but K is large, so there are too few output tiles to fill the GPU",
+      "When K is very small",
+      "When accuracy must be bitwise deterministic",
+      "When the matrices are square and large"
+     ],
+     "answer": 0,
+     "why": "Several programs each handle a slice of K for the same output tile, and their partials are summed with atomics or a second pass."
+    },
+    {
+     "q": "What are block pointers (`tl.make_block_ptr`) useful for?",
+     "options": [
+      "Allocating global memory",
+      "Converting dtypes",
+      "Describing a 2-D tile by shape, strides, offsets and order, so loads and advances are clearer and can use hardware tile copies",
+      "Synchronising programs"
+     ],
+     "answer": 2,
+     "why": "`tl.advance` moves the tile along K. On newer GPUs this can lower to bulk asynchronous tile copies."
+    },
+    {
+     "q": "What does vectorised loading achieve in a simple vector-add kernel?",
+     "options": [
+      "It uses tensor cores",
+      "It adds the vectors in a different order",
+      "It removes the need for a mask",
+      "Each thread loads several contiguous elements with wide memory instructions, using fewer instructions per byte"
+     ],
+     "answer": 3,
+     "why": "Triton usually vectorises automatically when it can prove alignment and contiguity, for example with `tl.multiple_of` hints."
+    },
+    {
+     "q": "How should a kernel be benchmarked fairly?",
+     "options": [
+      "Measure only the first call",
+      "Warm up first, synchronise around timed runs, repeat many times and report a median or similar statistic",
+      "Include compilation time in every run",
+      "Time a single launch with the Python clock without synchronising"
+     ],
+     "answer": 1,
+     "why": "`triton.testing.do_bench` handles warm-up, synchronisation and cache flushing."
+    },
+    {
+     "q": "For a memory-bound kernel, what is the most useful performance metric?",
+     "options": [
+      "FLOP/s",
+      "Achieved bandwidth (bytes moved ÷ time) compared with the GPU's peak",
+      "Number of threads",
+      "Lines of code"
+     ],
+     "answer": 1,
+     "why": "If a vector add reaches about 90% of peak bandwidth, there is little left to gain."
+    },
+    {
+     "q": "Why might increasing `num_warps` slow down a kernel?",
+     "options": [
+      "Each warp gets a smaller share of the block's work and registers, adding overhead or reducing per-thread reuse",
+      "It changes the result",
+      "More warps always speed things up",
+      "Warps can't run in parallel"
+     ],
+     "answer": 0,
+     "why": "The best value depends on block size and kernel type, which is why it is usually autotuned."
+    },
+    {
+     "q": "What does the roofline model tell you about a kernel?",
+     "options": [
+      "Whether its arithmetic intensity puts it under the bandwidth limit or the compute limit, and how far it is from that ceiling",
+      "How many registers it uses",
+      "The exact runtime in seconds",
+      "Whether it is numerically stable"
+     ],
+     "answer": 0,
+     "why": "Plotting achieved FLOP/s against FLOPs per byte shows which resource to optimise for."
+    }
+   ]
+  }
+ ]
+}

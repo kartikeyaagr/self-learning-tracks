@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Fit a power law in log-log space', tags=['Scaling Laws', 'Regression'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:08.02'], related=['linear-regression', 'saturating-power-law-fit', 'isoflop-sweep-exponent'])
+            lessons=['mlmaths:08.03'], related=['linear-regression', 'saturating-power-law-fit', 'isoflop-sweep-exponent'])
 
 STATEMENT = r"""
 Scaling curves are usually straight lines on a log-log plot. A model sweep gives pairs $(x_i, y_i)$ (say, parameter count and validation loss) and you want the power law

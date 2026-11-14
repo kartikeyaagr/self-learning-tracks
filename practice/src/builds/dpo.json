@@ -1,0 +1,13 @@
+{"id": "dpo", "kind": "paper", "group": "Reinforcement learning and alignment",
+ "title": "Direct Preference Optimization: Your Language Model is Secretly a Reward Model", "authors": "Rafailov et al.", "year": 2023,
+ "url": "https://arxiv.org/abs/2305.18290",
+ "blurb": "Showed that the KL-regularised RLHF objective can be optimised directly from preference pairs with a classification loss, with no reward model and no RL loop.",
+ "intro": "The optimal policy for a KL-penalised reward has a closed form, so the reward can be written in terms of the policy's log-probability ratio to a reference model. Substituting that into the Bradley-Terry preference likelihood cancels the intractable normaliser and leaves a loss on the policy alone. The steps build preference data, the Bradley-Terry loss, the DPO loss from token log-probabilities and the choice of length normalisation; the capstone computes sequence log-probabilities for a bigram model and takes one DPO gradient step.",
+ "steps": [
+  {"name": "Canonical preference pairs", "problem": "canonicalize-pairwise-preference-data"},
+  {"name": "Bradley-Terry loss", "problem": "bradley-terry-reward-model-loss", "note": "The preference model DPO inherits."},
+  {"name": "DPO loss from token log-probabilities", "problem": "dpo-closed-form-loss"},
+  {"name": "Sequence vs token length normalisation", "problem": "compare-sequence-and-token-length-normalization"}
+ ],
+ "capstone": "dpo-gradient-step",
+ "lessons": ["dlcore:08.07"]}

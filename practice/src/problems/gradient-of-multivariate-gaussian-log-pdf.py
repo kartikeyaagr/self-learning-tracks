@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Gradients of the multivariate Gaussian log-density', tags=['Probability', 'Calculus'], diff='Medium',
-            runtime='numpy', lessons=['mlmaths:11.05', 'mlmaths:12.02'],
+            runtime='numpy', lessons=['mlmaths:11.25', 'mlmaths:12.10'],
             related=['gradient-of-matrix-valued-function', 'kl-divergence-discrete-and-continuous'])
 
 STATEMENT = r"""

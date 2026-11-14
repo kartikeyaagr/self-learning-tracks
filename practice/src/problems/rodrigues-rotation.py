@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Rotation vectors to matrices (Rodrigues)', tags=['3D Geometry', 'Linear Algebra'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:03.05'], related=['chain-rigid-poses', 'quaternion-slerp', 'outer-product'])
+            lessons=['mlmaths:03.33'], related=['chain-rigid-poses', 'quaternion-slerp', 'outer-product'])
 
 STATEMENT = r"""
 A **rotation vector** (axis-angle) $v \in \mathbb{R}^3$ encodes a rotation by angle $\theta = \lVert v \rVert$ (radians, right-hand rule) about the unit axis $n = v / \theta$. Rodrigues' formula turns it into a rotation matrix:

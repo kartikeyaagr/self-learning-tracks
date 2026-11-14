@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Modified Gram-Schmidt with rank detection', tags=['Linear Algebra'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:06.03', 'mlmaths:06.02'], related=['vector-projection', 'qr-decomposition', 'matrix-rank'])
+            lessons=['mlmaths:06.13', 'mlmaths:06.07'], related=['vector-projection', 'qr-decomposition', 'matrix-rank'])
 
 STATEMENT = r"""
 Gram–Schmidt turns a list of vectors into an orthonormal basis for their span. Process the columns $a_1, a_2, \dots$ of $A$ in order; for each one, subtract its components along the basis vectors found so far, and keep what's left (normalised) if it is not negligibly small.

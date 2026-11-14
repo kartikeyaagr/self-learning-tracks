@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Standardise with train statistics', tags=['Feature Engineering', 'Probability and Statistics'],
-            diff='Medium', runtime='numpy', lessons=['mlmaths:10.04'], related=['column-scaling', 'winsorize', 'row-scaling'])
+            diff='Medium', runtime='numpy', lessons=['mlmaths:10.15'], related=['column-scaling', 'winsorize', 'row-scaling'])
 
 STATEMENT = r"""
 Standardising a feature means subtracting its mean and dividing by its standard deviation. To avoid leaking information, the statistics must come from the **training** data only and then be applied unchanged to new data.

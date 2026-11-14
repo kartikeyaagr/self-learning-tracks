@@ -1,0 +1,16 @@
+{"id": "alexnet", "kind": "paper", "group": "Convolutional networks",
+ "title": "ImageNet Classification with Deep Convolutional Neural Networks", "authors": "Krizhevsky, Sutskever & Hinton", "year": 2012,
+ "url": "https://papers.nips.cc/paper/2012/hash/c399862d3b9d6b76c8436e924a68c45b-Abstract.html",
+ "blurb": "The GPU-trained CNN that won ImageNet 2012 by a wide margin and started the deep learning era in computer vision.",
+ "intro": "AlexNet combined ReLU activations, local response normalisation, overlapping max pooling, dropout and aggressive data augmentation in a five-convolution, three-FC network. The steps build each ingredient, including the PCA colour augmentation; the capstone runs a miniature AlexNet with the paper's ten-crop test-time averaging.",
+ "steps": [
+  {"name": "Strided convolution", "problem": "2d-convolution"},
+  {"name": "ReLU and other activations", "problem": "activation-functions"},
+  {"name": "Local response normalisation", "problem": "local-response-normalization"},
+  {"name": "Overlapping max pooling", "problem": "max-pool-2d", "note": "Use window 3 and stride 2."},
+  {"name": "Dropout", "problem": "dropout"},
+  {"name": "Random crops and flips", "problem": "basic-indexing"},
+  {"name": "PCA colour augmentation", "problem": "pca-color-augmentation"}
+ ],
+ "capstone": "alexnet-ten-crop-predict",
+ "lessons": ["dlcore:03.03", "dlcore:02.03"]}

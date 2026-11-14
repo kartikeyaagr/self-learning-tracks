@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='First- and second-order Taylor models of a logistic loss', tags=['Calculus', 'Optimization'], diff='Medium',
-            runtime='numpy', lessons=['mlmaths:09.04', 'mlmaths:07.01'],
+            runtime='numpy', lessons=['mlmaths:09.28', 'mlmaths:07.01'],
             related=['higher-order-derivatives-and-loss-curvature', 'hessian-tensor-of-vector-valued-function',
                      'hessian-matrix-and-convexity-of-linear-regressio'])
 

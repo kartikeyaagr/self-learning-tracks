@@ -1,0 +1,15 @@
+{"id": "flashattention", "kind": "paper", "group": "Efficient inference",
+ "title": "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness", "authors": "Dao et al.", "year": 2022,
+ "url": "https://arxiv.org/abs/2205.14135",
+ "blurb": "Made exact attention much faster and linear in memory by tiling it so the attention matrix never leaves on-chip memory, recomputing it in the backward pass.",
+ "intro": "Attention is bound by memory traffic, not arithmetic: writing and re-reading the $N\\times N$ score and probability matrices dominates. FlashAttention processes query and key tiles in fast SRAM, combining partial softmaxes with an online rescaling, and stores only the output and one logsumexp per row. The backward pass rebuilds each probability tile from that logsumexp. The steps build reference attention, the online softmax and tiled forward passes in numpy, torch and Triton; the capstone adds the tiled backward pass.",
+ "steps": [
+  {"name": "Reference attention", "problem": "scaled-dot-product-attention"},
+  {"name": "Online softmax", "problem": "online-softmax"},
+  {"name": "Blockwise online softmax", "problem": "blockwise-online-softmax"},
+  {"name": "Blockwise attention", "problem": "blockwise-attention-with-online-softmax"},
+  {"name": "Tiled forward pass", "problem": "flashattention-with-online-softmax"},
+  {"name": "Forward kernel in Triton", "problem": "flashattention-forward", "note": "The same algorithm as a GPU kernel."}
+ ],
+ "capstone": "flashattention-tiled-backward",
+ "lessons": ["ieng:14.03", "aieng:06.03"]}

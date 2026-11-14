@@ -1,0 +1,14 @@
+{"id": "vae", "kind": "paper", "group": "Generative models",
+ "title": "Auto-Encoding Variational Bayes", "authors": "Kingma and Welling", "year": 2013,
+ "url": "https://arxiv.org/abs/1312.6114",
+ "blurb": "Trained a latent-variable generative model with ordinary backpropagation by maximising a lower bound on the likelihood and rewriting the sampling step so gradients pass through it.",
+ "intro": "An encoder maps each input to a Gaussian over latents, a decoder maps a latent back to a distribution over inputs, and the loss is the negative evidence lower bound: reconstruction error plus the KL divergence from the encoder's Gaussian to the prior. Sampling $z = \\mu + \\sigma\\epsilon$ with fixed noise $\\epsilon$ makes the whole thing differentiable. The steps build the autoencoder, the reparameterised sample, the closed-form KL and the reconstruction loss; the capstone runs one full training step with gradients derived by hand.",
+ "steps": [
+  {"name": "Plain autoencoder", "problem": "autoencoder-forward-pass", "note": "The deterministic version the VAE adds noise and a prior to."},
+  {"name": "The reparameterisation trick", "problem": "reparameterized-gaussian-sample"},
+  {"name": "KL divergence to a standard normal", "problem": "diagonal-gaussian-kl-divergence"},
+  {"name": "Bernoulli reconstruction loss", "problem": "log-loss-binary-cross-entropy"},
+  {"name": "VAE forward pass and ELBO", "problem": "variational-autoencoder-forward-pass"}
+ ],
+ "capstone": "vae-training-step",
+ "lessons": ["dlcore:07.01"]}

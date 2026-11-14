@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Gradient of multi-output ridge regression', tags=['Regression', 'Calculus'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:08.02', 'mlmaths:09.05'],
+            lessons=['mlmaths:08.03', 'mlmaths:09.34'],
             related=['hessian-matrix-and-convexity-of-linear-regressio', 'gradient-of-matrix-valued-function',
                      'subgradients-for-non-smooth-functions'])
 

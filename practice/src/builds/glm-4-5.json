@@ -1,0 +1,16 @@
+{"id": "glm-4-5", "kind": "paper", "group": "Transformers and LLMs",
+ "title": "GLM-4.5: Agentic, Reasoning, and Coding (ARC) Foundation Models", "authors": "GLM-4.5 Team, Z.ai", "year": 2025,
+ "url": "https://arxiv.org/abs/2508.06471",
+ "blurb": "A deep, narrow mixture-of-experts decoder with dense prefix layers, partial RoPE, QK-norm and a multi-token-prediction layer, trained for agentic and reasoning tasks.",
+ "intro": "GLM-4.5's architecture combines familiar parts in a particular way: GQA attention with QK-norm and rotary embeddings on only part of each head, a few dense layers at the bottom, MoE layers with a shared expert and sigmoid routing balanced by biases, and an MTP layer used for speculative decoding. The steps cover each part; the capstone builds a stack of dense and MoE layers.",
+ "steps": [
+  {"name": "RMSNorm", "problem": "rmsnorm-forward-pass"},
+  {"name": "Partial rotary embeddings", "problem": "rotary-query-and-key-embeddings"},
+  {"name": "QK-norm", "problem": "qk-norm-vs-logit-softcap"},
+  {"name": "Grouped-query attention", "problem": "causal-grouped-query-attention"},
+  {"name": "SwiGLU feed-forward", "problem": "parameter-matched-swiglu-block"},
+  {"name": "Sigmoid routing with bias balancing", "problem": "aux-loss-free-moe-routing"},
+  {"name": "Multi-token prediction layer", "problem": "multi-token-prediction-loss"}
+ ],
+ "capstone": "glm45-dense-then-moe-stack",
+ "lessons": ["aieng:06.02", "ieng:16.06"]}

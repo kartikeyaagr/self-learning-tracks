@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Core regression metrics', tags=['Metrics & Evaluation', 'Regression'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:10.04'], related=['linear-regression', 'k-fold-cross-validation'])
+            lessons=['mlmaths:10.15'], related=['linear-regression', 'k-fold-cross-validation'])
 
 STATEMENT = r"""
 Write `regression_report(y_true, y_pred)` that returns a dict with five metrics, using residuals $e_i = y_i - \hat y_i$:

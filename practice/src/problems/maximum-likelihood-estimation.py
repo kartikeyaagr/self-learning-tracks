@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Gaussian maximum likelihood fit', tags=['Probability and Statistics'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:12.02'], related=['exponential-distribution', 'sample-variance-and-standard-deviation'])
+            lessons=['mlmaths:12.10'], related=['exponential-distribution', 'sample-variance-and-standard-deviation'])
 
 STATEMENT = r"""
 Fitting a normal distribution $\mathcal N(\mu, \sigma^2)$ by maximum likelihood means choosing the parameters that make the observed data most probable. The log-likelihood of $n$ independent observations is

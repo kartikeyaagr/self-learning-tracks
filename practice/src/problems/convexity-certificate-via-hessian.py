@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Certify convexity from the Hessian', tags=['Optimization', 'Linear Algebra'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:07.01', 'mlmaths:05.02'],
+            lessons=['mlmaths:07.01', 'mlmaths:05.07'],
             related=['classify-critical-point-from-hessian', 'minimum-of-axis-aligned-paraboloid'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Poisson pmf and cdf for arrival counts', tags=['Probability'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:10.05'], related=['binomial-distribution', 'exponential-distribution'])
+            lessons=['mlmaths:10.25'], related=['binomial-distribution', 'exponential-distribution'])
 
 STATEMENT = r"""
 If events arrive independently at an average rate of $\lambda$ per window (requests per second, typos per page), the count in one window is Poisson:

@@ -1,0 +1,46 @@
+---
+// One review deck for the whole site: lesson self-check questions and solved problems, on the same 1-3-7-14-30 day schedule.
+import Site from '../../layouts/Site.astro';
+import '../../styles/practice.css';
+---
+<Site title="Review · Tracks" description="Spaced review of lessons and problems across every course.">
+  <div class="rv" style="max-width:820px;margin:0 auto">
+    <div class="rvtop" style="display:flex;align-items:baseline;gap:14px"><h1 style="margin:0;font-size:34px;letter-spacing:-.045em">Review</h1><span class="lab" id="cnt">Loading…</span></div>
+    <p style="color:var(--muted);margin:6px 0 18px">Lessons you finished and problems you solved come back after 1, 3, 7, 14 and 30 days. Answer from memory, then check. +5 XP each.</p>
+    <section class="card blk" id="card" hidden>
+      <div class="lab" id="cl"></div><p class="q" id="cq"></p>
+      <textarea id="ca" aria-label="Your answer" placeholder="Answer from memory first."></textarea>
+      <div class="arow"><span class="saved"><a id="cu" target="_blank" rel="noopener">Open the lesson ↗</a></span><button type="button" class="btn" id="show">Show answer</button></div>
+      <div id="ans" hidden><div class="sample"><div class="lab">Model answer</div><p id="cs"></p></div>
+        <div class="grade"><div class="lab">How did you do?</div><div class="gb">
+          <button type="button" class="gbtn" data-g="1">Again<small>tomorrow</small></button>
+          <button type="button" class="gbtn" data-g="2">Hard<small>same gap</small></button>
+          <button type="button" class="gbtn" data-g="3">Got it<small>longer gap</small></button></div></div></div>
+    </section>
+    <div id="probs"></div>
+    <div class="card empty" id="empty" hidden style="padding:28px;text-align:center"><h3 style="font-size:22px;margin:0 0 6px">Nothing due right now</h3>
+      <p style="color:var(--muted);margin:0">Finish lessons and solve problems; they come back here when it's time.</p></div>
+  </div>
+  <script>
+    import { due, rate } from '../../lib/review.js';
+    const B = window.__base, $ = s => document.getElementById(s), get = p => fetch(`${B}/${p}`).then(r => r.json());
+    Promise.all([get('cards.json'), get('review.json'), get('practice/index.json')]).then(([cards, R, I]) => {
+    const P = Object.fromEntries(I.topics.flatMap(m => m.lessons).map(l => [l.id, l]));
+    const items = due(cards), deck = items.filter(([ns, k]) => R[ns]?.[k]), probs = items.filter(([ns, k]) => ns === 'practice' && P[k]);
+    for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
+    let i = 0;
+    const count = () => $('cnt').textContent = `${deck.length - i} card${deck.length - i === 1 ? '' : 's'} · ${probs.length} problem${probs.length === 1 ? '' : 's'} due`;
+    function show() {
+      count(); const c = deck[i] && R[deck[i][0]][deck[i][1]];
+      $('card').hidden = !c; $('empty').hidden = !!c || probs.length > 0; if (!c) return;
+      $('cl').textContent = `${c.c} · ${c.t}`; $('cq').innerHTML = c.q; $('cs').innerHTML = c.s; $('cu').href = c.u;
+      $('ca').value = ''; $('ans').hidden = true; $('show').hidden = false;
+    }
+    $('show').onclick = () => { $('ans').hidden = false; $('show').hidden = true; };
+    document.querySelectorAll('.gbtn').forEach(b => b.onclick = () => { rate(deck[i][0], deck[i][1], +b.dataset.g); i++; show(); });
+    if (probs.length) $('probs').innerHTML = `<div class="sh"><h2>Problems to re-solve</h2><span class="lab">pass every test again</span></div><div class="plist">${probs.map(([, k]) =>
+      `<a class="card prow" href="${B}/practice/p/${k}/"><span class="sd on"></span><span><b>${P[k].t.replace(/</g, '&lt;')}</b></span><span class="rt"><span class="pill ${P[k].d}">${P[k].d}</span></span></a>`).join('')}</div>`;
+    show();
+    });
+  </script>
+</Site>

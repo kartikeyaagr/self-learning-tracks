@@ -1,0 +1,14 @@
+{"id": "rope", "kind": "paper", "group": "Transformers and LLMs",
+ "title": "RoFormer: Enhanced Transformer with Rotary Position Embedding", "authors": "Su et al.", "year": 2021,
+ "url": "https://arxiv.org/abs/2104.09864",
+ "blurb": "Encoded position by rotating query and key vectors, so attention scores depend only on relative offsets; now the default in most open LLMs.",
+ "intro": "RoPE splits each query and key into 2-D pairs and rotates pair $i$ by angle $m\\theta_i$ at position $m$. The dot product of a rotated query and key then depends on their positions only through $m - n$, giving relative position information with no extra parameters and no change to the attention kernel. The steps build RoPE in both memory layouts, at arbitrary positions, on a subset of dimensions, for ragged decode batches and for multimodal inputs; the capstone computes attention scores with the frequency rescalings used to extend context length.",
+ "steps": [
+  {"name": "RoPE in both layouts", "problem": "rotary-position-embedding-rope", "note": "Interleaved pairs versus split halves: same maths, different weights."},
+  {"name": "RoPE at arbitrary positions", "problem": "rotary-position-embedding"},
+  {"name": "Partial rotary embeddings", "problem": "rotary-query-and-key-embeddings"},
+  {"name": "RoPE during decoding", "problem": "rotary-position-embeddings-for-decoding"},
+  {"name": "Multimodal RoPE coordinates", "problem": "assign-multimodal-rope-coordinates"}
+ ],
+ "capstone": "rope-scores-with-context-extension",
+ "lessons": ["aieng:04.01"]}

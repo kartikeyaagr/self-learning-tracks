@@ -1,0 +1,15 @@
+{"id": "gpt-oss", "kind": "paper", "group": "Transformers and LLMs",
+ "title": "gpt-oss-120b & gpt-oss-20b Model Card", "authors": "OpenAI", "year": 2025,
+ "url": "https://arxiv.org/abs/2508.10925",
+ "blurb": "OpenAI's open-weight MoE reasoning models: alternating banded and dense attention with learned sinks, YaRN-extended RoPE, and MXFP4 expert weights.",
+ "intro": "gpt-oss is a pre-norm MoE decoder. Attention layers alternate between a 128-token band and full causal attention, use grouped-query attention, and give every head a learned sink logit. RoPE is extended to 131k tokens with YaRN. Each MoE layer routes tokens to the top 4 experts, whose SwiGLU activations are clamped, and the expert weights are stored in MXFP4. The steps build each of these components; the capstone wires one full block.",
+ "steps": [
+  {"name": "Attention with learned sinks", "problem": "attention-with-sink-logits"},
+  {"name": "Banded (sliding-window) GQA", "problem": "causal-grouped-query-attention"},
+  {"name": "RoPE with YaRN scaling", "problem": "rope-scores-with-context-extension"},
+  {"name": "Top-k expert routing", "problem": "sparse-moe-top-k-expert-routing"},
+  {"name": "Dispatch and combine", "problem": "moe-token-dispatch-and-expert-aggregation"},
+  {"name": "MXFP4 dequantization", "problem": "mxfp4-dequantize"}
+ ],
+ "capstone": "gpt-oss-block",
+ "lessons": ["aieng:06.02", "aieng:07.02", "ieng:11.01"]}

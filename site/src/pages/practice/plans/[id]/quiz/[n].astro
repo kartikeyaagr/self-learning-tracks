@@ -1,0 +1,42 @@
+---
+// A study-plan section quiz: questions rendered at build time, graded in the page.
+import Practice from '../../../../../layouts/Practice.astro';
+import { IDX, quiz } from '../../../../../lib/practice.mjs';
+import { inl } from '../../../../../lib/inline.mjs';
+import { u } from '../../../../../lib/url.mjs';
+export function getStaticPaths() {
+  return IDX.plans.flatMap(pl => { const q = quiz(pl.id);
+    return pl.sections.map((sec, si) => ({pl, sec, si, qs: q?.sections.find(x => x.section === sec.name)?.questions || []}))
+      .filter(x => x.qs.length).map(x => ({params: {id: pl.id, n: String(x.si + 1)}, props: x})); });
+}
+const { pl, sec, si, qs } = Astro.props;
+---
+<Practice title={`${sec.name} quiz`} cur="plans" crumbs={[['Study plans', u('/practice/plans/')], [pl.title, u(`/practice/plans/${pl.id}/`)], ['Quiz', Astro.url.pathname]]}>
+  <div class="rv" style="max-width:760px">
+    <div class="lab">{pl.title} · Section {si + 1}</div>
+    <h1 style="font-size:34px;letter-spacing:-.045em;margin:6px 0 4px">{sec.name} quiz</h1>
+    <p style="color:var(--muted);margin:0 0 20px">{qs.length} questions<span id="best"></span>. Answer them all, then check.</p>
+    <form id="qz" data-k={`${pl.id}:${si}`} data-ans={JSON.stringify(qs.map(x => x.answer))}>
+      {qs.map((x, i) => <fieldset class="card blk qq" style="margin-top:14px;border:1px solid var(--line)"><legend class="lab" style="padding:0 6px">Question {i + 1}</legend>
+        <p class="q" style="font-size:17px" set:html={inl(x.q)} />
+        {x.options.map((o, j) => <label style="display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border-radius:10px;cursor:pointer"><input type="radio" name={`q${i}`} value={j} style="margin-top:5px"><span set:html={inl(o)} /></label>)}
+        <div class="sample why" style="margin-top:10px" hidden><div class="lab">Why</div><p set:html={inl(x.why)} /></div></fieldset>)}
+      <div class="done-zone" style="margin-top:24px"><button type="submit" class="btn" id="chk">Check answers</button><p><a href={u(`/practice/plans/${pl.id}/`)}>← Back to the plan</a></p></div>
+    </form>
+  </div>
+  <script>
+    import { st, toast } from '../../../../../lib/practice-client.js';
+    import { save, now, bump } from '../../../../../lib/progress.js';
+    const f = document.getElementById('qz'), k = f.dataset.k, A = JSON.parse(f.dataset.ans), best = () => st.quiz[k];
+    if (best()) document.getElementById('best').textContent = ` · best so far ${best().best}/${best().n}`;
+    f.addEventListener('submit', e => {
+      e.preventDefault(); let n = 0;
+      f.querySelectorAll('.qq').forEach((q, i) => { const pick = q.querySelector('input:checked'), ok = pick && +pick.value === A[i]; if (ok) n++;
+        q.querySelectorAll('label').forEach((l, j) => l.style.background = j === A[i] ? 'var(--go-soft)' : pick && j === +pick.value ? 'var(--bad-soft)' : '');
+        const w = q.querySelector('.why'); w.hidden = false; w.querySelector('.lab').textContent = ok ? 'Correct' : 'Why'; });
+      st.quiz[k] = {best: Math.max(n, best()?.best || 0), n: A.length, last: n, at: now()}; bump(st); save();
+      toast(`<b>${n}/${A.length}</b> ${n === A.length ? 'Perfect score' : 'Answers explained below'}`, n === A.length);
+      document.getElementById('chk').textContent = `Score: ${n}/${A.length}`;
+    });
+  </script>
+</Practice>

@@ -1,0 +1,12 @@
+{"id": "lora", "kind": "paper", "group": "Training and optimization",
+ "title": "LoRA: Low-Rank Adaptation of Large Language Models", "authors": "Hu et al.", "year": 2021,
+ "url": "https://arxiv.org/abs/2106.09685",
+ "blurb": "Fine-tuned large models by freezing the pretrained weights and training a low-rank update, cutting trainable parameters by orders of magnitude with no added inference latency.",
+ "intro": "A frozen weight $W_0$ gets a trainable update $\\frac{\\alpha}{r}AB$ with $A$ random and $B$ zero, so training starts exactly at the pretrained model. Only the thin factors receive gradients and optimiser state, and after training the update can be merged into $W_0$. The steps build a linear layer, low-rank approximation and the SVD that underlies it; the capstone fine-tunes adapters on a frozen layer and merges them.",
+ "steps": [
+  {"name": "A linear layer", "problem": "custom-linear-layer"},
+  {"name": "SVD components", "problem": "svd-components"},
+  {"name": "Best low-rank approximation", "problem": "low-rank-approximation", "note": "What a rank-$r$ update can and cannot represent."}
+ ],
+ "capstone": "lora-finetune-and-merge",
+ "lessons": ["air-fanout-v1:10.02", "ieng:26.02", "mlmaths:07.07"]}

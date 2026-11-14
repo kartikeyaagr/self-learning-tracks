@@ -5,14 +5,14 @@
 # Versions match the browser runtime (Pyodide 0.29.5: Python 3.13, numpy 2.2, pandas 2.3) so expected outputs agree.
 """Build the Practice track: verify every problem, then write the site files.
 
-    uv run practice/src/build.py          (then: uv run --no-project build_hub.py)
+    uv run practice/src/build.py          (then rebuild the site: cd site && npm run build)
 
 Each problems/<slug>.py is a module with META, STATEMENT, STARTER, SOLUTION, HINTS, TESTS, EXPLANATION.
 Expected outputs are computed from SOLUTION here, so a problem only ships if:
   - SOLUTION passes every test after a JSON round trip, twice with the same result (deterministic);
   - STARTER fails at least one test (the problem isn't pre-solved);
   - tags, related slugs and lesson links all resolve.
-Writes ../index.html (the app, data inlined), ../data/<slug>.json (one per problem), ../nb/<slug>.ipynb (Colab runtimes).
+Writes site/public/practice/: index.json, data/<slug>.json, quiz/<plan>.json, nb/<slug>.ipynb (Colab), links.json, runner.
 """
 import copy, importlib.util, json, os, re, sys
 # CUDA problems are Numba kernels: verified on the CPU simulator here, run on a real GPU in Colab.
@@ -66,19 +66,25 @@ def compile_fn(code, name):
     return ns
 
 
+SITE = ROOT / 'site'
+WEB = SITE / 'public' / 'practice'                      # what the site serves: data/, quiz/, nb/, index.json, runner
+BASE = '/self-learning-tracks'                          # GitHub Pages base path (site/astro.config.mjs)
+
+
+def site_lessons():
+    """Every lesson on the site: (course key, course title, lesson frontmatter, href). Frontmatter values are JSON."""
+    for cj in sorted((SITE / 'src/content/courses').glob('*/course.json')):
+        cfg = json.loads(cj.read_text(encoding='utf-8'))
+        mods = {m['n']: m['slug'] for m in cfg['modules']}
+        for f in sorted((cj.parent / 'lessons').glob('*.md')):
+            head = f.read_text(encoding='utf-8').split('\n---\n', 1)[0]
+            fm = {k: json.loads(v) for k, v in re.findall(r'^(\w+): (.*)$', head, re.M)}
+            yield cfg['key'], cfg['title'], fm, f"{BASE}/courses/{cj.parent.name}/{mods[fm['module']]}/{fm['slug']}/"
+
+
 def lesson_index():
-    """'trackkey:lessonid' -> link, from hub-data.js (the hub's own export of every course)."""
-    s = (ROOT / 'hub-data.js').read_text(encoding='utf-8')
-    out = {}
-    tracks = json.JSONDecoder().raw_decode(s, s.index('const TRACKS = ') + len('const TRACKS = '))[0]
-    for t in tracks:
-        if t['key'] == 'practice':
-            continue
-        for m in t['modules']:
-            for lid, title, _ in m['lessons']:
-                out[f"{t['key']}:{lid}"] = {'href': f"../{t['dir']}/index.html#l{lid.replace('.', '-', 1)}",
-                                            't': title, 'c': t['name']}
-    return out
+    """'trackkey:lessonid' -> {href, t (title), c (course)} for every lesson on the site."""
+    return {f"{k}:{fm['id']}": {'href': href, 't': fm['title'], 'c': title} for k, title, fm, href in site_lessons()}
 
 
 def build_one(path, lessons):
@@ -148,7 +154,7 @@ def build_one(path, lessons):
     if rt in NEEDS_GPU:
         p['gpu'] = True
     if rt in COLAB:
-        p['colab'] = f'https://colab.research.google.com/github/{REPO}/blob/main/practice/nb/{slug}.ipynb'
+        p['colab'] = f'https://colab.research.google.com/github/{REPO}/blob/main/site/public/practice/nb/{slug}.ipynb'
     return p
 
 
@@ -197,21 +203,6 @@ def build_cached(f, lessons):
     return p
 
 
-# Add-on modules (addons/<export dir>/) belong to these exported courses.
-ADDON_COURSES = {'ml-maths-course': ('mlmaths', 'ML Maths'), 'inference-eng-course': ('ieng', 'Inference Engineering'),
-                 'ai-research-track-web': ('air-fanout-v1', 'AI Research')}
-
-
-def course_modules():
-    """(module file, course dir, track key, course title) for engine courses and add-on modules."""
-    for f in sorted(ROOT.glob('*/src/modules/*.json')):
-        cfg = json.loads((f.parent.parent / 'course.json').read_text(encoding='utf-8'))
-        yield f, f.parent.parent.parent.name, cfg['key'], cfg['title']
-    for f in sorted(ROOT.glob('addons/*/*.json')):
-        key, title = ADDON_COURSES[f.parent.name]
-        yield f, f.parent.name, key, title
-
-
 def main():
     lessons = lesson_index()
     probs = [build_cached(f, lessons) for f in sorted((SRC / 'problems').glob('*.py'))]
@@ -223,17 +214,15 @@ def main():
     # Course lessons can list practice problems ("p"); show those lessons on the problem page too ("Learn the idea").
     byid = {p['id']: p for p in probs}
     curated = {}                                            # "trackkey:lessonid" -> slugs the lesson picked, best first
-    for f, cdir, ckey, ctitle in course_modules():
-        for L in json.loads(f.read_text(encoding='utf-8'))['lessons']:
-            curated[f"{ckey}:{L['id']}"] = [x for x in L.get('p', []) if x in byid]
-            for slug in L.get('p', []):
-                p = byid.get(slug)
-                href = f"../{cdir}/index.html#l{L['id'].replace('.', '-', 1)}"
-                if p and all(x['href'] != href for x in p['lessons']):
-                    p['lessons'].append({'href': href, 't': L['t'], 'c': ctitle})
+    for ckey, ctitle, fm, href in site_lessons():
+        picks = [x for x in fm.get('practice', []) if x in byid]
+        curated[f"{ckey}:{fm['id']}"] = picks
+        for slug in picks:
+            if all(x['href'] != href for x in byid[slug]['lessons']):
+                byid[slug]['lessons'].append({'href': href, 't': fm['title'], 'c': ctitle})
 
-    data_dir, nb_dir = OUT / 'data', OUT / 'nb'
-    data_dir.mkdir(exist_ok=True); nb_dir.mkdir(exist_ok=True)
+    data_dir, nb_dir = WEB / 'data', WEB / 'nb'
+    data_dir.mkdir(parents=True, exist_ok=True); nb_dir.mkdir(parents=True, exist_ok=True)
     for f in [*data_dir.glob('*.json'), *nb_dir.glob('*.ipynb')]:
         f.unlink()                                          # drop files of renamed/removed problems
     for p in probs:
@@ -247,7 +236,7 @@ def main():
             page['tj'] = json.dumps(p['tests']); page['tj_ex'] = json.dumps(p['tests'][:p['nex']])
         (data_dir / f"{p['id']}.json").write_text(json.dumps(page, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
 
-    # DATA follows the course contract (modules -> lessons) so build_hub.py reads it like any course.
+    # index.json follows the course contract (topics -> lessons) for the site's Practice pages.
     # A problem lives in the module of its first tag; its other tags show as filters.
     by_tag = {t: [] for t in TAGS}
     for p in sorted(probs, key=lambda p: (list(DIFFS).index(p['d']), p['t'])):
@@ -257,24 +246,34 @@ def main():
              'lessons': by_tag[t]} for i, t in enumerate(TAGS)]
     data = [m for m in data if m['lessons']]               # topics appear as soon as they have a problem
     plans = [load_plan(f, ids) for f in sorted((SRC / 'plans').glob('*.json'))]
-    js = lambda x: json.dumps(x, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/')
-    app = (SRC / 'app.html').read_text(encoding='utf-8')
-    app = app.replace('__DATA__', js(data)).replace('__PARTS__', js([pn for pn, _ in PARTS])).replace('__PLANS__', js(plans))
-    app = app.replace('__TOTAL__', str(len(probs)))
-    (OUT / 'index.html').write_text(app, encoding='utf-8')
+    builds, quizzes, rounds = extras(ids, lessons)
+    qdir = WEB / 'quiz'; qdir.mkdir(exist_ok=True)
+    for f in qdir.glob('*.json'):
+        f.unlink()
+    for pid, q in quizzes.items():                         # fetched by the plan page when opened
+        (qdir / f'{pid}.json').write_text(json.dumps(q, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
+    for pl in plans:
+        pl['quiz'] = [s['section'] for s in quizzes.get(pl['id'], {}).get('sections', [])]
+    # index.json: everything the Practice pages list (problem bodies stay in data/<slug>.json)
+    (WEB / 'index.json').write_text(json.dumps({'topics': data, 'parts': [pn for pn, _ in PARTS], 'plans': plans, 'builds': builds,
+                                                'rounds': rounds}, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
+    for f in ('runner.js', 'harness.py'):                   # the in-browser runner and the grader it shares with this build
+        (WEB / f).write_text((OUT / f).read_text(encoding='utf-8'), encoding='utf-8')
 
-    # practice/links.json: "trackkey:lessonid" -> [[slug, title, difficulty]], read by course builds and the hub
+    # links.json: "trackkey:lessonid" -> [[slug, title, difficulty]], for "Practice this" on lesson pages
     refs = {k: [[x, byid[x]['t'], byid[x]['d']] for x in v] for k, v in curated.items() if v}
     for p in sorted(probs, key=lambda p: (list(DIFFS).index(p['d']), p['t'])):
         for ref in p['lesson_refs']:
             if all(x[0] != p['id'] for x in refs.get(ref, [])):
                 refs.setdefault(ref, []).append([p['id'], p['t'], p['d']])
-    (OUT / 'links.json').write_text(json.dumps(refs, ensure_ascii=False, indent=0), encoding='utf-8')
+    (WEB / 'links.json').write_text(json.dumps(refs, ensure_ascii=False, indent=0), encoding='utf-8')
 
     by_rt = {}
     for p in probs:
         by_rt[p['rt']] = by_rt.get(p['rt'], 0) + 1
-    print(f'{len(probs)} problems verified · {len(data)}/{len(TAGS)} topics · {len(plans)} plans · runtimes {by_rt}')
+    print(f'{len(probs)} problems verified · {len(data)}/{len(TAGS)} topics · {len(plans)} plans · '
+          f'{sum(b["kind"] == "paper" for b in builds)} papers · {sum(b["kind"] == "project" for b in builds)} projects · '
+          f'{len(quizzes)} quizzes · {len(rounds)} rounds · runtimes {by_rt}')
 
 
 def load_plan(path, ids):
@@ -291,6 +290,81 @@ def load_plan(path, ids):
     return plan
 
 
+ROLES = ['Data Scientist', 'ML Engineer', 'Research Engineer', 'GPU Engineer', 'AI Engineer']
+
+
+def load_build(path, ids, lessons):
+    """builds/<id>.json: a paper implementation or a project, as ordered steps that are problems, plus a capstone."""
+    b = json.loads(path.read_text(encoding='utf-8'))
+    where = f'builds/{path.name}:'
+    assert b.get('id') == path.stem, f'{where} id must equal the file name'
+    assert b.get('kind') in ('paper', 'project'), f'{where} kind must be "paper" or "project"'
+    for k in ('group', 'title', 'blurb', 'steps', 'capstone'):
+        assert b.get(k), f'{where} missing {k}'
+    if b['kind'] == 'paper':
+        for k in ('authors', 'year', 'url'):
+            assert b.get(k), f'{where} papers need {k}'
+        assert str(b['url']).startswith('https://'), f'{where} url must be https'
+    assert len(b['steps']) >= 3, f'{where} give at least 3 steps'
+    for st in b['steps']:
+        assert st.get('name') and st.get('problem'), f'{where} each step needs name and problem'
+    slugs = [st['problem'] for st in b['steps']] + [b['capstone']]
+    bad = [x for x in slugs if x not in ids]
+    assert not bad, f'{where} unknown problems {bad}'
+    assert b['capstone'] not in slugs[:-1], f'{where} capstone must be its own problem, not a step'
+    badl = [x for x in b.get('lessons', []) if x not in lessons]
+    assert not badl, f'{where} unknown lessons {badl}'
+    return b
+
+
+def load_quiz(path, plans):
+    """quizzes/<plan id>.json: multiple-choice questions for each section of a study plan."""
+    q = json.loads(path.read_text(encoding='utf-8'))
+    where = f'quizzes/{path.name}:'
+    plan = plans.get(path.stem)
+    assert plan, f'{where} no study plan named {path.stem}'
+    names = [s['name'] for s in plan['sections']]
+    for sec in q['sections']:
+        assert sec.get('section') in names, f'{where} section {sec.get("section")!r} is not in the plan ({names})'
+        assert len(sec.get('questions', [])) >= 5, f'{where} {sec["section"]}: give at least 5 questions'
+        for i, x in enumerate(sec['questions'], 1):
+            assert x.get('q') and x.get('why'), f'{where} {sec["section"]} q{i}: needs q and why'
+            o = x.get('options', [])
+            assert 3 <= len(o) <= 5 and len(set(o)) == len(o), f'{where} {sec["section"]} q{i}: 3-5 distinct options'
+            assert isinstance(x.get('answer'), int) and 0 <= x['answer'] < len(o), f'{where} {sec["section"]} q{i}: answer is the 0-based index of the right option'
+    return q
+
+
+def load_round(path, ids, lessons):
+    """rounds/<id>.json: a timed interview round mixing coding problems and theory questions from course lessons."""
+    r = json.loads(path.read_text(encoding='utf-8'))
+    where = f'rounds/{path.name}:'
+    assert r.get('id') == path.stem, f'{where} id must equal the file name'
+    assert r.get('role') in ROLES, f'{where} role must be one of {ROLES}'
+    for k in ('title', 'blurb', 'minutes'):
+        assert r.get(k), f'{where} missing {k}'
+    assert isinstance(r['minutes'], int) and 10 <= r['minutes'] <= 240, f'{where} minutes must be 10-240'
+    assert r.get('coding') or r.get('theory'), f'{where} needs coding problems, theory questions or both'
+    bad = [x for x in r.get('coding', []) if x not in ids]
+    assert not bad, f'{where} unknown problems {bad}'
+    badl = [x for x in r.get('theory', []) if x not in lessons]
+    assert not badl, f'{where} unknown lessons {badl}'
+    return r
+
+
+def extras(ids, lessons):
+    """All builds, quizzes and rounds, validated. Quizzes are keyed by plan id."""
+    plans = {f.stem: json.loads(f.read_text(encoding='utf-8')) for f in (SRC / 'plans').glob('*.json')}
+    builds = [load_build(f, ids, lessons) for f in sorted((SRC / 'builds').glob('*.json'))]
+    quizzes = {f.stem: load_quiz(f, plans) for f in sorted((SRC / 'quizzes').glob('*.json'))}
+    rounds = [load_round(f, ids, lessons) for f in sorted((SRC / 'rounds').glob('*.json'))]
+    for x in builds:
+        x['lesson_links'] = [lessons[r] for r in x.get('lessons', [])]
+    for x in rounds:
+        x['theory_links'] = {r: lessons[r] for r in x.get('theory', [])}
+    return builds, quizzes, rounds
+
+
 def check(paths):
     """Verify only the given problem/plan files and write nothing, so parallel authors can't clash.
     Related slugs and plan entries may point at any problem file that exists on disk."""
@@ -300,8 +374,17 @@ def check(paths):
         f = Path(raw).resolve()
         try:
             if f.suffix == '.json':
-                plan = load_plan(f, ids)
-                print(f'OK    {f.name}  ({sum(len(x["problems"]) for x in plan["sections"])} problems)')
+                kind = f.parent.name
+                if kind == 'builds':
+                    b = load_build(f, ids, lessons); print(f'OK    {f.name}  ({b["kind"]}, {len(b["steps"])} steps + capstone)')
+                elif kind == 'quizzes':
+                    plans = {g.stem: json.loads(g.read_text(encoding='utf-8')) for g in (SRC / 'plans').glob('*.json')}
+                    q = load_quiz(f, plans); print(f'OK    {f.name}  ({sum(len(x["questions"]) for x in q["sections"])} questions)')
+                elif kind == 'rounds':
+                    r = load_round(f, ids, lessons); print(f'OK    {f.name}  ({len(r.get("coding", []))} coding, {len(r.get("theory", []))} theory)')
+                else:
+                    plan = load_plan(f, ids)
+                    print(f'OK    {f.name}  ({sum(len(x["problems"]) for x in plan["sections"])} problems)')
                 continue
             p = build_one(f, lessons)
             unknown = [r for r in p['related'] if r not in ids]

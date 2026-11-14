@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Best rank-k approximation', tags=['Linear Algebra'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:07.02'], related=['svd-components', 'matrix-rank', 'pca'])
+            lessons=['mlmaths:07.07'], related=['svd-components', 'matrix-rank', 'pca'])
 
 STATEMENT = r"""
 Among all matrices of rank at most $k$, the one closest to $A$ in Frobenius norm is the truncated SVD (Eckart–Young):

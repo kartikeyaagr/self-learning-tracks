@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Lasso regression with ISTA', tags=['Optimization', 'Regression'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:02.04', 'mlmaths:08.02'],
+            lessons=['air-fanout-v1:02.04', 'mlmaths:08.03'],
             related=['vanilla-gradient-descent', 'adamw-decoupled-weight-decay', 'convex-polytope-membership'])
 
 STATEMENT = r"""

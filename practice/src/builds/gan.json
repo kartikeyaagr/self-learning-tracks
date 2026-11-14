@@ -1,0 +1,13 @@
+{"id": "gan", "kind": "paper", "group": "Generative models",
+ "title": "Generative Adversarial Nets", "authors": "Goodfellow et al.", "year": 2014,
+ "url": "https://arxiv.org/abs/1406.2661",
+ "blurb": "Trained a generator by pitting it against a discriminator that learns to tell real samples from generated ones, with no likelihood and no Markov chains.",
+ "intro": "The discriminator is a binary classifier trained with cross-entropy on real and generated samples; the generator is trained to make the discriminator wrong. The two alternate, usually with a few discriminator steps per generator step, and the paper's practical trick is the non-saturating generator loss. The steps build the networks, the classifier loss and a single adversarial update; the capstone runs the full alternating loop on 1-D data and also asks how to evaluate the result.",
+ "steps": [
+  {"name": "MLP forward pass", "problem": "multi-layer-perceptron-forward-pass", "note": "Both players in the paper are MLPs."},
+  {"name": "The discriminator's loss", "problem": "log-loss-binary-cross-entropy"},
+  {"name": "One adversarial update", "problem": "gan-training-step"},
+  {"name": "Evaluating samples with FID", "problem": "frechet-distance-between-feature-sets", "note": "A later metric, now the standard way to compare GANs."}
+ ],
+ "capstone": "gan-1d-training-loop",
+ "lessons": ["dlcore:07.02"]}

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Muon: orthogonalize a momentum update with Newton-Schulz', tags=['Training', 'Linear Algebra'],
-            diff='Easy', runtime='numpy', lessons=['mlmaths:07.02', 'air-fanout-v1:05.06'],
+            diff='Easy', runtime='numpy', lessons=['mlmaths:07.07', 'air-fanout-v1:05.06'],
             related=['adam-optimizer', 'gram-schmidt-orthogonalization', 'diagnose-mup-width-invariants'])
 
 STATEMENT = r"""

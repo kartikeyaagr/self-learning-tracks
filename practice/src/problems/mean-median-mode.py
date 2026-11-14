@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Mean, median and mode in one pass', tags=['Probability and Statistics'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:10.04'], related=['sample-variance-and-standard-deviation', 'percentiles-quantiles'])
+            lessons=['mlmaths:10.15'], related=['sample-variance-and-standard-deviation', 'percentiles-quantiles'])
 
 STATEMENT = r"""
 The three classic summaries of "where the data sits" answer different questions:

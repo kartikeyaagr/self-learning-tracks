@@ -1,0 +1,14 @@
+---
+import Practice from '../../layouts/Practice.astro';
+import PCard from '../../components/PCard.astro';
+import { IDX, buildItems } from '../../lib/practice.mjs';
+import { u } from '../../lib/url.mjs';
+export const getStaticPaths = () => [{params: {kind: 'papers'}}, {params: {kind: 'projects'}}];
+const kind = Astro.params.kind.slice(0, -1), paper = kind === 'paper', bs = IDX.builds.filter(b => b.kind === kind);
+---
+<Practice title={paper ? 'Papers' : 'Projects'} cur={Astro.params.kind}>
+  <h1 style="font-size:40px;letter-spacing:-.045em;margin:4px 0 6px">{paper ? 'Implement papers from scratch' : 'Projects'}</h1>
+  <p style="color:var(--muted);margin:0 0 8px;max-width:660px">{paper ? 'Rebuild influential models one tested component at a time, then assemble them in a capstone.' : 'Build a complete system step by step. Each step is a problem with tests; the capstone puts it together.'}</p>
+  {[...new Set(bs.map(b => b.group))].map(g => <><div class="parth"><h3>{g}</h3></div><div class="mods">{bs.filter(b => b.group === g).map(b =>
+    <PCard href={u(`/practice/builds/${b.id}/`)} lab={paper ? `${b.group} · ${b.year}` : b.group} title={b.title} blurb={b.blurb} ids={buildItems(b).map(l => l.id)} unit="done" badge="Built" right={`${b.steps.length} steps + capstone`} />)}</div></>)}
+</Practice>

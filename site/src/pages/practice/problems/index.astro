@@ -1,0 +1,35 @@
+---
+import Practice from '../../../layouts/Practice.astro';
+import ProblemRow from '../../../components/ProblemRow.astro';
+import { IDX, ALL, RT } from '../../../lib/practice.mjs';
+const names = IDX.parts.flatMap(P => IDX.topics.filter(x => x.part === P).map(x => x.name));
+const tags = [...names, ...[...new Set(ALL.flatMap(l => l.tags))].filter(t => !names.includes(t))];
+const tagN = t => ALL.filter(l => l.tags.includes(t)).length;
+---
+<Practice title="All problems" cur="all">
+  <h1 style="font-size:40px;letter-spacing:-.045em;margin:4px 0 18px">All problems</h1>
+  <div class="card filters">
+    <div class="row"><input type="search" id="fq" placeholder="Search titles and tags" aria-label="Search">
+      <select id="fd" aria-label="Difficulty"><option value="">Any difficulty</option>{['Easy', 'Medium', 'Hard'].map(d => <option>{d}</option>)}</select>
+      <select id="fr" aria-label="Runtime"><option value="">Any runtime</option>{[...new Set(ALL.map(l => l.rt))].map(r => <option value={r}>{RT[r] || r}</option>)}</select>
+      <select id="fs" aria-label="Status"><option value="">Any status</option><option value="todo">Unsolved</option><option value="done">Solved</option></select></div>
+    <div class="tchips">{tags.map(t => <button type="button" class="tchip" data-t={t} aria-pressed="false">{t}<b>{tagN(t)}</b></button>)}</div>
+  </div>
+  <p class="cnt-line" id="cnt">{ALL.length} problems</p>
+  <div class="plist" id="flist">{ALL.map(l => <ProblemRow l={l} />)}</div>
+  <div class="card" id="none" style="padding:20px;color:var(--muted)" hidden>No problems match these filters.</div>
+  <script>
+    import { isDone } from '../../../lib/practice-client.js';
+    const $ = s => document.getElementById(s), F = {tags: new Set()}, rows = [...document.querySelectorAll('#flist .prow')];
+    const draw = () => {
+      const q = $('fq').value.toLowerCase(), d = $('fd').value, rt = $('fr').value, s = $('fs').value; let n = 0;
+      rows.forEach(r => { const x = r.dataset, ok = (!q || x.q.includes(q)) && (!F.tags.size || x.tags.split('|').some(t => F.tags.has(t)))
+        && (!d || x.d === d) && (!rt || x.rt === rt) && (!s || (s === 'done') === isDone(x.id)); r.hidden = !ok; n += ok; });
+      $('cnt').textContent = `${n} problem${n === 1 ? '' : 's'}`; $('none').hidden = n > 0;
+    };
+    ['fq', 'fd', 'fr', 'fs'].forEach(id => $(id).addEventListener('input', draw));
+    document.querySelectorAll('.tchip').forEach(b => b.addEventListener('click', () => { const t = b.dataset.t;
+      F.tags.has(t) ? F.tags.delete(t) : F.tags.add(t); b.setAttribute('aria-pressed', String(F.tags.has(t))); draw(); }));
+    const t = new URLSearchParams(location.search).get('tag'); if (t) document.querySelector(`.tchip[data-t="${CSS.escape(t)}"]`)?.click();
+  </script>
+</Practice>

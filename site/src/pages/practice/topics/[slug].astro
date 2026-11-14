@@ -1,0 +1,16 @@
+---
+import Practice from '../../../layouts/Practice.astro';
+import ProblemRow from '../../../components/ProblemRow.astro';
+import PHead from '../../../components/PHead.astro';
+import { IDX, ALL } from '../../../lib/practice.mjs';
+import { u } from '../../../lib/url.mjs';
+export const getStaticPaths = () => IDX.topics.map(m => ({params: {slug: m.slug}, props: {m}}));
+const { m } = Astro.props;
+const ls = ALL.filter(l => l.mod === m.n), more = ALL.filter(l => l.mod !== m.n && l.tags.includes(m.name));
+---
+<Practice title={m.name} topic={m.slug} crumbs={[[m.name, u(`/practice/topics/${m.slug}/`)]]}>
+  <PHead lab={`Topic ${m.n} · ${m.part}`} title={m.name} items={ls} big={m.n} />
+  <div class="sh"><h2>Problems</h2><span class="lab">Easy to hard</span></div>
+  <div class="plist">{ls.map(l => <ProblemRow l={l} />)}</div>
+  {more.length > 0 && <><div class="sh"><h2>Also tagged {m.name}</h2></div><div class="plist">{more.map(l => <ProblemRow l={l} />)}</div></>}
+</Practice>

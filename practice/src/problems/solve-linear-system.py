@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Solve Ax = b or report singular', tags=['Linear Algebra'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:03.03', 'mlmaths:03.04'], related=['lu-decomposition', 'matrix-rank', 'least-squares-solution'])
+            lessons=['mlmaths:03.16', 'mlmaths:03.28'], related=['lu-decomposition', 'matrix-rank', 'least-squares-solution'])
 
 STATEMENT = r"""
 A square system $Ax = b$ has exactly one solution when $A$ is invertible. Solvers like `np.linalg.solve` factorise $A$ (LU with pivoting) instead of forming $A^{-1}$, which is faster and more accurate. But `solve` only raises an error for *exactly* singular matrices; a nearly singular one silently returns garbage.

@@ -1,0 +1,13 @@
+{"id": "dropout", "kind": "paper", "group": "Training and optimization",
+ "title": "Dropout: A Simple Way to Prevent Neural Networks from Overfitting", "authors": "Srivastava et al.", "year": 2014,
+ "url": "https://jmlr.org/papers/v15/srivastava14a.html",
+ "blurb": "Regularised neural networks by randomly zeroing units during training, approximately averaging an exponential number of thinned networks at test time.",
+ "intro": "During training each unit is kept with some probability and dropped otherwise, a different mask for every example and step. At test time the full network is used with activations scaled to match their training-time expectation; the inverted form does the scaling during training instead. The steps build the forward pass, inverted dropout and its channel-wise variant for feature maps; the capstone trains a regressor with explicit masks and compares deterministic prediction with Monte Carlo dropout.",
+ "steps": [
+  {"name": "MLP forward pass", "problem": "multi-layer-perceptron-forward-pass"},
+  {"name": "Inverted dropout in an MLP", "problem": "dropout"},
+  {"name": "Channel dropout for feature maps", "problem": "dropout-2", "note": "Drops whole channels, since neighbouring pixels are strongly correlated."},
+  {"name": "Backprop through a hidden layer", "problem": "backpropagation-single-hidden-layer"}
+ ],
+ "capstone": "dropout-train-and-mc-predict",
+ "lessons": ["dlcore:02.03"]}

@@ -1,0 +1,16 @@
+{"id": "u-net", "kind": "paper", "group": "Convolutional networks",
+ "title": "U-Net: Convolutional Networks for Biomedical Image Segmentation", "authors": "Ronneberger, Fischer & Brox", "year": 2015,
+ "url": "https://arxiv.org/abs/1505.04597",
+ "blurb": "An encoder-decoder with skip connections at every resolution that produces precise per-pixel segmentations from very few training images.",
+ "intro": "U-Net contracts the image with convolutions and pooling, expands it again with up-convolutions, and at each level concatenates the encoder's feature map into the decoder so fine detail survives. The original uses unpadded convolutions (hence cropping) and a weighted loss that separates touching cells. The steps build each operation and a one-level U-Net; the capstone is the original valid-convolution design with its weighted loss.",
+ "steps": [
+  {"name": "Convolution", "problem": "2d-convolution"},
+  {"name": "Max pooling", "problem": "max-pool-2d"},
+  {"name": "Transposed convolution (up-convolution)", "problem": "transposed-convolution"},
+  {"name": "Centre crop", "problem": "zero-pad-and-center-crop"},
+  {"name": "Skip connection: upsample, align, concatenate", "problem": "u-net-skip-connection"},
+  {"name": "A one-level U-Net forward pass", "problem": "tiny-u-net-forward-pass"},
+  {"name": "Segmentation metrics", "problem": "mean-iou-for-segmentation"}
+ ],
+ "capstone": "u-net-valid-conv-segmentation",
+ "lessons": ["dlcore:03.01", "dlcore:03.02"]}

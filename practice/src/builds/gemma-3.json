@@ -1,0 +1,14 @@
+{"id": "gemma-3", "kind": "paper", "group": "Transformers and LLMs",
+ "title": "Gemma 3 Technical Report", "authors": "Gemma Team, Google DeepMind", "year": 2025,
+ "url": "https://arxiv.org/abs/2503.19786",
+ "blurb": "Extends the Gemma decoder to 128k-token contexts by making most layers sliding-window attention, with a global layer every few layers.",
+ "intro": "Gemma 3's block is a GQA decoder block with RMSNorm on both sides of each sublayer and QK-norm inside attention. The architecture change that matters most is the layer schedule: five local sliding-window layers for every global layer, with a small RoPE base for local layers and a large one for global layers. The steps cover sliding-window GQA, RoPE, the norm choices and the gated MLP; the capstone builds the interleaved stack.",
+ "steps": [
+  {"name": "Causal GQA with a sliding window", "problem": "causal-grouped-query-attention"},
+  {"name": "Rotary position embeddings", "problem": "rotary-position-embedding-rope"},
+  {"name": "Soft-capping vs QK-norm", "problem": "qk-norm-vs-logit-softcap", "note": "Gemma 2 capped logits; Gemma 3 normalises queries and keys instead."},
+  {"name": "RMSNorm and a gated MLP", "problem": "norm-gated-linear-transform"},
+  {"name": "KV-cache size of local vs global layers", "problem": "kv-cache-memory-for-mha-mqa-gqa-and-mla"}
+ ],
+ "capstone": "gemma3-local-global-stack",
+ "lessons": ["aieng:07.02", "aieng:04.03"]}

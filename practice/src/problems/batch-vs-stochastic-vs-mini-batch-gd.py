@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Batch, stochastic and mini-batch gradient descent', tags=['Optimization', 'Regression', 'Training'], diff='Medium',
-            runtime='numpy', lessons=['mlmaths:08.02', 'air-fanout-v1:12.01'],
+            runtime='numpy', lessons=['mlmaths:08.03', 'air-fanout-v1:12.01'],
             related=['vanilla-gradient-descent', 'gradient-accumulation'])
 
 STATEMENT = r"""

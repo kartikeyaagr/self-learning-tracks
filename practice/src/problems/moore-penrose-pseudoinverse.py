@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Pseudoinverse and minimum-norm solutions', tags=['Linear Algebra'], diff='Hard', runtime='numpy',
-            lessons=['mlmaths:08.01', 'mlmaths:07.02'], related=['least-squares-solution', 'svd-components', 'matrix-rank'])
+            lessons=['mlmaths:08.01', 'mlmaths:07.07'], related=['least-squares-solution', 'svd-components', 'matrix-rank'])
 
 STATEMENT = r"""
 The Moore–Penrose pseudoinverse $A^+$ generalises the inverse to any matrix, square or not, full rank or not. From the SVD $A = U\Sigma V^\top$:

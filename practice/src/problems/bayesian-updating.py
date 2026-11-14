@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Beta-binomial updating, batch by batch', tags=['Probability'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:10.01', 'mlmaths:12.02'], related=['bayes-theorem', 'maximum-likelihood-estimation'])
+            lessons=['mlmaths:10.01', 'mlmaths:12.10'], related=['bayes-theorem', 'maximum-likelihood-estimation'])
 
 STATEMENT = r"""
 You're tracking a click-through rate $\theta$. Start with a $\mathrm{Beta}(a, b)$ prior. After seeing $s$ clicks in $t$ impressions, Bayes' rule gives another Beta:

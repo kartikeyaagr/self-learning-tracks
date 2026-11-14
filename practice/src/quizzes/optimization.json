@@ -1,0 +1,563 @@
+{
+ "plan": "optimization",
+ "sections": [
+  {
+   "section": "Foundations: minima, convexity, curvature",
+   "questions": [
+    {
+     "q": "The quadratic $f(x) = ax^2 + bx + c$ with $a > 0$ is minimised at...",
+     "options": [
+      "$x = 0$",
+      "$x = -b/a$",
+      "$x = b/(2a)$",
+      "$x = -b/(2a)$"
+     ],
+     "answer": 3,
+     "why": "Setting $f'(x) = 2ax + b$ to zero gives the vertex. With $a < 0$ the same point is a maximum."
+    },
+    {
+     "q": "A twice-differentiable function is convex exactly when...",
+     "options": [
+      "Its gradient is zero somewhere",
+      "Its Hessian is diagonal",
+      "It has a unique minimum",
+      "Its Hessian is positive semidefinite everywhere"
+     ],
+     "answer": 3,
+     "why": "The second-order condition is the standard test. A convex function can have no minimum (for example $e^x$) or many (a flat region)."
+    },
+    {
+     "q": "For a separable function $f(x) = \\sum_i f_i(x_i)$, how can you find its minimum?",
+     "options": [
+      "Minimise each $f_i$ independently",
+      "By minimising the sum of the $x_i$",
+      "Only by gradient descent on all coordinates jointly",
+      "It has no minimum"
+     ],
+     "answer": 0,
+     "why": "Without interaction terms, each coordinate's optimum doesn't depend on the others."
+    },
+    {
+     "q": "At a critical point, the Hessian has eigenvalues $3, 0, 1$. What can you conclude?",
+     "options": [
+      "It is a maximum",
+      "It is a saddle point",
+      "The second-order test is inconclusive because of the zero eigenvalue",
+      "It is a strict local minimum"
+     ],
+     "answer": 2,
+     "why": "A zero eigenvalue means the quadratic model is flat in that direction, so higher-order terms decide. If all were positive it would be a strict minimum."
+    },
+    {
+     "q": "Is the intersection of two convex sets convex?",
+     "options": [
+      "Never",
+      "Only for polytopes",
+      "Always",
+      "Only if they overlap in a single point"
+     ],
+     "answer": 2,
+     "why": "If two points lie in both sets, the segment between them lies in each set, hence in both. The union of convex sets usually isn't convex."
+    },
+    {
+     "q": "A point $x$ lies inside the polytope $\\{x : Ax \\le b\\}$ when...",
+     "options": [
+      "At least one row is satisfied",
+      "Every row satisfies $a_i^\\top x \\le b_i$",
+      "$\\|Ax\\| \\le \\|b\\|$",
+      "$Ax = b$"
+     ],
+     "answer": 1,
+     "why": "A polytope is an intersection of half-spaces, so every constraint must hold. Points with some equality lie on the boundary."
+    },
+    {
+     "q": "Which function is convex on all of $\\mathbb R$?",
+     "options": [
+      "$-x^2$",
+      "$\\sin x$",
+      "$x^3$",
+      "$\\log(1 + e^x)$"
+     ],
+     "answer": 3,
+     "why": "Softplus has second derivative $\\sigma(x)(1 - \\sigma(x)) > 0$. $x^3$ is convex only for $x \\ge 0$."
+    },
+    {
+     "q": "Why does convexity matter for optimisation?",
+     "options": [
+      "The gradient is always non-zero",
+      "Every local minimum is a global minimum",
+      "Gradient descent converges in one step",
+      "The minimum is always at 0"
+     ],
+     "answer": 1,
+     "why": "For a convex function, any point where no small move improves the value is globally optimal, so local methods are enough."
+    }
+   ]
+  },
+  {
+   "section": "Gradient descent and momentum",
+   "questions": [
+    {
+     "q": "Gradient descent on $f(x) = 5x^2$ with step size 0.3 does what?",
+     "options": [
+      "Diverges, because $|1 - 0.3\\cdot10| = 2 > 1$",
+      "Stays put",
+      "Converges monotonically",
+      "Converges with oscillation"
+     ],
+     "answer": 0,
+     "why": "The update is $x \\leftarrow (1 - \\eta f'')x$ with $f'' = 10$. A step below $2/10 = 0.2$ is needed; between 0.1 and 0.2 it converges while oscillating."
+    },
+    {
+     "q": "What distinguishes stochastic gradient descent from batch gradient descent?",
+     "options": [
+      "It adds noise to the parameters",
+      "Each update uses the gradient of one (or a few) examples instead of the full dataset",
+      "It only updates some parameters",
+      "It uses a random learning rate"
+     ],
+     "answer": 1,
+     "why": "Mini-batch gradients are noisy but cheap and unbiased estimates of the full gradient, so you get many more updates per epoch."
+    },
+    {
+     "q": "With momentum $v \\leftarrow \\beta v + g$, $\\theta \\leftarrow \\theta - \\eta v$, and a constant gradient $g$, what is the eventual step size?",
+     "options": [
+      "$\\eta\\beta g$",
+      "$\\eta g$",
+      "$\\eta g/(1 - \\beta)$",
+      "0"
+     ],
+     "answer": 2,
+     "why": "The velocity converges to $g/(1 - \\beta)$; with $\\beta = 0.9$ steps are 10 times larger in consistent directions, while oscillating components partly cancel."
+    },
+    {
+     "q": "How does Nesterov momentum differ from classical momentum?",
+     "options": [
+      "It evaluates the gradient at the look-ahead point $\\theta - \\eta\\beta v$",
+      "It skips the velocity term",
+      "It uses a decaying $\\beta$",
+      "It normalises the gradient"
+     ],
+     "answer": 0,
+     "why": "Looking ahead lets the update correct for where momentum is about to carry it, which reduces overshoot and improves the convex convergence rate."
+    },
+    {
+     "q": "Doubling the batch size halves what, roughly?",
+     "options": [
+      "The variance of the gradient estimate",
+      "The loss",
+      "The gradient's expected value",
+      "The number of parameters"
+     ],
+     "answer": 0,
+     "why": "Averaging twice as many independent examples halves the variance. The expected gradient is the same."
+    },
+    {
+     "q": "The loss curve oscillates wildly and occasionally spikes. Which change is most likely to help first?",
+     "options": [
+      "Remove momentum entirely and raise the learning rate",
+      "Train for more epochs",
+      "Raise the learning rate",
+      "Lower the learning rate"
+     ],
+     "answer": 3,
+     "why": "Large oscillations usually mean the step size is near or above the stability limit for the sharpest directions."
+    },
+    {
+     "q": "In SGD, why shuffle the data each epoch?",
+     "options": [
+      "To make each epoch faster",
+      "To change the loss function",
+      "To avoid correlated consecutive batches that bias the updates",
+      "It is needed for momentum to work"
+     ],
+     "answer": 2,
+     "why": "Ordered data (for example sorted by label) gives a sequence of biased gradients. Shuffling keeps each mini-batch a fair sample."
+    },
+    {
+     "q": "Gradient descent on a quadratic bowl with condition number 100 and the best fixed step size converges at roughly what rate per step?",
+     "options": [
+      "The error halves every step",
+      "It converges in 100 steps exactly",
+      "The error shrinks by $1/\\kappa$ per step",
+      "The error shrinks by about $(\\kappa - 1)/(\\kappa + 1)\\approx0.98$"
+     ],
+     "answer": 3,
+     "why": "With the optimal step $2/(\\lambda_{min} + \\lambda_{max})$, the contraction factor is $(\\kappa - 1)/(\\kappa + 1)$, so about 115 steps per factor of 10."
+    }
+   ]
+  },
+  {
+   "section": "Adaptive optimizers",
+   "questions": [
+    {
+     "q": "AdaGrad divides by $\\sqrt{\\sum_t g_t^2}$. What is its main weakness on long training runs?",
+     "options": [
+      "The accumulated sum only grows, so the effective learning rate decays towards zero",
+      "It can't handle sparse gradients",
+      "It is not invariant to the learning rate",
+      "It needs second derivatives"
+     ],
+     "answer": 0,
+     "why": "AdaGrad suits convex and sparse problems but stalls in deep learning. RMSProp replaces the sum with an exponential moving average."
+    },
+    {
+     "q": "RMSProp keeps $v \\leftarrow \\rho v + (1 - \\rho)g^2$. What does dividing by $\\sqrt v$ achieve?",
+     "options": [
+      "It adds momentum",
+      "Each parameter's step is normalised by its recent gradient magnitude",
+      "It projects the gradient onto a sphere",
+      "It doubles the learning rate"
+     ],
+     "answer": 1,
+     "why": "Parameters with consistently large gradients take smaller steps and those with small gradients take larger ones, which helps in narrow valleys like Rosenbrock's."
+    },
+    {
+     "q": "Adam's update magnitude per parameter is roughly bounded by...",
+     "options": [
+      "The learning rate, regardless of the gradient's scale",
+      "The gradient's magnitude",
+      "$\\epsilon$",
+      "1"
+     ],
+     "answer": 0,
+     "why": "$\\hat m/\\sqrt{\\hat v}$ is about $\\pm1$ when gradients are consistent, so the step is about $\\eta$. That scale invariance is why Adam needs less learning-rate tuning across layers."
+    },
+    {
+     "q": "What is the difference between Adam with L2 regularisation and AdamW?",
+     "options": [
+      "They are identical",
+      "AdamW uses a larger $\\epsilon$",
+      "AdamW applies weight decay directly to the weights, not through the adaptive gradient",
+      "AdamW has no momentum"
+     ],
+     "answer": 2,
+     "why": "With L2 added to the gradient, Adam's normalisation shrinks the decay for parameters with large gradients. Decoupling makes the decay uniform, which generalises better in practice."
+    },
+    {
+     "q": "Adam's bias correction matters most when?",
+     "options": [
+      "At the end of training",
+      "Only for sparse gradients",
+      "In the first steps, because $m$ and $v$ start at zero",
+      "When the learning rate is large"
+     ],
+     "answer": 2,
+     "why": "The correction factors $1 - \\beta^t$ approach 1 quickly for $\\beta_1 = 0.9$ (after about 50 steps) and more slowly for $\\beta_2 = 0.999$."
+    },
+    {
+     "q": "Logistic regression trained with Adam versus plain gradient descent: which is guaranteed to reach the same minimum?",
+     "options": [
+      "Neither",
+      "Both can reach the unique minimum for a strictly convex loss, given suitable step sizes",
+      "Only Adam",
+      "Only gradient descent"
+     ],
+     "answer": 1,
+     "why": "Strict convexity gives one minimum; both methods can converge to it, although Adam with a fixed learning rate may hover around it without decay."
+    },
+    {
+     "q": "What role does $\\epsilon$ play in $\\theta \\leftarrow \\theta - \\eta\\,\\hat m/(\\sqrt{\\hat v} + \\epsilon)$?",
+     "options": [
+      "It is the learning rate",
+      "It prevents division by zero and caps the step for parameters with tiny gradients",
+      "It is the momentum coefficient",
+      "It adds noise"
+     ],
+     "answer": 1,
+     "why": "When $\\hat v$ is near 0, $\\epsilon$ dominates the denominator, so steps stay bounded. Larger values make Adam behave more like SGD with momentum."
+    },
+    {
+     "q": "Which optimiser keeps the most state per parameter?",
+     "options": [
+      "SGD with momentum (one buffer)",
+      "SGD without momentum (none)",
+      "They all keep the same",
+      "Adam (two moment buffers)"
+     ],
+     "answer": 3,
+     "why": "Adam stores $m$ and $v$, so its optimiser memory is twice the parameter size (in full precision). That matters for large models."
+    }
+   ]
+  },
+  {
+   "section": "Learning-rate schedules",
+   "questions": [
+    {
+     "q": "Why use linear warmup at the start of training?",
+     "options": [
+      "To save memory",
+      "Early gradients and Adam statistics are unreliable, so large steps can destabilise training",
+      "It is required by the cosine schedule",
+      "To reduce total training time"
+     ],
+     "answer": 1,
+     "why": "Warmup lets the second-moment estimates settle and avoids early divergence, which is common in transformers with large learning rates."
+    },
+    {
+     "q": "A cosine schedule from $\\eta_{max}$ to 0 over $T$ steps has what value at $t = T/2$?",
+     "options": [
+      "$\\eta_{max}/\\sqrt2$",
+      "$\\eta_{max}$",
+      "0",
+      "$\\eta_{max}/2$"
+     ],
+     "answer": 3,
+     "why": "$\\eta_t = \\frac{\\eta_{max}}{2}(1 + \\cos(\\pi t/T))$, and $\\cos(\\pi/2) = 0$."
+    },
+    {
+     "q": "What do warm restarts (SGDR) do?",
+     "options": [
+      "Periodically reset the learning rate to a high value and anneal again",
+      "Reset the optimiser state each epoch",
+      "Increase the batch size over time",
+      "Restart training from the initial weights"
+     ],
+     "answer": 0,
+     "why": "Each cycle anneals to a low learning rate, then jumps back up, which can escape sharp regions and gives snapshots at each cycle end."
+    },
+    {
+     "q": "In an LR range test, the loss is recorded while the learning rate grows exponentially. How do you pick the maximum learning rate?",
+     "options": [
+      "At the largest learning rate tested",
+      "At the learning rate with the lowest loss exactly",
+      "Somewhat below the point where the loss starts to rise sharply",
+      "At the very start of the test"
+     ],
+     "answer": 2,
+     "why": "The loss falls fastest well before divergence. A common heuristic picks a value a factor of a few below the blow-up point."
+    },
+    {
+     "q": "A one-cycle schedule does what?",
+     "options": [
+      "Ramps the learning rate up to a maximum and then down to well below the start",
+      "Uses one epoch only",
+      "Decays the learning rate exponentially from the start",
+      "Keeps the learning rate constant"
+     ],
+     "answer": 0,
+     "why": "The high-rate middle phase explores, and the long anneal at the end settles. Momentum is often cycled in the opposite direction."
+    },
+    {
+     "q": "Sweeping learning rates over a grid, which spacing is usual?",
+     "options": [
+      "Linear, such as 0.001, 0.002, 0.003",
+      "A single value",
+      "Random integers",
+      "Logarithmic, such as $10^{-4}, 3\\cdot10^{-4}, 10^{-3}$"
+     ],
+     "answer": 3,
+     "why": "Good learning rates span orders of magnitude, so a log grid covers the range with few points."
+    },
+    {
+     "q": "Training with a constant learning rate ends with the loss hovering above its minimum. Why does decaying the learning rate help?",
+     "options": [
+      "It changes the minimum",
+      "SGD noise keeps the iterate bouncing; smaller steps shrink that noise ball",
+      "It makes the loss convex",
+      "It increases the gradient"
+     ],
+     "answer": 1,
+     "why": "With a fixed step, stochastic gradients keep the parameters in a region whose size scales with the step. Annealing lets them settle."
+    },
+    {
+     "q": "Linear warmup for 1,000 steps to $\\eta_{max} = 3\\times10^{-4}$: what is the learning rate at step 250?",
+     "options": [
+      "$2.5\\times10^{-4}$",
+      "$7.5\\times10^{-5}$",
+      "$1.2\\times10^{-3}$",
+      "$3\\times10^{-4}$"
+     ],
+     "answer": 1,
+     "why": "Linear warmup gives $\\eta_{max}\\cdot t/T_{warm} = 3\\times10^{-4}\\cdot0.25$."
+    }
+   ]
+  },
+  {
+   "section": "Regularisation and training hygiene",
+   "questions": [
+    {
+     "q": "ISTA for the lasso alternates a gradient step with which operation?",
+     "options": [
+      "Squaring the weights",
+      "Projecting onto the unit ball",
+      "Rounding to the nearest integer",
+      "Soft-thresholding each coordinate by $\\eta\\lambda$"
+     ],
+     "answer": 3,
+     "why": "Soft-thresholding is the proximal operator of $\\lambda\\|w\\|_1$. It shrinks coefficients and sets small ones exactly to zero."
+    },
+    {
+     "q": "You accumulate gradients over 4 micro-batches of different numbers of real (unpadded) tokens. How should you combine them to match one big batch?",
+     "options": [
+      "Sum the per-token loss gradients and divide by the total token count across all micro-batches",
+      "Average each micro-batch's mean loss equally",
+      "Multiply the learning rate by 4",
+      "Use only the last micro-batch"
+     ],
+     "answer": 0,
+     "why": "Averaging per-micro-batch means gives tokens in small micro-batches more weight than tokens in large ones. Normalising by the global count reproduces the single-batch gradient."
+    },
+    {
+     "q": "Inverted dropout scales kept activations by $1/(1 - p)$ during training. Why?",
+     "options": [
+      "To increase the learning rate",
+      "To make dropout deterministic",
+      "So the expected activation is unchanged and no scaling is needed at test time",
+      "To prevent overfitting directly"
+     ],
+     "answer": 2,
+     "why": "Each unit survives with probability $1 - p$; dividing by that keeps its mean equal to the full network's."
+    },
+    {
+     "q": "Early stopping with patience 5 means what?",
+     "options": [
+      "Stop after 5 epochs",
+      "Wait 5 minutes between epochs",
+      "Stop when validation loss hasn't improved for 5 consecutive evaluations, and restore the best checkpoint",
+      "Stop when training loss rises 5 times"
+     ],
+     "answer": 2,
+     "why": "Restoring the best checkpoint matters; the last weights are by construction worse than the best by up to 5 evaluations."
+    },
+    {
+     "q": "L1 regularisation tends to produce sparse weights, while L2 doesn't. Why?",
+     "options": [
+      "L2 adds noise to the weights",
+      "L1 makes the loss convex",
+      "L1's penalty has a constant slope near zero, so small weights are pushed all the way to zero",
+      "L2 is not differentiable"
+     ],
+     "answer": 2,
+     "why": "L2's gradient $2\\lambda w$ vanishes as $w \\to 0$, so weights shrink but rarely reach exactly zero."
+    },
+    {
+     "q": "Which data leak most commonly inflates validation accuracy?",
+     "options": [
+      "Shuffling the training set",
+      "Fitting preprocessing (scalers, vocabularies, imputation) on all data before splitting",
+      "Using a fixed random seed",
+      "Using early stopping"
+     ],
+     "answer": 1,
+     "why": "Statistics computed on the validation set leak its distribution into training. Fit preprocessing on the training split only."
+    },
+    {
+     "q": "Validation loss rises while training loss keeps falling. What is happening?",
+     "options": [
+      "Underfitting",
+      "The learning rate is too small",
+      "Overfitting",
+      "The data loader is broken"
+     ],
+     "answer": 2,
+     "why": "The model is fitting noise specific to the training set. Regularisation, more data or early stopping help."
+    },
+    {
+     "q": "Weight decay with coefficient $\\lambda$ in plain SGD multiplies the weights by what each step, before the gradient update?",
+     "options": [
+      "$1 - \\eta\\lambda$",
+      "$\\lambda$",
+      "$1 + \\eta\\lambda$",
+      "$\\eta$"
+     ],
+     "answer": 0,
+     "why": "Adding $\\lambda w$ to the gradient gives $w - \\eta(g + \\lambda w) = (1 - \\eta\\lambda)w - \\eta g$. For SGD this matches L2 regularisation with penalty $\\frac\\lambda2\\|w\\|^2$."
+    }
+   ]
+  },
+  {
+   "section": "Second-order methods and stability",
+   "questions": [
+    {
+     "q": "Newton's method for logistic regression converges in few iterations because...",
+     "options": [
+      "It uses a larger learning rate",
+      "Near the optimum it converges quadratically, using the curvature",
+      "It ignores the gradient",
+      "Logistic regression is linear"
+     ],
+     "answer": 1,
+     "why": "Each step solves a weighted least-squares problem (IRLS). The cost is a $d\\times d$ solve per iteration, fine for small $d$."
+    },
+    {
+     "q": "What is the cost of forming and inverting the Hessian for $d$ parameters?",
+     "options": [
+      "$O(d\\log d)$",
+      "$O(d^2)$ memory and $O(d^3)$ time",
+      "Constant",
+      "$O(d)$ memory and time"
+     ],
+     "answer": 1,
+     "why": "For a model with $10^9$ parameters that is impossible, which is why deep learning uses first-order methods or cheap curvature approximations."
+    },
+    {
+     "q": "L-BFGS approximates the inverse Hessian using what?",
+     "options": [
+      "The last $m$ pairs of parameter and gradient differences",
+      "The full Hessian computed every $m$ steps",
+      "Random projections",
+      "The diagonal of the Hessian only"
+     ],
+     "answer": 0,
+     "why": "It never forms a matrix: a two-loop recursion applies the approximation to the gradient in $O(md)$ time."
+    },
+    {
+     "q": "Clipping gradients **by value** (each component to $[-c, c]$) differs from clipping by global norm how?",
+     "options": [
+      "It preserves direction exactly",
+      "It never changes anything",
+      "It only applies to biases",
+      "It can change the gradient's direction"
+     ],
+     "answer": 3,
+     "why": "Components above $c$ are capped while others aren't, so the vector rotates. Global-norm clipping rescales uniformly and keeps the direction."
+    },
+    {
+     "q": "Why can Newton's method move towards a saddle point in non-convex problems?",
+     "options": [
+      "It only works on convex functions and stops elsewhere",
+      "Its step size is too small",
+      "It always follows the negative gradient",
+      "It jumps to the critical point of the local quadratic model, which may be a saddle"
+     ],
+     "answer": 3,
+     "why": "With negative Hessian eigenvalues, $-H^{-1}g$ points uphill in those directions. Damping or saddle-free variants address this."
+    },
+    {
+     "q": "Adaptive gradient clipping scales a layer's gradient based on what?",
+     "options": [
+      "The loss value",
+      "The number of layers",
+      "The ratio of the gradient norm to the parameter norm for that layer",
+      "The batch size"
+     ],
+     "answer": 2,
+     "why": "Clipping relative to the weight's own size keeps the relative update bounded, which made training normaliser-free networks stable."
+    },
+    {
+     "q": "On an ill-conditioned quadratic bowl, which optimiser typically needs the fewest steps?",
+     "options": [
+      "Newton's method (one step on an exact quadratic)",
+      "SGD with a tiny learning rate",
+      "Plain gradient descent",
+      "Random search"
+     ],
+     "answer": 0,
+     "why": "Newton's step uses the exact Hessian, so it lands on the minimum of a quadratic immediately. Adaptive and momentum methods sit in between."
+    },
+    {
+     "q": "A loss spike appears and then recovers. Which mechanism is designed to limit the damage from rare huge gradients?",
+     "options": [
+      "Using float64",
+      "Removing weight decay",
+      "Increasing the batch size mid-step",
+      "Gradient-norm clipping"
+     ],
+     "answer": 3,
+     "why": "Clipping caps the size of any single update, so one bad batch can't throw the parameters far away."
+    }
+   ]
+  }
+ ]
+}

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Jacobian of a polynomial map', tags=['Calculus'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:09.03', 'air-fanout-v1:01.09'],
+            lessons=['mlmaths:09.21', 'air-fanout-v1:01.09'],
             related=['second-order-partial-derivatives', 'jacobian-of-neural-network-layer'])
 
 STATEMENT = r"""

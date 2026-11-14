@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Cholesky factorisation, solve and log-determinant', tags=['Linear Algebra'], diff='Hard', runtime='numpy',
-            lessons=['mlmaths:07.01', 'mlmaths:03.04'], related=['lu-decomposition', 'mahalanobis-distance', 'solve-linear-system'])
+            lessons=['mlmaths:07.01', 'mlmaths:03.28'], related=['lu-decomposition', 'mahalanobis-distance', 'solve-linear-system'])
 
 STATEMENT = r"""
 A symmetric positive definite (SPD) matrix factors as $A = LL^\top$ with $L$ lower-triangular and $L_{ii} > 0$. It is half the cost of LU, needs no pivoting, and it doubles as a test for positive definiteness: the factorisation succeeds exactly when $A$ is SPD. Gaussian processes and Gaussian log-likelihoods use it for both the solve and the log-determinant.

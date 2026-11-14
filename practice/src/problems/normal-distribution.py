@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Normal pdf and cdf, accurate in the tails', tags=['Probability'], diff='Medium', runtime='numpy',
-            lessons=['mlmaths:10.06', 'mlmaths:10.02'], related=['z-test-one-sample', 'central-limit-theorem'])
+            lessons=['mlmaths:10.35', 'mlmaths:10.04'], related=['z-test-one-sample', 'central-limit-theorem'])
 
 STATEMENT = r"""
 For $X \sim \mathcal N(\mu, \sigma^2)$, with $z = (x - \mu)/\sigma$:

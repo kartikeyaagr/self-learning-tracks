@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Norm-constrained least squares and its multiplier', tags=['Optimization', 'Regression'], diff='Hard',
-            runtime='numpy', lessons=['mlmaths:09.08', 'mlmaths:08.02'],
+            runtime='numpy', lessons=['mlmaths:09.52', 'mlmaths:08.03'],
             related=['subgradients-for-non-smooth-functions', 'hessian-matrix-and-convexity-of-linear-regressio',
                      'gradient-of-multivariate-linear-regression-loss'])
 

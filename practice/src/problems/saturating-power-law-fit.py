@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Fit a power law with an irreducible loss floor', tags=['Scaling Laws', 'Regression'], diff='Hard', runtime='numpy',
-            lessons=['mlmaths:08.02'], related=['power-law-log-fit', 'chinchilla-compute-optimal'])
+            lessons=['mlmaths:08.03'], related=['power-law-log-fit', 'chinchilla-compute-optimal'])
 
 STATEMENT = r"""
 Loss can't fall below the entropy of the data, so scaling curves flatten. The standard fix is a power law plus a floor:
