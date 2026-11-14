@@ -25,7 +25,12 @@ const full = title === 'Unroll' ? title : `${title} · Unroll`;
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  {/* Phones (≤640px) use the light mobile surface (tokens.css [data-surface="mobile"]); older pages' house stylesheet
+      switches to its light values too. Set before any CSS paints, and kept in sync if the width changes. */}
+  <script is:inline>{(() => { const h = document.documentElement, q = matchMedia('(max-width: 640px)');
+    const set = () => { h.toggleAttribute('data-surface', q.matches); if (q.matches) h.dataset.surface = 'mobile'; h.dataset.theme = q.matches ? 'light' : 'dark'; };
+    set(); q.addEventListener('change', set); })()}</script>
   <meta name="description" content={description}>
   <title>{full}</title>
   <link rel="icon" href={u('/favicon.svg')} type="image/svg+xml">
@@ -49,13 +54,27 @@ const full = title === 'Unroll' ? title : `${title} · Unroll`;
     <span class="u-xp mono" id="chipX" title="Level and XP"></span>
     <a class="u-ibtn" href={u('/search/')} aria-label="Search"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg></a>
   </header>
+  {/* phones: top bar (mockups/mobile/MobileHome) and three tabs (Learn · Arena · Review; no profile tab until it's designed) */}
+  <div class="u-mtop" data-pagefind-ignore>
+    <a class="u-mroute" href={u('/destinations/')}><span class="mono">ROUTE</span><span id="mRouteName">Choose a goal</span></a>
+    <span style="flex:1"></span>
+    <span class="u-mstreak" id="mStreak"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3c1 4 5 5.5 5 10a5 5 0 0 1-10 0c0-2 1-3.5 2.5-4.5C9.5 11 11 12 12 12c-1-3 0-6 0-9z"/></svg><span>0</span></span>
+    <span class="u-mxp mono" id="mXp"></span>
+    <a class="u-mic" href={u('/library/')} aria-label="Library"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h6a2 2 0 0 1 2 2v12a2 2 0 0 0-2-2H4z"/><path d="M20 5h-6a2 2 0 0 0-2 2v12a2 2 0 0 1 2-2h6z"/></svg></a>
+    <a class="u-mic" href={u('/search/')} aria-label="Search"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg></a>
+  </div>
+  <nav class="u-tabs m-sheet" aria-label="Tabs" data-pagefind-ignore>
+    <a href={u('/')} aria-current={on('/') ? 'page' : undefined}><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11l8-7 8 7v9H4z"/></svg>Learn</a>
+    <a href={u('/arena/')} aria-current={on('/arena/') || on('/practice/') ? 'page' : undefined}><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 7l-5 5 5 5"/><path d="M16 7l5 5-5 5"/></svg>Arena</a>
+    <a href={u('/review/')} aria-current={on('/review/') ? 'page' : undefined} id="tabR"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="6" width="13" height="14" rx="2"/><path d="M8 3h11a1 1 0 0 1 1 1v13"/></svg><span>Review</span></a>
+  </nav>
   {side
     ? <div class="shell"><aside class="side" id="side" aria-label="Navigation" data-pagefind-ignore><slot name="side" /></aside><main id="view"><slot /></main></div>
     : <main id="view" style={unroll ? undefined : 'max-width:1100px;margin:0 auto'}><slot /></main>}
   <div id="scrim"></div>
   <div id="toasts" aria-live="polite"></div>
   <script is:inline define:vars={{ ROUTES }}>window.__base = document.body.dataset.base;
-    try { const r = JSON.parse(localStorage.getItem('tracks') || '{}').ns?.game?.route; if (ROUTES[r]) document.getElementById('routeName').textContent = ROUTES[r]; } catch {}</script>
+    try { const r = JSON.parse(localStorage.getItem('tracks') || '{}').ns?.game?.route; if (ROUTES[r]) document.getElementById('routeName').textContent = document.getElementById('mRouteName').textContent = ROUTES[r]; } catch {}</script>
   <script>
     import { stats } from '../lib/progress.js';
     import { all } from '../lib/store.js';
@@ -64,10 +83,13 @@ const full = title === 'Unroll' ? title : `${title} · Unroll`;
     const chips = () => { const s = stats();
       cs.classList.toggle('off', !s.streak); cs.querySelector('svg').classList.toggle('m-flame', !!s.streak);
       cs.title = `${s.streak} day streak`; csn.textContent = s.streak;
-      cx.textContent = `LV ${s.level} · ${s.xp.toLocaleString('en')} XP`; };
+      cx.textContent = `LV ${s.level} · ${s.xp.toLocaleString('en')} XP`;
+      const ms = document.getElementById('mStreak'); ms.classList.toggle('off', !s.streak); ms.lastChild.textContent = s.streak;
+      ms.querySelector('svg').classList.toggle('m-flame', !!s.streak); document.getElementById('mXp').textContent = `${s.xp.toLocaleString('en')} XP`; };
     chips(); addEventListener('tracks:save', chips);
     fetch(`${window.__base}/cards.json`).then(r => r.json()).then(cards => { const n = due(cards).length;
-      if (n) nr.insertAdjacentHTML('beforeend', `<span class="u-due mono" aria-label="${n} due">${n}</span>`); }).catch(() => {});
+      if (n) { nr.insertAdjacentHTML('beforeend', `<span class="u-due mono" aria-label="${n} due">${n}</span>`);
+        document.querySelector('#tabR span').textContent = `Review · ${n}`; } }).catch(() => {});
     // finished items: sidebar dots and list rows carry data-ns + data-lk
     const A = all();
     document.querySelectorAll('[data-lk]').forEach(el => { const ns = el.closest('[data-ns]')?.dataset.ns; if (ns && A[ns]?.done?.[el.dataset.lk]) el.classList.add('on'); });
