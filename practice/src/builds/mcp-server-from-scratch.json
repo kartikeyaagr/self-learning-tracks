@@ -1,0 +1,12 @@
+{"id": "mcp-server-from-scratch", "kind": "project", "group": "Agentic Systems",
+ "title": "Build an MCP Server",
+ "blurb": "Implement the core of a Model Context Protocol server: JSON-RPC parsing, tool descriptors, argument validation, tool calls and resources.",
+ "intro": "The Model Context Protocol lets any AI application talk to any tool or data server over JSON-RPC 2.0. The steps build a minimal server from the message layer up: classify incoming messages and pick the right error codes, describe tools with a JSON Schema, validate the model's arguments against it, answer `tools/call` while keeping protocol errors separate from tool errors, and serve static and templated resources. The capstone runs a whole session (initialisation, version negotiation, listing, calls and reads) over a stream of raw messages. Transports, concurrency and authentication are left out to keep the core visible.",
+ "steps": [
+  {"name": "Parse a JSON-RPC message", "problem": "parse-jsonrpc-message"},
+  {"name": "Describe a tool", "problem": "mcp-tool-descriptor"},
+  {"name": "Validate tool arguments", "problem": "validate-tool-arguments"},
+  {"name": "Handle a tool call", "problem": "mcp-dispatch-tool-call"},
+  {"name": "List and read resources", "problem": "mcp-read-resource"}
+ ],
+ "capstone": "mcp-server-capstone"}

@@ -1,0 +1,12 @@
+{"id": "hybrid-attention-from-scratch", "kind": "project", "group": "LLM Engineering",
+ "title": "Hybrid Attention from Scratch",
+ "blurb": "Combine sliding-window attention, grouped-query attention and recurrent linear layers, and measure what each costs in cache memory.",
+ "intro": "Long-context models increasingly mix layer types: a few full-attention layers for exact recall, and many cheaper layers whose memory does not grow with the sequence. The steps build a sliding-window mask with attention sinks, the cache budget of a mixed stack, grouped-query attention, linear attention as a running state, and the gated delta rule that overwrites that state along each key. The capstone runs a hybrid stack of sliding-window and delta-rule layers and returns the fixed-size states those layers cache.",
+ "steps": [
+  {"name": "Sliding-window causal mask", "problem": "sliding-window-causal-mask"},
+  {"name": "Cache memory for a mix of layers", "problem": "hybrid-cache-memory"},
+  {"name": "Grouped-query attention", "problem": "causal-grouped-query-attention"},
+  {"name": "Linear attention as a running state", "problem": "parallel-and-recurrent-linear-attention"},
+  {"name": "Gated delta-rule state update", "problem": "gated-deltanet-state-update"}
+ ],
+ "capstone": "hybrid-attention-capstone"}

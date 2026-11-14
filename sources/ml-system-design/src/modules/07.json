@@ -1,0 +1,134 @@
+{
+ "n": "07",
+ "name": "Monitoring and improvement",
+ "lessons": [
+  {
+   "id": "07.01",
+   "t": "Monitoring and drift",
+   "n": [
+    "Monitor in layers that become available at different delays: service health (seconds), data quality (minutes), input and prediction drift (hours), and label-based quality (days to months).",
+    "**Data drift** is a change in inputs; **concept drift** is a change in the relationship between inputs and labels. Only labels confirm concept drift, so watch proxies while labels mature.",
+    "Drift statistics such as PSI or KS fire on harmless changes too. Alert on drift that is large, sustained and in features the model relies on, and confirm with business metrics.",
+    "Every alert needs an owner and a runbook: what to check, how to roll back, when to retrain."
+   ],
+   "a": "## What can go wrong after launch\nA model that passed every offline gate can still fail in production: an upstream table changes, a new user segment arrives, a competitor changes prices, fraudsters adapt, or the model's own decisions change the data. Most of these failures are silent: the service returns predictions, error rates are zero, and quality quietly drops. The Machine Learning course covers drift statistics and calibration monitoring (mlcore 09.03); this lesson covers how to design monitoring for a system.\n\n## Layers by delay\n%%flow Signals arrive at very different delays. Monitoring needs a layer for each.\nRequest -(seconds)-> Service health -(minutes)-> Data quality -(hours)-> Input and prediction drift -(days)-> Outcome proxies -(weeks to months)-> *Label-based quality\n%%\n| Layer | Examples | Catches\n| Service health | QPS, errors, p99 latency, fallback rate | outages, slow dependencies\n| Data quality | schema, null rates, ranges, category sets | upstream bugs, broken joins\n| Input drift | PSI or KS per feature, embedding distance | population shifts\n| Prediction drift | score distribution, positive rate, action rate | model or feature changes\n| Outcome proxies | early signals that correlate with labels | early concept drift\n| Label-based quality | AUC, calibration, precision at the threshold | real quality loss\n\nEach layer is cheap compared with the cost of finding a problem from a business report weeks later.\n\n## Kinds of drift\n- **Covariate (data) drift**: $P(x)$ changes. A marketing campaign brings younger users.\n- **Prior (label) drift**: $P(y)$ changes. Fraud rates rise during holidays.\n- **Concept drift**: $P(y \\mid x)$ changes. The same behaviour now means something different, because fraudsters adapted or a product changed.\n\nCovariate drift does not always hurt; a model may handle younger users well. Concept drift always hurts but can only be confirmed with labels.\n\n## Measuring drift\nCommon statistics compare a recent window with a reference window (training data, or a stable recent period):\n- **Population stability index (PSI)** over binned features: $\\text{PSI} = \\sum_b (p_b - q_b) \\ln (p_b / q_b)$. Rules of thumb treat values above about 0.2 as a significant shift.\n- **Kolmogorov-Smirnov** for continuous features.\n- **Chi-square** or total variation distance for categorical ones.\n- **Embedding drift**: distance between mean embeddings, or a classifier trained to tell old from new data.\n\nWith millions of rows, statistical tests flag tiny, harmless changes. Use effect sizes and thresholds tuned on history, and weight alerts by feature importance.\n\n## Alerting that people trust\nAlert fatigue kills monitoring. Good alerts are:\n- **sustained**: several consecutive breaches, not one noisy hour;\n- **important**: on features the model relies on and on business-relevant outputs such as approval rate;\n- **actionable**: routed to an owner with a runbook;\n- **segmented**: a shift in one country can vanish in global averages.\n\n! Example: drift that did not matter, and drift that did\n! A recommender's monitoring flagged high PSI on \"device model\" every autumn when new phones launched; quality was unaffected, and the team excluded the feature from alerting. The same month, a smaller shift in \"session length\" coincided with an app redesign that changed how sessions were counted. That shift silently degraded the model by 4% until the team added a data-quality check on the session definition.\n\n## Delayed labels\nWhen labels take weeks, use proxies that arrive early (02.02): first-payment default for loans, early disputes for fraud, short-term engagement for recommendations. Validate how well each proxy tracks the final label on historical data, then monitor it as an early warning.\n\n## Dashboards and ownership\nA model dashboard shows, per model version: traffic and latency, fallback usage, input and prediction distributions over time, action rates by segment, and label-based quality as labels mature. Every model in production has a named owner and an on-call path. Models without owners are where silent failures last longest.\n\n## Monitoring the monitoring\nChecks fail silently too. A drift job that stopped running looks exactly like a model with no drift. Alert on the freshness of every monitoring job and on the volume of data it processed, and review the alert list each quarter to remove checks nobody acts on and add checks for the incidents that were missed.\n\n> Takeaway: monitor in layers from service health to label-based quality, distinguish data drift from concept drift, alert only on large, sustained, important shifts with owners and runbooks, and use early proxies while labels mature.",
+   "q": "A loan-approval model's monthly default rate is only known after 90 days. Design monitoring that would catch a problem within a week of it starting, and say what each layer would catch.",
+   "s": "Layer 1, service health (real time): request rate, error rate, p99 latency, fallback usage; catches outages and timeouts. Layer 2, data quality (per batch or hourly): schema checks, null rates, range checks and category sets for each input; catches upstream bugs such as an income field switching units. Layer 3, drift (daily): PSI or KS on the top 20 features by importance and on the score distribution, compared with a reference window, plus approval rate by segment; catches population shifts such as a new marketing channel bringing riskier applicants. Layer 4, early outcome proxies (weekly): first-payment default, missed first instalment, early fraud flags, which arrive within 30 days and correlate with 90-day default; catches concept drift earlier than the final label. Layer 5, matured labels (monthly): AUC, calibration and default rate by score band on loans old enough. Alerts on sustained deviations route to the model owner with a runbook covering rollback to the previous model or tightening the approval threshold.",
+   "r": [
+    [
+     "Google, Monitoring ML systems (Rules of ML, Rules 8-11)",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "Freshness, silent failures and monitoring."
+    ],
+    [
+     "Lu et al., Learning under Concept Drift: A Review (2019)",
+     "https://arxiv.org/abs/2004.05785",
+     "Types of drift, detection and adaptation methods."
+    ],
+    [
+     "Evidently AI, Data drift explained",
+     "https://www.evidentlyai.com/ml-in-production/data-drift",
+     "Practical drift metrics and their pitfalls."
+    ]
+   ],
+   "k": [
+    "monitoring",
+    "drift"
+   ],
+   "x": [
+    "NumPy",
+    "SciPy"
+   ],
+   "p": [
+    "population-stability-index",
+    "two-sample-ks-drift",
+    "page-hinkley-drift",
+    "delayed-label-monitoring",
+    "consecutive-breach-alerts"
+   ]
+  },
+  {
+   "id": "07.02",
+   "t": "When and how to retrain",
+   "n": [
+    "Retrain on a **schedule**, on a **trigger** (drift, quality drop, new data volume), or **continuously**. The right cadence depends on how fast the world changes and how costly retraining and validation are.",
+    "Measure **staleness cost** directly: train models on data ending at different dates and compare their performance on the same recent period.",
+    "Choose the training window: sliding windows forget old patterns, expanding windows keep them, and time-decay weights do both. Fine-tuning from the last model is cheaper than training from scratch but can accumulate drift.",
+    "Every retrained model still passes evaluation gates and a staged rollout. Automatic retraining should not mean automatic deployment without checks."
+   ],
+   "a": "## Models age\nA model is a snapshot of the world at training time. As the world changes, its predictions get worse. Some systems age in hours (news, trending content, ads), some in weeks (fraud, e-commerce), some in months or years (credit risk, medical imaging). Retraining is how a system keeps up, and the strategy is a design decision with real cost.\n\n## Measuring how fast a model ages\nDo not guess the cadence; measure it. Train several models on data ending at different dates, then evaluate them all on the same recent period:\n| Model trained up to | Offline AUC on today's data\n| yesterday | 0.812\n| 3 days ago | 0.809\n| 1 week ago | 0.801\n| 1 month ago | 0.779\n\nHere a week of staleness costs about 0.01 AUC. Whether that justifies daily retraining depends on what 0.01 AUC is worth in business terms and on the cost of training and validating daily.\n\n## Triggers\n| Strategy | How | Good for\n| Scheduled | fixed cadence (daily, weekly) | predictable systems; simple operations\n| Drift-triggered | retrain when drift or quality alerts fire | slow-changing domains with occasional shifts\n| Volume-triggered | retrain when enough new labelled data arrives | sparse labels\n| Continuous / online | update weights from a stream of examples | fast-changing domains (ads, news)\n\nMany teams combine a scheduled baseline with triggers for exceptional events.\n\n%%flow A continuous training loop. Retraining is automatic; deployment still goes through gates.\nNew data + labels -(trigger: schedule or drift)-> Training pipeline -(candidate)-> Evaluation gates -(pass)-> Canary -(healthy)-> *Production -(monitoring)-> Trigger\n%%\n\n## Training windows\n- **Sliding window** (last N days): adapts quickly; forgets rare or seasonal patterns.\n- **Expanding window** (all history): keeps everything; slow to adapt and costly.\n- **Time-decay weights**: weight examples by $e^{-\\lambda \\cdot \\text{age}}$, so recent data dominates but old data still contributes.\n- **Seasonal additions**: include the same period from last year for holidays or annual events.\n\nChoose by backtesting: simulate past retraining with each window and compare results over months.\n\n## From scratch or incremental\nTraining from scratch on the full window is clean and reproducible but expensive. **Warm-starting** from the previous model and fine-tuning on new data is much cheaper and allows frequent updates, but can drift over many cycles and makes models depend on their history. A common pattern is frequent incremental updates plus a periodic full retrain to reset.\n\nSome parts of a model age faster than others. Embeddings for new items, popularity counts and other features can be updated hourly while the main network is retrained weekly.\n\n! Example: retraining that made things worse\n! A fraud team switched to daily automatic retraining. During a holiday spike, a large campaign was mislabelled as legitimate for several days because analysts were overloaded, and the daily model learned to allow it. Adding a gate that compared the new model's block rate on known historical attacks with the current model's, and a rule that label volume per day must be within normal bounds before training, prevented a repeat.\n\n## Gates still apply\nAutomatic retraining should never mean automatic deployment without checks. Every candidate passes the evaluation gates from 04.04 (comparison with production, slices, calibration, sanity) and a canary. Track how often candidates fail gates; frequent failures point to data problems.\n\n## Costs\nFrequent retraining costs compute, pipeline maintenance and validation effort, and each deploy carries risk. Estimate the value of freshness from the staleness experiment and compare it with these costs before shortening the cycle. In interviews, stating \"measure the staleness curve first\" is a strong answer.\n\n## Labels and retraining together\nRetraining only helps if new labels arrive in time. A model retrained daily on fraud labels that take 60 days to mature learns almost nothing new each day. Match the cadence to label availability, or train on faster proxy labels (02.02) for the frequent updates and on mature labels for the periodic full retrain. Check the volume and positive rate of each day's new labels before training; an unusual day often signals a labelling problem rather than a real change.\n\n> Takeaway: measure how fast your model ages before choosing a cadence, combine scheduled retraining with drift or volume triggers, choose training windows by backtesting, and send every retrained model through the same gates and canary as a new one.",
+   "q": "A news recommender is retrained weekly from scratch on 90 days of data and takes 20 hours to train. Engagement drops noticeably mid-week. How would you decide on a better retraining strategy, and what would you change?",
+   "s": "First measure staleness: train models with data ending 1, 2, 4 and 7 days before a fixed evaluation day and compare offline metrics on that day; repeat for several days. If the 1-day-old model is clearly better than the 7-day-old one, freshness matters. News content turns over quickly, so it likely does. Options: (1) daily incremental fine-tuning of the weekly model on the latest day's data, with a small learning rate, which takes a fraction of the time; (2) keep the heavy model weekly but update the parts that age fastest, such as item embeddings for new articles and popularity features, through streaming or hourly jobs; (3) use a time-decayed training window so recent days carry more weight. Whatever the cadence, run each new model through automatic gates (no slice regression, calibration, prediction sanity) and a canary before full rollout, and compare its online engagement against the previous version.",
+   "r": [
+    [
+     "Google Cloud, MLOps: continuous delivery and automation pipelines",
+     "https://cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning",
+     "Continuous training triggers and pipelines."
+    ],
+    [
+     "Chip Huyen, Real-time machine learning: challenges and solutions (2022)",
+     "https://huyenchip.com/2022/01/02/real-time-machine-learning-challenges-and-solutions.html",
+     "Continual learning and stateful training."
+    ],
+    [
+     "McMahan et al., Ad Click Prediction: a View from the Trenches (2013)",
+     "https://research.google/pubs/ad-click-prediction-a-view-from-the-trenches/",
+     "Online learning for click prediction at scale."
+    ]
+   ],
+   "k": [
+    "retraining",
+    "continual learning"
+   ],
+   "x": [],
+   "p": [
+    "page-hinkley-drift",
+    "delayed-label-monitoring",
+    "learning-rate-warmup-scheduler",
+    "hashed-dataset-split"
+   ]
+  },
+  {
+   "id": "07.03",
+   "t": "Feedback loops and exposure bias",
+   "n": [
+    "Deployed models change the data they will be trained on: recommenders decide what gets seen, fraud models decide which transactions complete, ranking decides which results get clicked.",
+    "**Exposure bias** means feedback only exists for what the model chose to show; **position bias** means feedback depends on where it was shown. Both make the current model look better than alternatives.",
+    "Feedback loops can narrow content (popularity concentration), hide errors (blocked cases never get labels) or amplify unfairness.",
+    "Countermeasures: logged propensities and inverse propensity weighting, a small amount of randomised exploration, holdout groups, and diversity and fairness constraints."
+   ],
+   "a": "## The model shapes its own data\nSupervised learning assumes training data is drawn independently of the model. In deployed systems that is false: what the model decides changes what gets logged. A recommender only learns about items it shows. A fraud model never sees outcomes for transactions it blocks. A search ranker sees more clicks on whatever it puts first. Over retraining cycles these effects compound into **feedback loops**.\n\n%%flow A feedback loop. Exposure decides feedback, feedback decides the next model, the model decides exposure.\nModel -(chooses what to show)-> Exposure -(users react only to shown items)-> Logged feedback -(retrain)-> Next model -(favours items with feedback)-> Model\n%%\n\n## Common loops\n| Loop | Mechanism | Symptom\n| Popularity concentration | popular items get shown, collect clicks, get shown more | coverage falls; new items starve\n| Filter bubble | users shown narrow topics engage with them, model narrows further | diversity falls; long-term engagement drops\n| Hidden errors | blocked or rejected cases never produce labels | model under-learns what it already blocks\n| Position bias | top slots get clicks regardless of relevance | offline metrics favour the current ranking\n| Self-fulfilling predictions | low-scored applicants get fewer opportunities, confirming low scores | fairness harms, stuck segments\n\n## Exposure and position bias in data\nLogged clicks answer \"what did users click among what we showed, where we showed it?\", not \"what would users like?\". Treating them as ground truth rewards the current policy and penalises alternatives that would have shown other items.\n\nCorrections:\n- **Log propensities**: record the probability that each item was shown at each position under the serving policy, including randomisation.\n- **Inverse propensity weighting (IPW)**: weight each logged example by $1/p(\\text{shown})$ when training or evaluating, so rarely shown items count more. Clip large weights to control variance.\n- **Position-bias models**: estimate how likely each position is to be examined, from a small randomised experiment, and divide it out.\n\n## Exploration\nWithout exploration, the system cannot learn about options it never tries. A small amount of controlled randomness, such as epsilon-greedy, Thompson sampling or randomly swapping adjacent positions, generates unbiased data at small cost. It also enables **off-policy evaluation**: estimating how a new policy would perform from data logged under the old one, using the logged propensities.\n\nThe exploration budget is a product decision. Even 1% of traffic, logged carefully, is often enough to debias evaluation and keep new items alive. Explore where the cost of a poor choice is small, such as lower positions on a page or users who browse widely, and never in places where one bad result does real harm.\n\n! Example: an exploration slice that paid for itself\n! A podcast app ranked episodes by predicted listens. New shows rarely surfaced, and the catalogue's long tail shrank each quarter. The team randomised the order of positions 3 to 6 for 2% of sessions and logged propensities. The data let them train a position-debiased model and evaluate new rankers offline with IPW. The debiased ranker raised listening from new shows by 18% with no loss in total listening time.\n\n## Holdouts\nA long-lived holdout group that never receives the model (or receives an older one) measures the cumulative effect of the system and of feedback loops, which short A/B tests miss. For fraud and risk models, a holdout of borderline cases that are approved with extra checks provides labels the model would otherwise hide (02.05).\n\n## Fairness and long-term effects\nFeedback loops can systematically disadvantage groups: sellers, creators or applicants who start with less exposure. Monitor exposure and outcomes by group, set constraints in re-ranking where appropriate, and evaluate on long horizons. Short-term engagement metrics rarely reveal these effects.\n\n## Designing for it from the start\nIn an interview, mention feedback loops whenever the model decides what users see or which cases are acted on. A short paragraph covering propensity logging, a small exploration budget, a holdout and coverage guardrails shows you understand that the system and its data are intertwined.\n\n> Takeaway: deployed models shape their own training data through exposure, position and decisions; log propensities, debias with inverse propensity weighting, keep a small randomised exploration slice and long-lived holdouts, and watch coverage and fairness over long horizons.",
+   "q": "A job-recommendation platform notices that jobs posted by large companies get most applications, and small employers complain about getting no candidates. Explain how a feedback loop could cause this and propose design changes, including how you would evaluate them.",
+   "s": "The recommender is trained on applications to jobs it previously showed. Large-company jobs got early exposure (strong brand, more historical data), collected more applications, so the next model scored them higher and showed them more. Small employers' jobs rarely got shown, so they never gathered the data to prove relevance: a rich-get-richer exposure loop, plus position bias that inflates clicks on top slots. Changes: log the probability each job was shown at each position and train with inverse propensity weighting or a position-bias correction; reserve an exploration budget (for example 5% of slots via Thompson sampling) for jobs with few impressions, using content features (title, skills, location match) for priors; add an exposure-fairness constraint in re-ranking so relevant small-employer jobs get a minimum share. Evaluate with an A/B test measuring application quality and hires for candidates (primary), plus guardrails on employer-side coverage (share of jobs getting at least five qualified applicants) and candidate satisfaction, and use counterfactual estimates on the randomised slice to compare policies offline.",
+   "r": [
+    [
+     "Chaney, Stewart and Engelhardt, How Algorithmic Confounding in Recommendation Systems Increases Homogeneity and Decreases Utility (2018)",
+     "https://arxiv.org/abs/1710.11214",
+     "Simulation of recommender feedback loops."
+    ],
+    [
+     "Joachims, Swaminathan and Schnabel, Unbiased Learning-to-Rank with Biased Feedback (2016)",
+     "https://arxiv.org/abs/1608.04468",
+     "Propensity-weighted learning from clicks."
+    ],
+    [
+     "Bottou et al., Counterfactual Reasoning and Learning Systems (2013)",
+     "https://arxiv.org/abs/1209.2355",
+     "Off-policy estimation in a production ad system."
+    ]
+   ],
+   "k": [
+    "feedback loops",
+    "exposure bias",
+    "counterfactual evaluation"
+   ],
+   "x": [],
+   "p": [
+    "epsilon-greedy-action-selection",
+    "thompson-sampling-beta-bernoulli",
+    "catalog-coverage-and-novelty",
+    "softmax-boltzmann-exploration"
+   ]
+  }
+ ]
+}

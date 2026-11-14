@@ -1,0 +1,13 @@
+{"id": "voice-activity-detection-from-scratch", "kind": "project", "group": "Speech and Audio",
+ "title": "Detect Speech in Noisy Audio",
+ "blurb": "Find where people are talking in a recording: frame energy, a threshold with a hangover, frame scores, mel filterbanks, log-mel features and speech segments.",
+ "intro": "A voice activity detector decides, frame by frame, whether someone is speaking, and turns those decisions into start and end times. The steps build frame energy in decibels, a threshold detector with a hangover that protects word endings, per-frame precision and recall, a mel filterbank and log-mel spectrogram (the features neural detectors and speech recognisers use), and the rules that turn frame decisions into clean segments. The capstone runs an energy detector end to end with an adaptive noise floor and scores it against reference labels.",
+ "steps": [
+  {"name": "Frame energy in decibels", "problem": "frame-energy-db"},
+  {"name": "Loudness threshold with a hangover", "problem": "vad-threshold-hangover"},
+  {"name": "Precision, recall and F1 per frame", "problem": "classification-report", "note": "Treat speech as class 1 and silence as class 0."},
+  {"name": "Build a mel filterbank", "problem": "mel-filterbank"},
+  {"name": "Log-mel spectrogram", "problem": "log-mel-spectrogram"},
+  {"name": "From frame decisions to speech segments", "problem": "frames-to-segments"}
+ ],
+ "capstone": "vad-pipeline-capstone"}

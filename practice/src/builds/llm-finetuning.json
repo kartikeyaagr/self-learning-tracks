@@ -1,0 +1,12 @@
+{"id": "llm-finetuning", "kind": "project", "group": "LLM Engineering",
+ "title": "LLM Fine-Tuning",
+ "blurb": "Prepare chat data, mask the loss to the assistant's turns, train low-rank adapters, and see what QLoRA changes about memory.",
+ "intro": "Supervised fine-tuning teaches a pretrained model a format and a behaviour from example conversations. The steps follow the data and the parameters: render conversations with a chat template and find the assistant spans, turn those spans into a loss mask, train and merge LoRA adapters on a frozen layer, quantise the frozen weights to NF4 the way QLoRA does, and size the memory of the whole fine-tune. The capstone takes one LoRA SGD step on a tiny language model with the assistant-only loss.",
+ "steps": [
+  {"name": "Render a chat and find assistant spans", "problem": "chat-template-format"},
+  {"name": "Assistant-only loss mask", "problem": "build-assistant-only-sft-loss-mask"},
+  {"name": "Train and merge LoRA adapters", "problem": "lora-finetune-and-merge"},
+  {"name": "NF4: quantise the frozen weights", "problem": "nf4-quantize", "note": "QLoRA keeps the base model in 4-bit NF4 and trains the adapters in 16-bit."},
+  {"name": "Memory budget of a LoRA fine-tune", "problem": "lora-finetune-memory"}
+ ],
+ "capstone": "sft-lora-step-capstone"}

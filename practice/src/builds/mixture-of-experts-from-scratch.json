@@ -1,0 +1,13 @@
+{"id": "mixture-of-experts-from-scratch", "kind": "project", "group": "LLM Engineering",
+ "title": "Mixture of Experts from Scratch",
+ "blurb": "Route tokens to experts, combine their outputs, budget total versus active parameters, and keep the load balanced with capacity, auxiliary losses and bias updates.",
+ "intro": "A mixture-of-experts layer replaces one large MLP with many smaller ones and a router that sends each token to a few of them. The steps cover top-k routing with renormalised gates, dispatch and combine, the total versus active parameter count that makes MoE attractive, expert capacity and dropped tokens, the balance and z-losses, and auxiliary-loss-free balancing with a selection bias. The capstone implements a whole layer with all three balancing mechanisms and reports how many assignments were dropped.",
+ "steps": [
+  {"name": "Top-k routing with renormalised gates", "problem": "sparse-moe-top-k-expert-routing"},
+  {"name": "Dispatch tokens and combine expert outputs", "problem": "moe-token-dispatch-and-expert-aggregation"},
+  {"name": "Total versus active parameters", "problem": "moe-total-vs-active-params"},
+  {"name": "Expert capacity and dropped tokens", "problem": "switch-ffn-layer-top1"},
+  {"name": "Balance loss and router z-loss", "problem": "top-k-moe-router-with-load-statistics"},
+  {"name": "Balancing with a bias instead of a loss", "problem": "aux-loss-free-moe-routing"}
+ ],
+ "capstone": "moe-layer-capstone"}

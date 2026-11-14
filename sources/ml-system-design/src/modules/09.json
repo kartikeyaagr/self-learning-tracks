@@ -1,0 +1,396 @@
+{
+ "n": "09",
+ "name": "Case studies: prediction and detection",
+ "lessons": [
+  {
+   "id": "09.01",
+   "t": "Case study: arrival-time prediction",
+   "n": [
+    "Arrival-time prediction is a regression on a route, usually built as a correction on top of a routing engine's physics-style estimate rather than from scratch.",
+    "Labels are actual trip durations, which arrive only after the trip ends and are biased by which routes drivers actually took.",
+    "Mean error alone hides the cost of being late; track error by percentile, by trip length and by city, and consider predicting a range.",
+    "Serving needs low latency at very high request volume, because every map view, quote and dispatch decision asks for an ETA."
+   ],
+   "a": "## Requirements\nStart by asking which ETA is meant. A ride app shows at least two: time for a driver to reach the rider (pickup ETA) and time to the destination (trip ETA). A delivery app adds preparation time at the restaurant. Each has different features and different costs of error. Assume, for this design, both pickup and trip ETA, 500,000 requests per second at peak (every map refresh and every dispatch candidate needs one), and a 50 ms budget at p99.\n\nAlso ask how the number is used. Dispatch compares ETAs across candidate drivers, so ranking consistency matters more than absolute accuracy. Pricing and the rider's screen use the absolute value, so calibration matters there.\n\n## Metrics\nOffline, report mean absolute error (MAE) and the error percentiles (p50, p90). Users forgive an early arrival more easily than a late one, so track the late-arrival rate (actual exceeds predicted by more than, say, two minutes) separately. Relative error matters too: two minutes is small on a 40-minute trip and large on a 5-minute one, so report error by distance band.\n\nOnline, measure how often the shown ETA is met, cancellation rate after the ETA is shown, and complaints. For dispatch, measure total pickup time across the fleet.\n\n## Data and labels\nThe label is the actual duration of a completed trip. It arrives only after the trip ends, which is fine for training but means evaluation lags by the trip length. Join features as they were at request time (a point-in-time join), not as they were when the trip finished; otherwise the model sees future traffic.\n\nThere is selection bias. Trips that were cancelled have no duration, and cancelled trips are more likely to be ones with long waits. Drivers also deviate from the suggested route. Record the route actually taken (via map matching on GPS traces) and decide whether the label refers to the planned route or the trip as driven.\n\n## Features\n- The routing engine's estimate: the sum of predicted segment travel times along the route. This is the strongest single feature.\n- Live traffic: recent speeds per road segment from GPS pings, aggregated in short windows by a streaming job.\n- Time: hour, day of week, holidays, local events.\n- Route shape: distance, number of turns, number of traffic lights, highway share.\n- Context: weather, city, pickup type (airport, stadium), driver's recent speed.\n\n! Example: a correction beats a replacement\n! A team trained a model to predict trip duration directly from origin, destination and time, and it lost to the routing engine on short urban trips. Switching to predicting the residual (actual minus engine estimate) let the model focus on what the engine missed, such as airport pickup delays and school-run traffic. MAE fell on every distance band, and the model needed far fewer features to do it.\n\n## Model\nA gradient-boosted tree or a small neural network predicts the residual on top of the routing estimate. Neural models handle many categorical features (city, segment IDs) through embeddings and can be trained with an asymmetric loss. To show a range, train quantile heads for p10 and p90 with the pinball loss. Graph neural networks over road segments can model how congestion spreads, at higher serving cost.\n\n## Serving\n%%flow ETA serving. Segment speeds are precomputed by a streaming job; the request path only looks up and scores.\nGPS pings -(windowed aggregation)-> Segment speed store\nETA request -(route from routing engine)-> Feature assembly -(lookup speeds, context)-> *Residual model -(engine ETA + correction)-> Response\n%%\nDispatch asks for ETAs for many candidate drivers at once, so batch those into one call. Cache results for identical origin cell, destination cell and minute.\n\n## Monitoring\nTrack MAE and late-arrival rate per city daily. Alert on stale segment speeds, because a stuck stream silently turns the model into a time-of-day average. Watch for unusual conditions (storms, road closures, large events), where error can triple; a fallback to the routing estimate is safer than a confident wrong correction.\n\n## Trade-offs\n- One global model shares data across cities but may miss local patterns; per-city models are the reverse. A global model with city embeddings is a common compromise.\n- A range is more honest but harder to show in a product; many apps show a point estimate and use the upper quantile internally for promises.\n- Richer graph models cost more per request; use them where error is largest.\n\n> Takeaway: predict a correction to the routing engine's estimate with fresh segment speeds and point-in-time labels, judge it by error percentiles and lateness by city and distance, and serve it cheaply with caching and batching.",
+   "q": "Design the system that predicts arrival time for a ride-hailing or delivery app. It must answer about 500,000 ETA requests per second at peak, for pickup and for trip duration, in under 50 ms. Cover labels, features, model, serving and how you would evaluate it.",
+   "s": "Use the routing engine's segment-based estimate as a baseline feature and learn a correction (the residual) with a model that sees route, time, weather, live traffic and city features. Labels are actual durations from completed trips, joined point-in-time to the features known at request time. Evaluate with mean absolute error and with percentiles of error, sliced by city, distance and time of day, and track late-arrival rate separately because lateness costs more than earliness. Serve with cached segment speeds from a streaming pipeline, a light model on CPU, and batching across candidate routes. Monitor error daily by city, feature freshness and drift during events such as storms. Trade-offs: a single global model versus per-city models, and a point estimate versus a range shown to users.",
+   "rubric": [
+    "Clarifies which ETA (pickup, trip, delivery), volume and latency budget",
+    "Builds on the routing engine estimate and predicts a correction rather than starting from scratch",
+    "Describes labels from completed trips with point-in-time feature joins and notes selection bias",
+    "Includes live traffic or segment speeds from a streaming pipeline, with freshness handled",
+    "Chooses an asymmetric or quantile view of error, since lateness costs more than earliness",
+    "Evaluates by city, distance band and time of day, not only overall MAE",
+    "Serves within the latency budget with caching and a light model",
+    "Monitors error, feature freshness and drift during unusual events"
+   ],
+   "r": [
+    [
+     "Hu et al., DeeprETA: An ETA Post-processing System at Scale (2022)",
+     "https://arxiv.org/abs/2206.02127",
+     "A learned correction on top of a routing engine's estimate."
+    ],
+    [
+     "Derrow-Pinion et al., ETA Prediction with Graph Neural Networks in Google Maps (2021)",
+     "https://arxiv.org/abs/2108.11482",
+     "Road segments as a graph, with traffic propagating between them."
+    ],
+    [
+     "Wikipedia, Quantile regression",
+     "https://en.wikipedia.org/wiki/Quantile_regression",
+     "Predicting percentiles rather than the mean."
+    ],
+    [
+     "Wikipedia, Map matching",
+     "https://en.wikipedia.org/wiki/Map_matching",
+     "Turning noisy GPS traces into road segments."
+    ]
+   ],
+   "k": [
+    "ETA prediction",
+    "regression",
+    "residual model",
+    "quantiles"
+   ],
+   "x": [],
+   "p": [
+    "gradient-boosted-regressor",
+    "regression-metrics",
+    "point-in-time-feature-join",
+    "p50-p95-and-p99-inference-latency"
+   ]
+  },
+  {
+   "id": "09.02",
+   "t": "Case study: dynamic pricing",
+   "n": [
+    "Dynamic pricing combines a demand model (how many people buy or ride at each price) with a decision rule that picks a price to meet a business goal under constraints.",
+    "Observational data confounds price and demand, because prices were raised exactly when demand was high; experiments or randomised price variation are needed to estimate elasticity.",
+    "The objective is rarely pure revenue: fairness, regulation, trust and marketplace balance (riders and drivers) constrain the price.",
+    "Prices change behaviour on both sides of a marketplace, so evaluation needs experiments by region or time rather than by user."
+   ],
+   "a": "## Requirements\nClarify the product. Ride-hailing pricing reacts within minutes to local imbalances; airline and hotel pricing plans over weeks against fixed inventory; retail pricing changes daily per product. Assume ride-hailing: a city is divided into small areas (hexagons a few hundred metres across), the price multiplier is updated every two minutes, and a quote must be returned in under 100 ms.\n\nAsk about constraints early. Many cities cap surge multipliers, some regulators prohibit raising prices during emergencies, and prices must not vary by protected attributes. These shape the design more than the model does.\n\n## Metrics\nChoose one primary objective. Revenue alone would raise prices until volume collapses. Common choices are completed trips, or gross bookings subject to a wait-time target. Guardrails: rider conversion, median and p90 pickup wait, driver earnings per hour, cancellations, complaints, and the share of time at the cap.\n\n## Data and labels\nTwo quantities are needed.\n- Demand and supply forecasts: counts of app opens, requests and available drivers per area per minute. Labels are simply the future counts.\n- Price response: the probability that a rider who sees a quote accepts it, as a function of price and context. This is the hard part.\n\nHistorical data is confounded. Prices were high exactly when demand was high, so a naive regression can show demand rising with price. To estimate elasticity, add small randomised variation to prices (for example, plus or minus 5% within allowed bounds) and fit conversion on that variation. This is an exploration cost worth paying.\n\n! Example: a backwards elasticity\n! A team fit acceptance rate against surge multiplier on six months of logs and found acceptance rising with price. The reason was that high multipliers occurred at concert endings and rainstorms, when riders had no alternative. After adding small random price offsets for two weeks and fitting only on that variation, acceptance fell by about 3% per 10% price rise, which matched intuition and made the pricing rule usable.\n\n## Model\n- Forecasting: gradient-boosted trees or a small sequence model on recent per-area counts, time features, weather and event calendars, predicting the next 5, 15 and 30 minutes.\n- Conversion: a logistic model of acceptance given price, ETA, trip distance and context, fitted on randomised variation. Monotonic constraints keep acceptance from rising with price.\n- Decision: for each area, choose the multiplier that brings expected demand at that price close to expected supply, so that pickup waits stay under target. A contextual bandit can keep exploring around the chosen price to refine elasticity.\n\n## Serving\n%%flow Pricing loop. Forecasts and multipliers update every two minutes; quotes read the latest multiplier.\nRequest and driver events -(per-area counts)-> Forecasts -(demand, supply)-> *Pricing optimiser -(capped, smoothed multipliers)-> Multiplier store\nQuote request -(area lookup)-> Multiplier store -(price)-> Rider app\n%%\nSmooth multipliers over time (limit the change per update) and across neighbouring areas, so that walking one street does not halve the price.\n\n## Evaluation and experiments\nUser-level A/B tests are biased in a marketplace: if half the riders see lower prices, they take drivers from the other half. Use switchback experiments, alternating policies across areas and time windows, and compare averages over many windows. Measure marketplace outcomes, not just conversion.\n\n## Monitoring\nTrack forecast error per area, multiplier distributions, time at cap, conversion and wait times. Alert when prices hit caps for long periods (supply shortage, not a pricing problem) or when conversion drops sharply after a model update.\n\n## Trade-offs\n- Fast response improves balance; stable prices build trust. Smoothing trades one for the other.\n- Exploration improves elasticity estimates but costs revenue and can look unfair; keep it small and within policy.\n- Higher prices can attract drivers in the medium term, which a short-horizon model ignores.\n\n## Likely follow-up questions\n\n- \"How do you stop a feedback loop where high prices suppress demand, which then looks like low demand?\" Forecast requests from app opens and searches, which happen before the price is seen, rather than from completed requests.\n- \"What if drivers move towards surge areas and the surge disappears?\" That is the intended effect; model supply response over 10 to 20 minutes and avoid oscillation by smoothing.\n- \"How would you explain a price to a rider?\" Show the multiplier and the reason (high demand nearby), and offer to notify them when it drops. Transparency reduces complaints more than small price changes do.\n- \"How do you protect against emergency pricing?\" Hard caps and a manual override per area, enforced outside the model.\n\n> Takeaway: forecast demand and supply, estimate price response from randomised variation rather than confounded logs, choose prices under explicit caps and smoothing, and test with switchback experiments that respect marketplace interference.",
+   "q": "Design a dynamic pricing system for a ride-hailing marketplace. Prices should respond to supply and demand in each area every few minutes. Explain how you estimate the effect of price, what you optimise, and how you test changes safely.",
+   "s": "Split into forecasting and decision. Forecast requests and available drivers per area for the next 5 to 30 minutes from recent counts, time, weather and events. Estimate how conversion falls with price, using randomised small price variations because historical data confounds price with demand. The decision layer chooses a multiplier per area that keeps expected wait times under a target while respecting caps, smoothness between neighbouring areas and fairness rules. Evaluate with switchback experiments (alternating policies by area and time window), since user-level splits leak through shared supply. Monitor conversion, wait times, driver earnings, complaints and cap hits. Trade-offs: responsiveness versus price stability, short-term revenue versus long-term trust, and exploration cost versus better elasticity estimates.",
+   "rubric": [
+    "Separates demand and supply forecasting from the pricing decision",
+    "Explains why historical price data is confounded and proposes randomised variation to estimate elasticity",
+    "States an objective beyond revenue, such as wait time or completed trips, with explicit constraints",
+    "Includes caps, smoothing over time and space, and fairness or regulatory rules",
+    "Uses switchback or region-level experiments because of marketplace interference",
+    "Monitors both sides of the marketplace and user trust signals",
+    "Discusses exploration cost and the stability versus responsiveness trade-off"
+   ],
+   "r": [
+    [
+     "Wikipedia, Dynamic pricing",
+     "https://en.wikipedia.org/wiki/Dynamic_pricing",
+     "Background and examples across industries."
+    ],
+    [
+     "Wikipedia, Price elasticity of demand",
+     "https://en.wikipedia.org/wiki/Price_elasticity_of_demand",
+     "The quantity a pricing model must estimate."
+    ],
+    [
+     "Wikipedia, Multi-armed bandit",
+     "https://en.wikipedia.org/wiki/Multi-armed_bandit",
+     "Learning while choosing, for price exploration."
+    ]
+   ],
+   "k": [
+    "dynamic pricing",
+    "demand forecasting",
+    "price elasticity",
+    "bandits"
+   ],
+   "x": [],
+   "p": [
+    "linear-regression",
+    "thompson-sampling-beta-bernoulli",
+    "linucb-contextual-bandit",
+    "b-test-significance"
+   ]
+  },
+  {
+   "id": "09.03",
+   "t": "Case study: payment fraud detection",
+   "n": [
+    "Payment fraud is a rare-event classification made at authorisation time, within a tight latency budget, where both blocking good customers and approving fraud cost money.",
+    "Labels (chargebacks) arrive weeks or months late, and the model's own blocks remove labels, so evaluation needs a small randomised holdout of uncertain transactions.",
+    "Velocity and graph features (how many cards on this device, how many accounts at this address) usually matter more than the model family.",
+    "Fraudsters adapt within days of a change, so monitoring, fast retraining and rules for emerging patterns are part of the design."
+   ],
+   "a": "## Requirements\nClarify the decision and its costs. At authorisation the system can approve, decline, or step up (ask for a one-time code or 3-D Secure). Approving fraud costs the transaction value plus a fee; declining a good customer loses the sale and often the customer. Assume 5,000 transactions per second, a fraud rate near 0.1%, and 100 ms for the whole decision, leaving perhaps 30 ms for the model.\n\n## Metrics\nAccuracy is meaningless at 0.1% positives. Use precision-recall curves and report recall at a fixed false-positive rate. The business metrics are fraud loss in money (basis points of volume), false decline rate, and step-up rate. Weight errors by amount: missing a large fraud matters more than a small one.\n\n## Data and labels\nLabels come from chargebacks and from customers reporting fraud. They arrive 30 to 90 days after the transaction, and some fraud is never reported. Two consequences follow.\n- Train on windows that have matured (at least 60 to 90 days old), and treat recent data as unlabelled rather than as non-fraud.\n- Declined transactions never get a label, so the training data is shaped by the previous model. Keep a small randomised holdout: approve a tiny fraction of transactions in the medium-risk band that the model would decline, and use their outcomes to estimate true fraud rates.\n\n! Example: the model that grew blind\n! A payments team retrained monthly on approved transactions only. Each model blocked a pattern, so the next training set had no examples of it, and the following model stopped recognising it. Fraud of that type returned within two retrains. Adding a 0.5% randomised approval band for medium scores restored the labels and stopped the cycle, at a measured cost far below the losses.\n\n## Features\n- Transaction: amount, currency, merchant category, time, card-not-present flags.\n- Velocity: counts and sums for this card, device, IP and email over the last minute, hour and day.\n- Mismatch: billing country versus IP country, new device, new shipping address.\n- Graph: number of cards seen on this device, accounts sharing a shipping address, links to known fraud.\n- History: the customer's typical amounts and merchants.\n\nVelocity and graph features are computed by a streaming job and read from a low-latency store; they must be point-in-time correct in training.\n\n## Model\nGradient-boosted trees are the standard choice: strong on tabular features, fast and interpretable enough for dispute teams. Train with class weights rather than heavy resampling, and calibrate scores, because the decision layer uses probabilities. An unsupervised anomaly score (an isolation forest on recent behaviour) can be added as a feature to catch new patterns. Rules remain for known patterns and immediate responses.\n\n## Serving and decision\n%%flow Authorisation path. Aggregates are precomputed; the request only looks up, scores and decides.\nPayment events -(streaming aggregates)-> Feature store\nAuthorisation request -(lookup)-> Feature store -(features)-> *Fraud model -(probability)-> Decision policy -(approve, step-up, decline)-> Issuer\n%%\nDecline when expected loss (probability times amount plus fees) exceeds the expected margin; step up in a middle band; approve otherwise. Thresholds can vary by merchant risk tolerance.\n\n## Monitoring\nWatch approval, decline and step-up rates hourly, score distributions, and early signals such as customer disputes and step-up failure rates, which arrive long before chargebacks. Alert on sudden shifts by merchant or region. Retrain weekly or faster and add rules within hours when a new attack appears.\n\n## Trade-offs\n- False declines versus fraud losses: set by money, not by a fixed recall target.\n- Fresh training data versus mature labels: recent data reflects current attacks but is incompletely labelled.\n- Step-up reduces fraud but adds friction and abandonment.\n\n## Likely follow-up questions\n\n- \"A merchant says too many good customers are declined. What do you check?\" False declines estimated from the randomised band and from customers who retry and succeed with step-up, broken down by that merchant's features.\n- \"How do you handle a brand-new merchant with no history?\" Fall back to category-level and network-wide features, use tighter step-up bands at first, and relax them as history builds.\n- \"Would a deep sequence model over a card's transactions help?\" Often a little, as an extra feature; the latency budget and the need for explanations usually keep trees as the final scorer.\n- \"How do you explain a decline?\" Use reason codes from the top feature contributions, which dispute teams and merchants need.\n\n> Takeaway: treat fraud as a cost-weighted, rare-event decision with late and censored labels; rely on streaming velocity and graph features, map calibrated scores to approve, step-up and decline, and keep a randomised holdout so the model can still see what it blocks.",
+   "q": "Design a fraud detection system for card payments at an online payments company processing 5,000 transactions per second. The decision (approve, decline or step-up verification) must be made in under 100 ms. Cover labels, features, the decision policy and how you evaluate when labels arrive late.",
+   "s": "Score each transaction with a gradient-boosted model on transaction, card, merchant, device and velocity features, plus graph features linking cards, devices, emails and addresses. Labels come from chargebacks and confirmed fraud reports, arriving 30 to 90 days later; train on matured windows and treat recent unlabelled data carefully. Map scores to actions with cost-based thresholds: decline when expected fraud loss exceeds the value of the sale, step-up (one-time code) in a middle band, approve otherwise. Keep a small randomised approval holdout among moderately risky transactions to measure fraud the model would have blocked. Serve with precomputed aggregates in a low-latency store updated by streaming. Monitor approval rate, step-up rate, early fraud signals and feature drift. Trade-offs: false declines versus fraud losses, and model freshness versus label maturity.",
+   "rubric": [
+    "Clarifies volume, latency, actions and the cost of each error type",
+    "Explains delayed and censored labels, and trains on matured windows",
+    "Proposes velocity and graph features computed by streaming, with point-in-time correctness",
+    "Uses a cost-based decision with a step-up band rather than a single threshold",
+    "Evaluates with precision-recall at operating points and a randomised holdout for counterfactual labels",
+    "Handles adversarial adaptation with monitoring, rules and frequent retraining",
+    "Keeps the request path within latency using precomputed aggregates",
+    "Discusses false declines and customer friction, not only fraud caught"
+   ],
+   "r": [
+    [
+     "Stripe, A primer on machine learning for fraud detection",
+     "https://stripe.com/guides/primer-on-machine-learning-for-fraud-protection",
+     "Features, thresholds and the cost of false positives."
+    ],
+    [
+     "Wikipedia, Chargeback",
+     "https://en.wikipedia.org/wiki/Chargeback",
+     "Where fraud labels come from and why they are late."
+    ],
+    [
+     "imbalanced-learn documentation",
+     "https://imbalanced-learn.org/stable/",
+     "Resampling methods for rare classes."
+    ]
+   ],
+   "k": [
+    "fraud detection",
+    "class imbalance",
+    "delayed labels",
+    "adversaries"
+   ],
+   "x": [],
+   "p": [
+    "precision-recall-curve-and-average-precision",
+    "sigmoid-focal-loss",
+    "delayed-label-monitoring",
+    "isolation-forest"
+   ]
+  },
+  {
+   "id": "09.04",
+   "t": "Case study: trending topics and bot detection",
+   "n": [
+    "Trending detection compares a topic's current rate with its own expected rate, not with other topics, so seasonal and always-popular topics do not dominate.",
+    "Coordinated inauthentic accounts can manufacture trends, so bot and coordination signals must filter what counts before ranking trends.",
+    "Bot detection mixes per-account classifiers with behaviour across accounts, because coordinated groups look normal one at a time.",
+    "Both systems run on streams with seconds to minutes of delay, which favours approximate counting and simple, robust statistics."
+   ],
+   "a": "## Requirements\nClarify what \"trending\" means for the product: new and rising topics, not what is always popular. Assume 100 million posts a day (about 1,200 per second, several times that during major events), a global list plus per-country lists, and refresh every two to five minutes. Trends must be safe to show (no harassment campaigns) and resistant to manipulation.\n\n## Metrics\nOnline: click-through on trends, time to first appearance of a major event, and the share of trends later removed by reviewers. Offline: precision of trends against human judgement on a sample, and recall against a list of known events. For bots: precision and recall against a labelled set of accounts, and the share of trending volume coming from accounts later suspended.\n\n## Data and labels\nTrending has almost no labels; it is mostly a statistics problem. Bot detection has labels from accounts suspended for automation, reviewer decisions and known campaigns, all incomplete and biased towards obvious bots. Use them, but evaluate on fresh human review too.\n\n## Detecting trends\n1. Extract topics from each post: hashtags, named entities, and clusters of similar phrases.\n2. Count each topic in short windows (one minute) with a count-min sketch for the long tail and exact counts for the top few thousand.\n3. Compare the current rate with the topic's expected rate for this hour and weekday, smoothed over past weeks. A score such as $z = (c - \\mu) / \\sqrt{\\mu + k}$ (with a constant $k$ to stop tiny topics from scoring high on a few posts) captures surprise.\n4. Require breadth: the number of distinct authors, weighted by authenticity, must rise too.\n\n! Example: a trend from 400 accounts\n! A hashtag reached the top of a country's trending list with 60,000 posts in an hour. Grouping by author showed that 400 accounts, created in the same week and posting within seconds of each other, wrote over 80% of them. Weighting posts by author authenticity and capping each account's contribution per window dropped the topic below the threshold, while a genuine local news story with 15,000 posts from 12,000 authors rose into its place.\n\n## Detecting bots\n- Account features: age, profile completeness, follower and following ratios, verification.\n- Behaviour: posting cadence and regularity, activity at all hours, share of reposts, client used.\n- Content: similarity to other accounts' posts (MinHash on text), links to the same domains.\n- Network: dense clusters that follow and amplify each other; synchronised actions across accounts.\n\nA gradient-boosted classifier gives a per-account score. A separate coordination detector finds groups posting near-identical content within short windows; groups matter because each account alone can look human.\n\n## Serving\n%%flow Trending pipeline. Authenticity weights are applied before counting so manipulation never reaches the ranking.\nPost stream -(topic extraction)-> Weight by author score -(windowed counts)-> *Surprise scoring -(breadth, safety filters)-> Trend lists by region\nAccount events -(batch and streaming features)-> Bot classifier -(authenticity scores)-> Weight by author score\n%%\n\n## Monitoring\nTrack trends removed after appearing, the share of trending volume from low-authenticity accounts, and the time between a real event and its trend. Adversaries adapt by aging accounts and adding variation to text, so retrain the bot classifier often and add new coordination signals.\n\n## Trade-offs\n- Faster refresh catches breaking news sooner but admits more noise and more manipulation.\n- Strong filtering reduces false trends but risks suppressing genuine grassroots topics from small or new communities; review a sample of filtered topics.\n- Explaining why a topic trends builds trust but helps attackers learn the rules.\n\n## Likely follow-up questions\n\n- \"How do you avoid trending a topic that is popular every Monday morning?\" The baseline is per topic and per hour of the week, so a regular peak produces no surprise.\n- \"How do you handle a topic spelt many ways?\" Normalise case and spelling, and cluster hashtags and phrases by co-occurrence and embedding similarity so that variants count together.\n- \"How would you evaluate a new bot classifier without good labels?\" Compare its flags with later suspensions, run human review on a stratified sample of high, medium and low scores, and measure how much trending volume it removes from known campaigns.\n- \"Should a verified account be trusted?\" More, but not fully; hijacked accounts are a common attack.\n\n> Takeaway: score trends by surprise against each topic's own baseline and by breadth of credible authors, weight every post by an authenticity score before counting, and detect coordination across accounts because bots that act together each look normal alone.",
+   "q": "Design a system that surfaces trending topics on a social platform with 100 million posts a day, refreshed every few minutes, and that prevents coordinated bot networks from pushing topics into the trending list.",
+   "s": "Extract candidate topics (hashtags, named entities, clustered phrases) from the post stream and count them in sliding windows with approximate structures. Score each topic by how far its current rate exceeds its own baseline for that hour and day, using a z-score or ratio with smoothing, and require growth across distinct, credible accounts. Before counting, weight each post by its author's authenticity score from a bot classifier (account age, posting cadence, content similarity, network features) and by coordination signals such as many accounts posting near-identical text within seconds. Rank trends by the weighted surprise, apply safety and policy filters, and personalise by region. Evaluate with human review of sampled trends and with known coordinated campaigns. Monitor the share of trends later removed and the bot-score distribution. Trade-offs: speed versus false trends, and aggressive filtering versus suppressing genuine grassroots topics.",
+   "rubric": [
+    "Defines trending as surprise against the topic's own baseline rather than raw volume",
+    "Uses windowed or approximate streaming counts with a clear refresh interval",
+    "Requires breadth of distinct, credible authors, not only post counts",
+    "Designs a bot classifier with account, behaviour and network features",
+    "Detects coordination across accounts (near-duplicate content, synchronised timing)",
+    "Evaluates with human review and known campaigns, given scarce labels",
+    "Monitors removed trends and adapts to adversaries",
+    "Discusses the trade-off between speed and false trends, and risks of suppressing genuine topics"
+   ],
+   "r": [
+    [
+     "Varol et al., Online Human-Bot Interactions: Detection, Estimation, and Characterization (2017)",
+     "https://arxiv.org/abs/1703.03107",
+     "Account-level features for bot classification."
+    ],
+    [
+     "Wikipedia, Count-min sketch",
+     "https://en.wikipedia.org/wiki/Count%E2%80%93min_sketch",
+     "Approximate counts over a stream with bounded memory."
+    ],
+    [
+     "Wikipedia, Social bot",
+     "https://en.wikipedia.org/wiki/Social_bot",
+     "Background on automated accounts and their uses."
+    ],
+    [
+     "Wikipedia, Streaming algorithm",
+     "https://en.wikipedia.org/wiki/Streaming_algorithm",
+     "Algorithms that process data in one pass with limited memory."
+    ]
+   ],
+   "k": [
+    "trending detection",
+    "bot detection",
+    "streaming",
+    "anomaly detection"
+   ],
+   "x": [],
+   "p": [
+    "page-hinkley-drift",
+    "consecutive-breach-alerts",
+    "isolation-forest",
+    "z-test-one-sample"
+   ]
+  },
+  {
+   "id": "09.05",
+   "t": "Case study: email spam filtering",
+   "n": [
+    "Spam filtering is high-volume binary classification where a false positive (a lost real email) is far more costly than a false negative.",
+    "Sender reputation, authentication and volume signals catch most spam before content models run; content models handle the rest.",
+    "User actions (\"report spam\", \"not spam\") provide labels quickly, but they are noisy and biased towards what users see.",
+    "Spammers adapt continually, so the system needs fast updates, near-duplicate clustering of campaigns, and per-user personalisation."
+   ],
+   "a": "## Requirements\nClarify the actions: reject at the server, deliver to the spam folder, or deliver to the inbox. Also ask about scope: spam only, or phishing and malware too (these need stricter handling). Assume 10 billion messages a day (about 115,000 per second on average), a budget of tens of milliseconds per message, and a very low tolerance for losing legitimate mail.\n\n## Metrics\nThe key metric is the false-positive rate on legitimate mail, ideally well under 0.1%, because a missed job offer or invoice costs far more than an extra spam message. Second is spam catch rate. Online signals: the rate at which users move mail out of spam (\"rescues\"), report spam from the inbox, and complaint volume.\n\n## Layers\n1. Connection level: IP reputation, sending rate, and whether the domain is newly registered. Rejecting here saves all further cost.\n2. Authentication: SPF, DKIM and DMARC results. Failing authentication for a domain that claims to be a bank is a strong signal.\n3. Classifier on accepted mail: headers, links, attachments and content.\n4. Personalisation: adjust for each user's own behaviour.\n\n## Data and labels\n- User reports and rescues: plentiful and fast but noisy; some users report newsletters they signed up for. Weight users by their historical agreement with consensus.\n- Honeypot addresses that no real person uses: any mail they receive is unsolicited.\n- Human review on a stratified sample, used for evaluation and to calibrate the noisy labels.\n\nLabels are biased by the current filter: users see and report only what reached the inbox. Sample some spam-folder mail for review to learn about errors in that direction.\n\n## Features\n- Sender: domain and IP reputation, age, history of complaints and rescues.\n- Authentication results and header anomalies.\n- Links: domain reputation, URL shorteners, mismatch between visible text and target.\n- Content: a compact text model over subject and body (bag of words with TF-IDF, or a small transformer distilled for speed).\n- Campaign: how many recipients received a near-duplicate of this message recently, using MinHash signatures.\n\n! Example: catching a campaign by its shape\n! A spam campaign varied every message with random words and images, defeating content features. But MinHash over the message structure grouped 2 million messages sent within an hour from 3,000 new domains. A campaign feature (cluster size, number of sending domains, share of new domains) let the classifier catch the whole wave after the first few thousand reports, and the reputation of the 3,000 domains dropped within minutes.\n\n## Model\nA gradient-boosted model over reputation, header, link and campaign features, with a text model's score as one input, is a strong design. Calibrate it, then set the threshold to meet the false-positive target on a recent labelled sample. Personalisation can be a small per-user bias, learned from that user's reports and rescues, applied mainly to borderline categories such as promotions.\n\n## Serving\n%%flow Spam filtering layers. Each layer is cheaper than the next and removes volume before it.\nIncoming connection -(IP and domain reputation, rate limits)-> Accepted message -(SPF, DKIM, DMARC)-> Feature extraction -(campaign lookup)-> *Spam classifier -(per-user adjustment)-> Inbox or spam folder\n%%\n\n## Monitoring and adaptation\nTrack rescue and report rates per hour, the share of new sending domains, and cluster sizes. Reputation lists should update within minutes from fresh reports; models retrain daily. Watch for sudden drops in catch rate, which usually mean a new technique.\n\n## Trade-offs\n- Global versus personalised: personalisation fits newsletters well but can hide phishing; never personalise away security verdicts.\n- Catch rate versus false positives: tilted strongly towards protecting legitimate mail.\n- Explaining why mail was filtered helps users but can help spammers probe the system.\n\n## Likely follow-up questions\n\n- \"A bank complains that its statements go to spam. What do you look at?\" Authentication results for its sending domain, recent changes to its sending IPs, and the content features that pushed the score; often a misconfigured DKIM record is the cause.\n- \"How do you handle a new sender with no reputation?\" Treat it as neutral, apply stricter content scoring, and let reputation build from recipients' actions over the first days.\n- \"Would a large language model help?\" As a slow second pass on borderline mail or for phishing intent, yes; it is too expensive to run on every message at this volume.\n- \"How fast must the system react to a new campaign?\" Minutes; reputation and campaign features carry the response while models retrain.\n\n> Takeaway: filter in layers from cheap reputation and authentication to content models, use campaign features across recipients, learn from noisy user feedback with care, and set the threshold to protect legitimate mail first.",
+   "q": "Design a spam filter for an email provider receiving 10 billion messages a day. Decide inbox, spam folder or reject for each message. Explain the layers, labels, the operating point and how you handle spammers who adapt.",
+   "s": "Use layers. At connection time, reject based on IP and domain reputation, authentication (SPF, DKIM, DMARC) and rate limits; this removes most volume cheaply. For accepted mail, a classifier uses sender reputation, authentication results, header features, links and their domain reputation, and content features from a compact text model, plus campaign features from near-duplicate clustering (many recipients getting near-identical messages). Labels come from user reports, \"not spam\" rescues and honeypot accounts, de-noised by weighting reliable reporters. Set the threshold for a very low false-positive rate on legitimate mail, with per-user adjustments learned from that user's actions. Evaluate on a stratified human-labelled sample. Monitor spam-folder rescue rate, report rate and campaign bursts; push updated reputation lists within minutes. Trade-offs: a global versus personalised notion of spam, and catch rate versus lost legitimate mail.",
+   "rubric": [
+    "Clarifies volume, actions and the asymmetric cost of false positives",
+    "Puts cheap reputation, authentication and rate checks before content models",
+    "Describes labels from user reports, rescues and honeypots, and handles their noise",
+    "Uses campaign or near-duplicate features across recipients",
+    "Sets the operating point for a very low false-positive rate on legitimate mail",
+    "Includes personalisation for borderline categories such as newsletters",
+    "Handles adversarial adaptation with fast reputation updates and frequent retraining",
+    "Evaluates on a stratified human-labelled sample and monitors rescue rates"
+   ],
+   "r": [
+    [
+     "Wikipedia, Naive Bayes spam filtering",
+     "https://en.wikipedia.org/wiki/Naive_Bayes_spam_filtering",
+     "The classic content-based approach and its limits."
+    ],
+    [
+     "Wikipedia, Email spam",
+     "https://en.wikipedia.org/wiki/Email_spam",
+     "Background on spam campaigns and countermeasures."
+    ],
+    [
+     "Wikipedia, Locality-sensitive hashing",
+     "https://en.wikipedia.org/wiki/Locality-sensitive_hashing",
+     "Grouping near-duplicate messages into campaigns."
+    ],
+    [
+     "Google, Rules of Machine Learning",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "Combining heuristics with learned models."
+    ]
+   ],
+   "k": [
+    "spam filtering",
+    "text classification",
+    "adversarial",
+    "feedback loops"
+   ],
+   "x": [],
+   "p": [
+    "tf-idf",
+    "text-classification",
+    "text-deduplication-minhash",
+    "precision-recall-at-k"
+   ]
+  },
+  {
+   "id": "09.06",
+   "t": "Case study: visual search",
+   "n": [
+    "Visual search maps a query photo to an embedding and finds the nearest items in a large index; quality depends on the embedding and on cropping to the object of interest.",
+    "Embeddings are trained with contrastive objectives on pairs that should match (same product, user-confirmed matches) and pairs that should not.",
+    "An approximate nearest-neighbour index makes retrieval over hundreds of millions of items fast, at a small cost in recall.",
+    "A re-ranking stage adds business signals (availability, price, quality) and diversity to the visually similar candidates."
+   ],
+   "a": "## Requirements\nClarify the goal: find the exact product, or similar-looking products? Users photographing a lamp in a friend's home want the exact one if it is sold, otherwise close alternatives. Assume a catalogue of 200 million images across 50 million products, new items daily, a 500 ms budget end to end, and results limited to items in stock in the user's region.\n\n## Metrics\nOffline: recall at 10 and 50 on held-out pairs of a user photo and its correct product, plus human relevance ratings on a sample of queries (exact, similar, unrelated). Online: click-through, add-to-cart and purchases per visual search, and the share of searches with no click.\n\n## Data\n- Catalogue images: clean, studio-style photos.\n- User photos: cluttered scenes, varied lighting and angles. The domain gap between these two is the main difficulty.\n- Matching pairs: products that users found and bought after a visual search, reviews with photos, and labelled pairs from annotators.\n\n## Cropping\nA whole-scene embedding of a living room matches other living rooms. Run an object detector on the query, show boxes for the main objects, and let the user tap one (default to the largest or most central). Catalogue images can be processed the same way, so that the index contains object-level embeddings.\n\n## Embeddings\nStart from a pretrained image encoder (a CLIP-style model trained on image-text pairs is a good start, as it already groups images by meaning). Fine-tune with a contrastive loss: pull a user photo and its matching catalogue photo together, push other products apart. Hard negatives, such as similar items of a different brand, sharpen fine distinctions. Normalise embeddings so cosine similarity is a dot product.\n\n! Example: closing the domain gap\n! A furniture retailer's first model, trained only on catalogue images, reached 70% recall at 10 when tested on catalogue photos but 22% on user photos. Adding 300,000 user-photo and catalogue-photo pairs (from purchases after search and from reviews) and training contrastively across the two domains raised recall on user photos to 58%. The change in data mattered more than any change in architecture.\n\n## Indexing and serving\nEmbedding 200 million images at 256 dimensions in 8-bit form takes about 51 GB; product quantisation can shrink this several times. Use an HNSW or IVF index, sharded by top-level category, with replicas for throughput.\n\n%%flow Visual search request. Catalogue embeddings are computed offline; the request embeds one crop and searches the index.\nCatalogue images -(batch embedding)-> ANN index by category\nQuery photo -(object detection, user picks a box)-> Crop -(image encoder)-> *ANN search -(top 500)-> Filter and re-rank -(top 20)-> Results\n%%\nRe-rank with a light model using visual similarity, price, ratings, availability and popularity, and add diversity so the top results are not twenty copies of one item from different sellers.\n\n## Monitoring and updates\nNew products are embedded and inserted daily. A new embedding model requires re-embedding the whole catalogue and rebuilding the index; run both in parallel and switch atomically, because embeddings from different models are not comparable. Monitor latency by stage, zero-click rate, and recall on a fixed test set after each change.\n\n## Trade-offs\n- Index recall versus speed and memory: tune the search parameters on a recall-latency curve.\n- Exact match versus style similarity: show exact matches first when found, then similar items.\n- Larger encoders improve quality but cost more per query and per catalogue rebuild.\n\n## Likely follow-up questions\n\n- \"How do you handle a query for an item you do not sell?\" Show the closest style matches and say clearly that they are similar rather than exact; the re-ranker can use a similarity threshold to decide.\n- \"How do you add text to the query, such as 'like this but in red'?\" With a shared image-text space, add the text embedding to the image embedding or filter candidates by the colour attribute.\n- \"How large an index can one machine hold?\" At 64 bytes per item after product quantisation, 200 million items fit in about 13 GB, so a few replicas per shard suffice; the limit is usually query throughput, not memory.\n\n> Takeaway: crop to the object, embed with a model trained contrastively across user and catalogue photos, search an approximate nearest-neighbour index, then filter and re-rank with business signals; plan full re-embedding whenever the model changes.",
+   "q": "Design a visual search feature for a shopping app: a user photographs an item (a lamp, a jacket) and sees similar products from a catalogue of 200 million items, within 500 ms. Cover embeddings, indexing, the request path and evaluation.",
+   "s": "Detect objects in the query photo and let the user pick one, so the embedding describes the object rather than the scene. Embed the crop with an image encoder fine-tuned contrastively on matching pairs (product photos versus user photos of the same product, plus clicks and purchases from search). Precompute embeddings for all catalogue images and store them in an approximate nearest-neighbour index (HNSW or IVF with product quantisation), sharded by category. At query time, retrieve the top 500 by cosine similarity, filter by availability and region, and re-rank with a model using visual similarity, price, quality and popularity. Evaluate with recall at k on held-out matching pairs and with human relevance ratings; online, measure clicks and purchases per search. Monitor index freshness, embedding drift after model updates and latency. Trade-offs: index recall versus memory and speed, and exact-match versus style-similar results.",
+   "rubric": [
+    "Clarifies query type, catalogue size, latency and what counts as a good match",
+    "Crops to the object with detection or user selection before embedding",
+    "Trains embeddings contrastively on matching pairs, including user photos versus catalogue photos",
+    "Uses an approximate nearest-neighbour index and explains its recall-speed-memory trade-off",
+    "Adds filtering and a re-ranking stage with business signals",
+    "Evaluates with recall at k on matching pairs and human relevance judgements",
+    "Plans for re-embedding the catalogue when the model changes, and for new items",
+    "Monitors latency, index freshness and online engagement"
+   ],
+   "r": [
+    [
+     "Jing et al., Visual Search at Pinterest (2015)",
+     "https://arxiv.org/abs/1505.07647",
+     "Detection plus embeddings for search over a large image corpus."
+    ],
+    [
+     "Zhai et al., Visual Discovery at Pinterest (2017)",
+     "https://arxiv.org/abs/1702.04680",
+     "Product features built on visual search."
+    ],
+    [
+     "Johnson, Douze and Jegou, Billion-scale similarity search with GPUs (2017)",
+     "https://arxiv.org/abs/1702.08734",
+     "Approximate nearest-neighbour search at very large scale."
+    ],
+    [
+     "Malkov and Yashunin, Efficient and robust approximate nearest neighbor search using HNSW graphs (2016)",
+     "https://arxiv.org/abs/1603.09320",
+     "A widely used graph-based index."
+    ]
+   ],
+   "k": [
+    "visual search",
+    "image embeddings",
+    "approximate nearest neighbour",
+    "object detection"
+   ],
+   "x": [],
+   "p": [
+    "clip-cosine-retrieval",
+    "symmetric-clip-contrastive-loss",
+    "embedding-similarity",
+    "non-maximum-suppression"
+   ]
+  },
+  {
+   "id": "09.07",
+   "t": "Case study: visual product tagging",
+   "n": [
+    "Product tagging predicts many attributes from images and text (category, colour, pattern, material, style), so it is multi-label and hierarchical rather than a single class.",
+    "Labels come from sellers (noisy and incomplete), annotators (expensive) and user behaviour, and the taxonomy keeps changing.",
+    "A shared image-text encoder with one small head per attribute, plus zero-shot scoring for new attributes, keeps the system maintainable.",
+    "Per-attribute confidence thresholds decide what is applied automatically, what goes to review, and what is left blank."
+   ],
+   "a": "## Requirements\nClarify what tags are for. Usually they feed search filters (\"blue\", \"linen\", \"long sleeve\"), recommendations, and catalogue quality checks. A wrong tag in a filter shows users the wrong products, which is worse than a missing tag. Assume 2 million new or edited listings a day, tags needed within an hour of listing, around 5,000 categories and 200 attribute types, and monthly taxonomy changes.\n\n## Metrics\nPer attribute: precision at the auto-apply threshold and coverage (the share of listings that receive a tag). Category accuracy at each level of the hierarchy. Online: use of filters, click-through after filtering, and the rate at which sellers correct tags.\n\n## Data and labels\n- Seller fields: abundant but incomplete and sometimes wrong (sellers pick broad categories, or misstate materials). Use them with a confidence weight, and estimate their error rate per attribute on a reviewed sample.\n- Annotators: accurate but expensive. Spend them on a stratified sample across categories and on uncertain predictions (active learning).\n- Behaviour: a listing bought after a search for \"red dress\" is weak evidence that it is red and a dress.\n\n## Model\nUse a shared encoder over images and text. A CLIP-style model fine-tuned on the catalogue gives aligned image and text embeddings; combine all listing images (average or attention pooling) with the title and description.\n\n- Category: a hierarchical classifier, predicting top level then finer levels, so errors stay near the right branch.\n- Attributes: a small head per attribute group. Use softmax for exclusive attributes (sleeve length) and sigmoid for attributes that can take several values (colours, materials). Focal loss helps with rare values.\n- Gating: the predicted category determines which attributes apply; a sofa has no sleeve length.\n- New attributes: score zero-shot by comparing the image embedding with text prompts such as \"a photo of a velvet sofa\"; once enough reviewed labels exist, train a head.\n\n! Example: text and image disagree\n! A listing titled \"red dress\" showed a blue dress in every photo; the seller had copied an old title. Image-only and text-only models each tagged it confidently and differently. Training the fused model with examples where the two sources disagree, and routing large disagreements to review, cut colour errors in filters by about a third and found thousands of mislabelled listings for sellers to fix.\n\n## Thresholds\nCalibrate each attribute head (temperature scaling on a held-out set), then choose two thresholds per attribute: above the high one, apply automatically; between them, send to review or ask the seller to confirm; below, leave blank. Set thresholds from the precision the downstream use needs: filters need high precision; recommendation features can accept lower.\n\n## Serving\n%%flow Tagging pipeline. Listings are tagged in micro-batches shortly after they are created or edited.\nNew or edited listing -(images, title, description)-> Encoder -(fused embedding)-> *Category and attribute heads -(calibrated scores)-> Threshold policy -(auto-apply, review, blank)-> Catalogue and search index\n%%\n2 million listings a day is about 23 per second on average; micro-batches on a few GPUs handle it easily. Re-tag the full catalogue in a background job when the model or taxonomy changes.\n\n## Monitoring\nTrack coverage and score distributions by category, seller corrections, review queue size, and filter engagement. A rise in corrections for one category often means a taxonomy or seller-behaviour change.\n\n## Trade-offs\n- Precision versus coverage, set per attribute by its downstream use.\n- One large shared model is easy to maintain but harder to update for one attribute; small heads on a frozen encoder make targeted changes cheap.\n- Zero-shot tags arrive immediately but are less accurate than trained heads.\n\n## Likely follow-up questions\n\n- \"How do you handle a new category added to the taxonomy?\" Add its name as a text prompt for zero-shot scoring, route its predictions to review, and train it into the hierarchical head once a few hundred reviewed examples exist.\n- \"What if sellers game tags to appear in more filters?\" Predicted tags are computed independently of seller claims; large disagreements between the two are flagged, and repeated offenders lose the ability to set certain fields.\n- \"How do you know a tag improves the business?\" Run an experiment where filtered search uses predicted tags in one arm and seller tags only in the other, and compare purchases per search and zero-result rates.\n\n> Takeaway: tag with a shared image-text encoder and small per-attribute heads gated by category, learn from noisy seller labels plus targeted reviews, bootstrap new attributes zero-shot, and apply tags only above per-attribute, calibrated thresholds set by their downstream use.",
+   "q": "Design a system that automatically tags products in a marketplace with category and attributes (colour, pattern, material, style, sleeve length and so on) from seller images and text. There are 2 million new listings a day and the taxonomy changes monthly. Cover labels, model design, thresholds and how tags are used.",
+   "s": "Treat it as hierarchical, multi-label prediction. Use a shared image-text encoder (CLIP-style, fine-tuned on the catalogue) that embeds all images and the title and description; attach small heads per attribute group, with sigmoid outputs for multi-valued attributes and softmax for exclusive ones. Category is predicted first and gates which attributes apply. Labels combine seller-provided fields (noisy, used with confidence weighting), annotator labels on a stratified sample, and implicit signals such as search queries that led to purchases. New attributes start with zero-shot prompts, then get heads once labels exist. Calibrate per attribute and set thresholds for auto-apply, review and leave blank. Batch inference on new and edited listings within minutes. Evaluate per attribute with precision at the auto-apply threshold and coverage; online, measure search and filter use. Monitor drift by category and seller corrections.",
+   "rubric": [
+    "Frames the problem as hierarchical and multi-label, with category gating attributes",
+    "Uses both image and text inputs with a shared encoder and per-attribute heads",
+    "Handles noisy seller labels and gets clean labels on a stratified sample",
+    "Handles taxonomy changes, for example with zero-shot prompts for new attributes",
+    "Calibrates per attribute and sets auto-apply, review and blank thresholds",
+    "Evaluates per attribute (precision at threshold and coverage), not with one overall accuracy",
+    "Chooses batch or near-real-time inference appropriate to listing volume",
+    "Connects tags to downstream uses such as search filters and measures their impact"
+   ],
+   "r": [
+    [
+     "Radford et al., Learning Transferable Visual Models From Natural Language Supervision (CLIP, 2021)",
+     "https://arxiv.org/abs/2103.00020",
+     "Zero-shot classification from text prompts."
+    ],
+    [
+     "Shankar et al., Deep Learning based Large Scale Visual Recommendation and Search for E-Commerce (2017)",
+     "https://arxiv.org/abs/1703.02344",
+     "Visual features for a large retail catalogue."
+    ],
+    [
+     "Google, Rules of Machine Learning",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "Practical advice on labels, features and launches."
+    ]
+   ],
+   "k": [
+    "product tagging",
+    "multi-label classification",
+    "zero-shot",
+    "taxonomy"
+   ],
+   "x": [],
+   "p": [
+    "clip-zero-shot-classifier",
+    "sigmoid-focal-loss",
+    "expected-calibration-error",
+    "top-k-classification-accuracy"
+   ]
+  }
+ ]
+}

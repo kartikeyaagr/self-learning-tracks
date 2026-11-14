@@ -7,12 +7,14 @@ META = dict(title='GRU over a sequence (PyTorch gate convention)', tags=['Neural
 STATEMENT = r"""
 The gated recurrent unit adds two gates to the plain RNN: a **reset** gate $r$ that decides how much of the old state feeds the candidate, and an **update** gate $z$ that interpolates between old state and candidate. Use the convention of `torch.nn.GRU`:
 
-$$\begin{aligned}
+$$
+\begin{aligned}
 r_t &= \sigma(x_t W_{xr} + b_{xr} + h_{t-1} W_{hr} + b_{hr}) \\
 z_t &= \sigma(x_t W_{xz} + b_{xz} + h_{t-1} W_{hz} + b_{hz}) \\
 n_t &= \tanh\big(x_t W_{xn} + b_{xn} + r_t \odot (h_{t-1} W_{hn} + b_{hn})\big) \\
 h_t &= (1 - z_t) \odot n_t + z_t \odot h_{t-1}
-\end{aligned}$$
+\end{aligned}
+$$
 
 Note the reset gate multiplies $h_{t-1} W_{hn} + b_{hn}$, after the hidden projection and its bias.
 

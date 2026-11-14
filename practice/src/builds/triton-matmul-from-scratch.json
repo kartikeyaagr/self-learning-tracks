@@ -1,0 +1,12 @@
+{"id": "triton-matmul-from-scratch", "kind": "project", "group": "ML Systems and GPU Programming",
+ "title": "Triton Matmul from Scratch",
+ "blurb": "Learn how a GPU matmul kernel is organised: program ids, masked block loads, memory traffic, the roofline, and a fused epilogue.",
+ "intro": "A Triton matmul assigns each program an output tile, loops over K loading masked blocks, accumulates in registers and stores once. The steps cover grouped program ordering for cache reuse, pointer offsets and masks for edge blocks, the global memory traffic a tiling implies, arithmetic intensity on the roofline, and a fused matmul, bias and ReLU kernel. The capstone simulates the whole kernel in NumPy, checks it against a reference, counts its bytes and places it on the roofline.",
+ "steps": [
+  {"name": "Map program ids to output tiles", "problem": "grouped-program-id-matmul"},
+  {"name": "Mask an edge block", "problem": "masked-edge-block-load"},
+  {"name": "Count global memory traffic for a tiling", "problem": "tiled-matmul-memory-traffic"},
+  {"name": "Arithmetic intensity and the roofline", "problem": "analyze-prefill-and-decode-with-roofline-model"},
+  {"name": "A fused matmul, bias and ReLU kernel", "problem": "fused-matmul-bias-relu"}
+ ],
+ "capstone": "tiled-matmul-kernel-capstone"}

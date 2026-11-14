@@ -1,0 +1,309 @@
+{
+ "n": "15",
+ "name": "Information theory for ML",
+ "desc": "Entropy, cross-entropy, KL and mutual information, and how they shape ML losses and estimates.",
+ "part": "Information and graphs",
+ "lessons": [
+  {
+   "id": "15.01",
+   "t": "Entropy as average surprise and code length",
+   "n": [
+    "The surprise of an outcome with probability $p$ is $-\\log p$; entropy $H(X) = -\\sum_x p(x)\\log p(x)$ is the expected surprise.",
+    "Entropy is the shortest possible average code length: no lossless code can beat $H(X)$ bits per symbol, and good codes come within a fraction of a bit.",
+    "Entropy is largest ($\\log K$) for a uniform distribution over $K$ outcomes and zero for a certain outcome.",
+    "The chain rule $H(X,Y) = H(X) + H(Y\\mid X)$ splits uncertainty about a pair into steps, and conditioning never increases entropy on average."
+   ],
+   "a": "## Where this module sits\nProbability (modules 10 to 12) gave you distributions and likelihoods. Information theory adds a way to measure uncertainty in bits, and it turns out to be the language of most ML losses: cross-entropy, KL divergence, perplexity and contrastive losses are all information quantities. The AI Research course (lesson 01.11) builds the intuition for entropy through surprise; this module adds the coding view, the identities you need for derivations, and the links to losses.\n\n## Surprise and entropy\nAn outcome with probability $p$ carries surprise $-\\log p$. A certain event ($p = 1$) carries none; a one-in-a-million event carries about 20 bits. Using base 2 gives bits; the natural log gives nats ($1$ nat $= 1/\\ln 2 \\approx 1.443$ bits). Deep learning libraries use nats.\n\nEntropy is the expected surprise:\n$H(X) = -\\sum_x p(x) \\log p(x)$.\nThree facts are worth memorising:\n- $H(X) \\ge 0$, with equality only when one outcome is certain.\n- For $K$ outcomes, $H(X) \\le \\log K$, with equality for the uniform distribution.\n- $H$ is concave in $p$: mixing distributions increases entropy.\n\nFor a coin with probability $p$ of heads, $H(p) = -p\\log_2 p - (1-p)\\log_2(1-p)$. It is 1 bit at $p = 0.5$, about 0.47 bits at $p = 0.9$, and 0 at $p = 1$.\n\n## The coding view\nSuppose you must send a long sequence of symbols in binary, and each symbol has a codeword. If frequent symbols get short codewords, the average length falls. Shannon's source coding theorem says the average length of any lossless code is at least $H(X)$ bits per symbol, and that codes exist with average length below $H(X) + 1$. Coding blocks of symbols together, or using arithmetic coding, gets as close to $H(X)$ as you like.\n\nThe ideal codeword length for a symbol is $-\\log_2 p(x)$ bits. That is why surprise and code length are the same thing: an unlikely symbol needs a long description.\n\n%%flow From a distribution to a code length.\nDistribution p(x) -(surprise -log p)-> Ideal code length per symbol -(average over p)-> *Entropy H(X) -(Huffman, arithmetic coding)-> Achievable bits per symbol\n%%\n\n! Example: Huffman coding a skewed alphabet\n! Four symbols have probabilities 0.4, 0.3, 0.2 and 0.1. Entropy is about 1.85 bits. Huffman's algorithm repeatedly merges the two least likely symbols: 0.1 and 0.2 make 0.3; that and 0.3 make 0.6; that and 0.4 make 1. The resulting lengths are 1, 2, 3 and 3 bits, for an average of $0.4 + 0.6 + 0.6 + 0.3 = 1.9$ bits, within 0.05 bits of the entropy. A fixed-length code would need 2 bits.\n\n## Joint and conditional entropy\nFor two variables, the joint entropy $H(X,Y)$ is the entropy of the pair. The conditional entropy $H(Y\\mid X) = \\sum_x p(x) H(Y \\mid X = x)$ is the uncertainty left in $Y$ after seeing $X$, averaged over $X$. The chain rule connects them:\n$H(X, Y) = H(X) + H(Y \\mid X)$.\nIt extends to sequences: $H(X_1, \\dots, X_n) = \\sum_i H(X_i \\mid X_1, \\dots, X_{i-1})$. An autoregressive language model is exactly this factorisation, predicting each token given the previous ones.\n\nOn average, conditioning cannot increase entropy: $H(Y \\mid X) \\le H(Y)$, with equality when $X$ and $Y$ are independent. A particular observation can increase uncertainty (a surprising clue can make you less sure), but the average over observations cannot.\n\n## Continuous variables\nFor a density $f$, differential entropy is $h(X) = -\\int f(x)\\log f(x)\\,dx$. It behaves differently: it can be negative, and it changes when you rescale $X$. For a Gaussian with variance $\\sigma^2$, $h = \\tfrac12 \\log(2\\pi e \\sigma^2)$, which is negative when $\\sigma$ is small. Among all densities with a given variance, the Gaussian has the largest differential entropy, which is one reason Gaussian noise is a common default assumption. Differences of differential entropies (such as mutual information, lesson 15.04) do not depend on scale and are well behaved.\n\n## Why entropy matters in ML\n- Decision trees choose splits that reduce label entropy most (lesson 15.04).\n- The entropy of a model's predictive distribution measures its uncertainty, used in active learning and for flagging inputs to review.\n- An entropy bonus in reinforcement learning keeps a policy from collapsing too early onto one action.\n- Tokenisers and compression connect directly to entropy: a better model of text gives shorter codes (lesson 15.02).\n\n## Common mistakes\n- Mixing bases: reporting a loss in nats as if it were bits. Convert by dividing by $\\ln 2$.\n- Treating differential entropy as a count of bits; it is only meaningful up to the scale of the variable.\n- Estimating entropy from a small sample by plugging in frequencies; this underestimates it (lesson 15.06).\n\n> Takeaway: entropy is expected surprise and also the minimum average code length; it is largest for uniform distributions, splits by the chain rule, and appears wherever ML measures uncertainty.",
+   "q": "A weather station reports one of four states each hour: sunny with probability 1/2, cloudy 1/4, rain 1/8, snow 1/8. (a) Compute the entropy in bits. (b) Give a prefix code that achieves it. (c) What happens to the average code length if you use a fixed 2-bit code instead, and how does that relate to entropy?",
+   "s": "(a) $H = \\tfrac12\\cdot1 + \\tfrac14\\cdot2 + \\tfrac18\\cdot3 + \\tfrac18\\cdot3 = 1.75$ bits. (b) Sunny 0, cloudy 10, rain 110, snow 111. No codeword is a prefix of another, and each length equals $-\\log_2 p$, so the average length is exactly 1.75 bits. (c) A fixed 2-bit code averages 2 bits, 0.25 bits more than the entropy. That excess is the cost of coding as if the four states were equally likely: it equals the KL divergence from the true distribution to the uniform one, $2 - 1.75 = 0.25$ bits. Entropy is the floor for any lossless code; the fixed code wastes bits on frequent symbols.",
+   "r": [
+    [
+     "Shannon, A Mathematical Theory of Communication (1948)",
+     "https://people.math.harvard.edu/~ctm/home/text/others/shannon/entropy/entropy.pdf",
+     "The original definition of entropy and the source coding theorem."
+    ],
+    [
+     "MacKay, Information Theory, Inference, and Learning Algorithms (free book)",
+     "https://www.inference.org.uk/itprnn/book.pdf",
+     "Chapters 2, 4 and 5 cover entropy and coding with many exercises."
+    ],
+    [
+     "Olah, Visual Information Theory",
+     "https://colah.github.io/posts/2015-09-Visual-Information/",
+     "Pictures of code lengths and entropy."
+    ],
+    [
+     "Wikipedia, Huffman coding",
+     "https://en.wikipedia.org/wiki/Huffman_coding",
+     "The optimal prefix code construction."
+    ]
+   ],
+   "k": [
+    "entropy",
+    "source coding",
+    "bits and nats"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "perplexity-computation",
+    "basic-probability-rules",
+    "decision-tree-classifier-cart"
+   ]
+  },
+  {
+   "id": "15.02",
+   "t": "Cross-entropy, likelihood and perplexity",
+   "n": [
+    "Cross-entropy $H(p, q) = -\\sum_x p(x)\\log q(x)$ is the average code length when data from $p$ is coded with a code built for $q$; it equals $H(p) + D_{\\mathrm{KL}}(p\\,\\|\\,q)$.",
+    "With one-hot targets, cross-entropy reduces to $-\\log q(y)$, so the average classification loss is the negative log-likelihood and minimising it is maximum likelihood.",
+    "Perplexity is $\\exp$ of the cross-entropy in nats: the effective number of equally likely choices the model is unsure between.",
+    "Bits per byte divides out the tokeniser, so it compares language models with different vocabularies fairly."
+   ],
+   "a": "## From entropy to cross-entropy\nLesson 15.01 showed that the ideal code for a distribution $p$ gives symbol $x$ a codeword of $-\\log p(x)$ bits. Now suppose you do not know $p$ and build the code from a model $q$ instead. Each symbol costs $-\\log q(x)$ bits, and since symbols really come from $p$, the average cost is\n$H(p, q) = -\\sum_x p(x) \\log q(x)$.\nThis is the cross-entropy. Splitting it,\n$H(p, q) = H(p) + D_{\\mathrm{KL}}(p\\,\\|\\,q)$.\nThe first term is the unavoidable cost; the second is the extra cost of using the wrong model. Since $H(p)$ does not depend on $q$, minimising cross-entropy over $q$ is the same as minimising the KL divergence from $p$ to $q$.\n\n## Cross-entropy as a classification loss\nIn classification, the target distribution for one example is one-hot on the true class $y$, so the sum keeps only one term:\n$H(\\text{one-hot}, q) = -\\log q(y)$.\nAveraged over a dataset, this is the negative log-likelihood of the labels under the model. Minimising it is maximum likelihood estimation (ML Maths 12.11). With logits $z$ and softmax $q = \\mathrm{softmax}(z)$, the gradient with respect to the logits is simply $q - \\text{one-hot}(y)$, which is why the softmax and cross-entropy are fused in libraries (ML Maths 10.32).\n\nFor binary labels with predicted probability $\\hat{p}$, the binary cross-entropy is $-[y\\log\\hat{p} + (1-y)\\log(1-\\hat{p})]$, the same idea with two classes.\n\n## What the number means\nA loss of 0.69 nats on a balanced binary task means the model is no better than a coin ($\\ln 2 \\approx 0.693$). For $K$ classes, the loss of a uniform guess is $\\ln K$. Comparing a model's loss with $\\ln K$ and with the loss of predicting class frequencies (the label entropy) tells you how much it has learned.\n\nCross-entropy punishes confident mistakes heavily: predicting the true class with probability 0.01 costs $\\ln 100 \\approx 4.6$ nats, while 0.5 costs 0.69. A few confident errors can dominate the average, which is often what you want for calibration but also why noisy labels hurt.\n\n## Perplexity\nFor language models the loss is the average cross-entropy per token. Perplexity is\n$\\mathrm{PPL} = \\exp\\!\\Big(-\\tfrac{1}{N}\\sum_{t=1}^{N} \\ln q(x_t \\mid x_{<t})\\Big)$.\nIt reads as an effective branching factor: perplexity 20 means the model is, on average, as uncertain as if it were choosing uniformly among 20 tokens. ML Maths 12.16 shows how held-out likelihood and perplexity are computed; here the point is the information meaning.\n\n%%flow Converting a language model loss into comparable units.\nLoss in nats per token -(exp)-> Perplexity\nLoss in nats per token -(divide by ln 2)-> Bits per token -(divide by bytes per token)-> *Bits per byte\n%%\n\n## Bits per byte and compression\nPer-token losses depend on the tokeniser: a tokeniser with longer tokens has fewer, harder predictions per text. Dividing bits per token by the average number of bytes per token gives bits per byte, which compares models with different tokenisers. Arithmetic coding with a model $q$ compresses text to almost exactly $\\sum_t -\\log_2 q(x_t \\mid x_{<t})$ bits, so a language model's loss is literally its compression rate. Better prediction and better compression are the same goal.\n\n! Example: comparing two tokenisers\n! A team switched to a tokeniser with a larger vocabulary and saw validation loss rise from 2.0 to 2.2 nats per token, and nearly reverted the change. Converting to bits per byte showed the opposite: the old tokeniser averaged 4.0 bytes per token (0.72 bits per byte) and the new one 4.6 bytes per token (0.69 bits per byte). The new model predicted text better; it simply made fewer, harder predictions.\n\n## Soft targets\nWhen targets are themselves distributions (label smoothing, knowledge distillation, a teacher model's probabilities), the full sum matters and the minimum is no longer zero: it is $H(p)$ of the target. A distillation loss that stops falling may be close to the teacher's own entropy rather than stuck. Lesson 15.05 develops these cases.\n\n## Common mistakes\n- Comparing per-token losses or perplexities across tokenisers.\n- Computing perplexity as the average of per-sequence perplexities; it is the exponential of the average loss over all tokens.\n- Taking $\\log$ of a softmax computed in low precision; use the fused log-softmax for numerical stability.\n- Reading a loss in nats as bits, or the reverse.\n\n> Takeaway: cross-entropy is the code length under a model, equal to entropy plus KL; as a loss it is negative log-likelihood, its exponential is perplexity, and bits per byte is the fair way to compare language models.",
+   "q": "A language model reaches a validation loss of 2.0 nats per token. Its tokeniser averages 4.0 bytes of text per token. (a) What is the perplexity? (b) What is the loss in bits per token and in bits per byte? (c) A second model has loss 2.2 nats per token but its tokeniser averages 4.6 bytes per token. Which model compresses text better?",
+   "s": "(a) Perplexity $= e^{2.0} \\approx 7.39$: on average the model is as uncertain as a uniform choice among about 7.4 tokens. (b) $2.0/\\ln 2 \\approx 2.885$ bits per token; divided by 4.0 bytes per token gives about 0.72 bits per byte. (c) $2.2/\\ln 2 \\approx 3.174$ bits per token, divided by 4.6 gives about 0.69 bits per byte. The second model has higher loss per token but lower bits per byte, so it compresses text better; per-token loss is not comparable across tokenisers.",
+   "r": [
+    [
+     "Wikipedia, Cross-entropy",
+     "https://en.wikipedia.org/wiki/Cross-entropy",
+     "Definitions and the link to likelihood."
+    ],
+    [
+     "Wikipedia, Perplexity",
+     "https://en.wikipedia.org/wiki/Perplexity",
+     "Definition and interpretation for language models."
+    ],
+    [
+     "Deletang et al., Language Modeling Is Compression (2023)",
+     "https://arxiv.org/abs/2309.10668",
+     "Language models used as compressors via arithmetic coding."
+    ],
+    [
+     "MacKay, Information Theory, Inference, and Learning Algorithms (free book)",
+     "https://www.inference.org.uk/itprnn/book.pdf",
+     "Chapter 6 on arithmetic coding with a probabilistic model."
+    ]
+   ],
+   "k": [
+    "cross-entropy",
+    "negative log-likelihood",
+    "perplexity",
+    "bits per byte"
+   ],
+   "x": [
+    "NumPy",
+    "PyTorch"
+   ],
+   "p": [
+    "cross-entropy-loss",
+    "log-loss-binary-cross-entropy",
+    "perplexity-computation",
+    "softmax-cross-entropy-gradient"
+   ]
+  },
+  {
+   "id": "15.03",
+   "t": "KL and Jensen-Shannon divergence",
+   "n": [
+    "$D_{\\mathrm{KL}}(p\\,\\|\\,q) = \\sum_x p(x)\\log\\frac{p(x)}{q(x)}$ is the extra code length from using $q$ when data comes from $p$; it is never negative and is zero only when $p = q$.",
+    "KL is not symmetric: forward KL $D(p\\,\\|\\,q)$ forces $q$ to cover all of $p$, while reverse KL $D(q\\,\\|\\,p)$ lets $q$ settle on one mode.",
+    "Jensen-Shannon divergence compares both distributions with their average, so it is symmetric, always finite and at most $\\log 2$.",
+    "KL terms appear as regularisers in ML: the VAE prior term, the penalty that keeps a fine-tuned policy near its reference, and distillation."
+   ],
+   "a": "## Where this lesson sits\nThe AI Research course (lesson 01.12) introduces KL divergence with examples. This lesson keeps the basics short and focuses on the properties you use in derivations and on the two directions.\n\n## Definition and basic facts\n$D_{\\mathrm{KL}}(p\\,\\|\\,q) = \\sum_x p(x)\\log\\frac{p(x)}{q(x)} = H(p, q) - H(p)$.\n- It is the extra bits per symbol paid for coding $p$ with a code built for $q$ (lesson 15.02).\n- Gibbs' inequality: $D_{\\mathrm{KL}}(p\\,\\|\\,q) \\ge 0$, with equality only if $p = q$. It follows from Jensen's inequality applied to the concave logarithm.\n- It is infinite if $q(x) = 0$ somewhere that $p(x) > 0$: a code with no codeword for a possible symbol cannot work.\n- It is not symmetric and does not satisfy the triangle inequality, so it is not a distance.\n\nFor two Gaussians there is a closed form:\n$D(\\mathcal{N}(\\mu_1,\\sigma_1^2)\\,\\|\\,\\mathcal{N}(\\mu_2,\\sigma_2^2)) = \\ln\\frac{\\sigma_2}{\\sigma_1} + \\frac{\\sigma_1^2 + (\\mu_1-\\mu_2)^2}{2\\sigma_2^2} - \\frac12$.\nFor diagonal multivariate Gaussians, sum this over dimensions. The VAE uses it with $q = \\mathcal{N}(\\mu, \\sigma^2)$ and a standard normal prior, giving $\\tfrac12\\sum_j(\\mu_j^2 + \\sigma_j^2 - \\ln\\sigma_j^2 - 1)$.\n\n## Forward and reverse KL\nWhen you fit a simple $q$ to a complicated $p$, the direction matters.\n- Forward KL, $D(p\\,\\|\\,q)$, averages over $p$. Wherever $p$ has mass and $q$ is small, $\\log(p/q)$ is large, so $q$ must cover all of $p$. The fit is broad and mass-covering. Maximum likelihood minimises this direction.\n- Reverse KL, $D(q\\,\\|\\,p)$, averages over $q$. It does not care about regions where $q$ is zero, but punishes $q$ for putting mass where $p$ is small. The fit is narrow and mode-seeking. Variational inference minimises this direction, which is why variational posteriors often underestimate uncertainty.\n\n%%layers Which direction to expect in common methods.\nMaximum likelihood, distillation | forward KL: data or teacher distribution on the left; broad fits\nVariational inference, VAE posterior | reverse KL: approximation on the left; narrow, mode-seeking fits\n*KL penalty to a reference policy | KL of the trained policy from the reference; keeps outputs near the reference\n%%\n\n! Example: two peaks, one Gaussian\n! Let $p$ be an equal mixture of Gaussians centred at $-3$ and $+3$, each with variance 1. Fitting one Gaussian by forward KL gives mean 0 and variance 10 (the mixture's own mean and variance), which puts most of its mass in the valley between the peaks. Fitting by reverse KL gives a Gaussian centred on one of the peaks with variance close to 1, ignoring the other. Neither is right; they fail in opposite ways.\n\n## Jensen-Shannon divergence\nLet $m = \\tfrac12(p + q)$. Then\n$\\mathrm{JS}(p, q) = \\tfrac12 D_{\\mathrm{KL}}(p\\,\\|\\,m) + \\tfrac12 D_{\\mathrm{KL}}(q\\,\\|\\,m)$.\nBecause $m$ is positive wherever $p$ or $q$ is, JS is always finite. It is symmetric, lies between 0 and $\\ln 2$ nats (1 bit), and its square root is a true metric.\n\nJS appears in the original GAN analysis: with the optimal discriminator, the generator's objective equals $2\\,\\mathrm{JS}(p_{\\text{data}}, p_g) - \\ln 4$. When the two distributions barely overlap, JS sits near its maximum and changes little as the generator improves, so gradients are weak. This observation motivated other divergences and distances for GAN training.\n\n## KL in practice\n- VAE: the KL term pulls each posterior toward the prior; too strong a weight makes the model ignore the latent.\n- Fine-tuning language models with rewards: a penalty $\\beta\\,D_{\\mathrm{KL}}(\\pi\\,\\|\\,\\pi_{\\text{ref}})$ stops the policy from drifting into degenerate text that exploits the reward model.\n- Distillation: the student minimises cross-entropy (equivalently forward KL) to the teacher's softened distribution.\n- Monitoring: the population stability index used for drift is a symmetrised KL between binned feature distributions.\n\n## Estimating KL from samples\nWith samples from $p$ and densities you can evaluate, $D(p\\,\\|\\,q) \\approx \\frac{1}{N}\\sum_i \\log\\frac{p(x_i)}{q(x_i)}$. For a language-model policy, the per-token log-ratio of sampled tokens gives an unbiased but noisy estimate; individual samples can be negative even though the expectation is not.\n\n## Common mistakes\n- Swapping the arguments: library functions differ in which argument is the data distribution; check the documentation against a two-point example.\n- Adding a tiny epsilon to zero probabilities without thinking: it makes KL finite but the value then depends mostly on the epsilon.\n- Reading a small KL as \"similar everywhere\": KL averages over $p$, so large differences where $p$ is rare barely count.\n\n> Takeaway: KL is the extra code length from using the wrong distribution; it is non-negative and asymmetric, forward KL covers and reverse KL seeks modes, and JS divergence is its bounded, symmetric relative.",
+   "q": "Let $p = \\mathcal{N}(0, 1)$ and $q = \\mathcal{N}(1, 4)$ (variance 4). (a) Compute $D_{\\mathrm{KL}}(p\\,\\|\\,q)$ in nats. (b) Without computing, is $D_{\\mathrm{KL}}(q\\,\\|\\,p)$ larger or smaller, and why? (c) If you fit a single Gaussian $q$ to a two-peaked $p$, which direction of KL gives a broad $q$ that covers both peaks?",
+   "s": "(a) For Gaussians, $D(\\mathcal{N}(\\mu_1,\\sigma_1^2)\\,\\|\\,\\mathcal{N}(\\mu_2,\\sigma_2^2)) = \\ln\\frac{\\sigma_2}{\\sigma_1} + \\frac{\\sigma_1^2 + (\\mu_1-\\mu_2)^2}{2\\sigma_2^2} - \\frac12 = \\ln 2 + \\frac{1 + 1}{8} - 0.5 \\approx 0.443$ nats. (b) Larger. Now the expectation is over the wide $q$, which puts substantial mass where the narrow $p$ has tiny density, and $\\log(q/p)$ is very large there; numerically it is about 1.31 nats. (c) Forward KL, $D(p\\,\\|\\,q)$: it penalises $q$ heavily wherever $p$ has mass and $q$ does not, so the best $q$ spreads to cover both peaks. Reverse KL would let $q$ sit on one peak.",
+   "r": [
+    [
+     "Wikipedia, Kullback-Leibler divergence",
+     "https://en.wikipedia.org/wiki/Kullback%E2%80%93Leibler_divergence",
+     "Properties, closed forms and interpretations."
+    ],
+    [
+     "Wikipedia, Jensen-Shannon divergence",
+     "https://en.wikipedia.org/wiki/Jensen%E2%80%93Shannon_divergence",
+     "Definition, bounds and the metric property of its square root."
+    ],
+    [
+     "Kingma and Welling, Auto-Encoding Variational Bayes (2013)",
+     "https://arxiv.org/abs/1312.6114",
+     "The KL term in the VAE objective, with the Gaussian closed form."
+    ],
+    [
+     "MacKay, Information Theory, Inference, and Learning Algorithms (free book)",
+     "https://www.inference.org.uk/itprnn/book.pdf",
+     "Chapter 2 on relative entropy and Gibbs' inequality."
+    ]
+   ],
+   "k": [
+    "KL divergence",
+    "forward and reverse KL",
+    "Jensen-Shannon divergence"
+   ],
+   "x": [
+    "NumPy"
+   ],
+   "p": [
+    "kl-divergence-discrete-and-continuous",
+    "diagonal-gaussian-kl-divergence",
+    "population-stability-index",
+    "ppo-with-reference-policy-kl"
+   ]
+  },
+  {
+   "id": "15.04",
+   "t": "Mutual information and information gain",
+   "n": [
+    "Mutual information $I(X;Y) = H(Y) - H(Y\\mid X)$ is the reduction in uncertainty about $Y$ from knowing $X$; it is symmetric, non-negative and zero only for independent variables.",
+    "Equivalently, $I(X;Y) = D_{\\mathrm{KL}}(p(x,y)\\,\\|\\,p(x)p(y))$: how far the joint distribution is from independence.",
+    "A decision tree's information gain is the mutual information between a split and the label, measured on the examples at that node.",
+    "Mutual information detects any dependence, including non-linear ones that correlation misses, and processing can only lose it (the data processing inequality)."
+   ],
+   "a": "## Definition\nMutual information measures how much knowing one variable tells you about another:\n$I(X;Y) = H(Y) - H(Y \\mid X) = H(X) - H(X \\mid Y) = H(X) + H(Y) - H(X, Y)$.\nIt is symmetric: $X$ tells you as much about $Y$ as $Y$ tells you about $X$. It also equals the KL divergence between the joint distribution and the product of the marginals,\n$I(X;Y) = \\sum_{x,y} p(x,y)\\log\\frac{p(x,y)}{p(x)p(y)}$,\nso it is never negative and is zero exactly when $X$ and $Y$ are independent.\n\n%%flow The pieces of joint uncertainty.\nH(X, Y) -(splits into)-> H(X given Y) -> *I(X; Y) -> H(Y given X)\n%%\nThe joint entropy is the part only in $X$, plus the shared part, plus the part only in $Y$. The shared part is mutual information.\n\n## Information gain in decision trees\nAt a node, the label $Y$ has some entropy. A candidate split $S$ divides the examples into children; the weighted average of the children's label entropies is $H(Y\\mid S)$. The information gain is\n$\\mathrm{IG} = H(Y) - H(Y\\mid S) = I(S; Y)$,\ncomputed on the examples at that node. The tree picks the split with the largest gain. The Gini impurity, used by CART by default, is a close cousin that avoids logarithms and usually picks similar splits.\n\nInformation gain favours features with many distinct values, because splitting into many small groups makes each group purer by chance. Remedies are the gain ratio (divide by the entropy of the split itself), limits on leaf size, and evaluating splits on held-out data.\n\n## Beyond correlation\nCorrelation measures linear dependence only. Let $X$ be uniform on $\\{-1, 0, 1\\}$ and $Y = X^2$. The correlation is 0, but $Y$ is a function of $X$, so $I(X;Y) = H(Y) \\approx 0.918$ bits. Mutual information catches any kind of dependence, which makes it useful for:\n- Feature screening: rank features by their estimated mutual information with the target.\n- Detecting redundancy: two features with high mutual information carry overlapping signals.\n- Understanding representations: how much information about the input or label a layer keeps.\n\n! Example: a useful feature that correlation missed\n! In a churn model, the correlation between days since last login and churn was weak, so the feature was dropped. A plot showed the reason: both very short and very long gaps predicted low churn (the long gaps were mostly seasonal users who came back each year), while medium gaps predicted high churn. Mutual information ranked the feature among the top five, and adding it back with a tree model improved validation log loss noticeably.\n\n## The data processing inequality\nIf $X \\to Y \\to Z$ form a chain (so $Z$ depends on $X$ only through $Y$), then $I(X;Z) \\le I(X;Y)$. No processing of $Y$, however clever, can create information about $X$ that $Y$ did not have. In ML terms: a network's deeper layers cannot know more about the input than earlier layers did, and a model built on a lossy feature pipeline is limited by what the pipeline kept. It is a useful sanity check when someone claims a post-processing step \"adds information\".\n\n## Conditional mutual information\n$I(X;Y\\mid Z)$ measures the dependence between $X$ and $Y$ that remains once $Z$ is known. A feature that seems informative may carry nothing new once a stronger, correlated feature is included: its conditional mutual information with the label, given that feature, is small. Greedy feature selection methods use this to avoid picking redundant features.\n\n## Estimating mutual information\nFor discrete variables with plenty of data, plug in the empirical joint frequencies. With few samples per cell, the plug-in estimate is biased upwards: independent variables show positive mutual information by chance. For continuous variables, binning makes the answer depend on the bin width; nearest-neighbour estimators (Kraskov and colleagues) avoid binning and work well in low dimensions. Lesson 15.06 discusses estimation further.\n\n## Common mistakes\n- Comparing mutual information values across targets with different entropies; normalise (for example by $\\min(H(X), H(Y))$) when you need a 0 to 1 scale.\n- Trusting high mutual information for features with many rare values; check against a shuffled label (lesson 15.06).\n- Concluding causation: mutual information, like correlation, is symmetric and says nothing about direction.\n\n> Takeaway: mutual information is the shared uncertainty between two variables, equal to the KL divergence from independence; it is the information gain behind decision trees, detects non-linear dependence, and cannot be increased by processing.",
+   "q": "A node in a decision tree holds 10 positive and 10 negative examples. Split A sends 8 positives and 2 negatives left, and the rest right. Split B sends 10 examples (5 positive, 5 negative) left and the other 10 (5 and 5) right. (a) Compute the information gain of each split in bits. (b) A third split uses a customer-ID feature with a different value for every example. What is its information gain, and why is it a bad split?",
+   "s": "(a) Parent entropy is 1 bit. Split A: each child has a 0.8/0.2 mix, with entropy $-0.8\\log_2 0.8 - 0.2\\log_2 0.2 \\approx 0.722$ bits, so the weighted child entropy is 0.722 and the gain is about 0.278 bits. Split B: both children are 50/50, entropy 1 bit, gain 0. (b) Every child holds one example and has entropy 0, so the gain is the full 1 bit, the maximum. But the split memorises the training examples and says nothing about new customers. Information gain favours features with many values; the gain ratio (gain divided by the split's own entropy, here $\\log_2 20 \\approx 4.32$ bits) or a minimum leaf size counters this.",
+   "r": [
+    [
+     "Wikipedia, Mutual information",
+     "https://en.wikipedia.org/wiki/Mutual_information",
+     "Definitions, identities and properties."
+    ],
+    [
+     "Wikipedia, Information gain (decision tree)",
+     "https://en.wikipedia.org/wiki/Information_gain_(decision_tree)",
+     "Information gain as a split criterion."
+    ],
+    [
+     "Kraskov, Stoegbauer and Grassberger, Estimating Mutual Information (2003)",
+     "https://arxiv.org/abs/cond-mat/0305641",
+     "The nearest-neighbour estimator for continuous variables."
+    ],
+    [
+     "MacKay, Information Theory, Inference, and Learning Algorithms (free book)",
+     "https://www.inference.org.uk/itprnn/book.pdf",
+     "Chapter 8 on dependent random variables."
+    ]
+   ],
+   "k": [
+    "mutual information",
+    "information gain",
+    "feature selection",
+    "data processing inequality"
+   ],
+   "x": [
+    "NumPy",
+    "scikit-learn"
+   ],
+   "p": [
+    "decision-tree-classifier-cart",
+    "random-forest",
+    "independence-testing",
+    "chi-square-goodness-of-fit"
+   ]
+  },
+  {
+   "id": "15.05",
+   "t": "Information in ML losses",
+   "n": [
+    "Minimising average cross-entropy on data is maximum likelihood, which is the same as minimising forward KL from the data distribution to the model.",
+    "Label smoothing and distillation replace one-hot targets with soft ones, changing the loss's minimum and how confident the model becomes.",
+    "The VAE objective is a reconstruction term minus a KL term, which can be read as distortion plus the rate (bits) used to describe the latent.",
+    "Contrastive losses such as InfoNCE give a lower bound on mutual information that can never exceed $\\log N$ for $N$ candidates."
+   ],
+   "a": "## Maximum likelihood is cross-entropy is KL\nLet $p_{\\text{data}}$ be the data distribution and $q_\\theta$ the model. The expected negative log-likelihood is\n$\\mathbb{E}_{x\\sim p_{\\text{data}}}[-\\log q_\\theta(x)] = H(p_{\\text{data}}, q_\\theta) = H(p_{\\text{data}}) + D_{\\mathrm{KL}}(p_{\\text{data}}\\,\\|\\,q_\\theta)$.\nThe first term is fixed, so maximum likelihood, minimum cross-entropy and minimum forward KL are the same optimisation. This explains two common behaviours: models trained by likelihood are mass-covering (lesson 15.03), and the loss floor is the entropy of the data, not zero. A language model cannot reach zero loss on text that is genuinely uncertain.\n\n## Soft targets: label smoothing and distillation\nLabel smoothing mixes the one-hot target with a uniform distribution: $p_\\varepsilon = (1-\\varepsilon)\\,\\text{one-hot} + \\varepsilon/K$. The loss becomes\n$H(p_\\varepsilon, q) = (1-\\varepsilon)\\,H(\\text{one-hot}, q) + \\varepsilon\\,H(u, q)$,\nwhere $u$ is uniform. The second term penalises any class probability approaching zero, so logits cannot grow without bound. This usually improves calibration and sometimes accuracy. It also squeezes examples of a class into tighter clusters in the penultimate layer, which removes information about how classes relate; Mueller and colleagues found that teachers trained with label smoothing are worse for distillation.\n\nDistillation uses the teacher's probabilities as targets, softened with a temperature $T$: $p_T = \\mathrm{softmax}(z/T)$. A higher $T$ reveals more about the teacher's view of similar classes (a husky looks somewhat like a wolf). Gradients of the softened loss scale as $1/T^2$, so the loss is multiplied by $T^2$ to keep its weight comparable to the hard-label loss.\n\n! Example: the loss that would not fall\n! An engineer added label smoothing with $\\varepsilon = 0.1$ to a 1,000-class model and saw the training loss stall near 1.0 nats instead of falling toward 0.1 as before. Nothing was wrong: with smoothed targets, the minimum loss is the target entropy, about 1.01 nats here. Tracking accuracy and the unsmoothed validation loss alongside the training loss avoided a pointless search for a bug.\n\n## The VAE objective as rate and distortion\nA VAE maximises the evidence lower bound\n$\\mathcal{L} = \\mathbb{E}_{q(z\\mid x)}[\\log p(x\\mid z)] - D_{\\mathrm{KL}}(q(z\\mid x)\\,\\|\\,p(z))$.\nIn information terms, the first term is (minus) the distortion: how well $x$ is reconstructed from the code $z$. The KL term is the rate: on average, the number of nats needed to communicate $z$ beyond what the prior already predicts. Weighting the KL term by $\\beta$ trades rate against distortion. With $\\beta > 1$, latents carry less information and tend to be smoother; with too strong a KL weight, or a very powerful decoder, the rate falls to zero and the latent is ignored (posterior collapse).\n\n%%flow The VAE as a communication system.\nx -(encoder q(z given x))-> Code z -(rate: KL to prior)-> *Channel -(decoder p(x given z))-> Reconstruction -(distortion: -log p(x given z))-> Loss\n%%\n\n## Contrastive losses and mutual information\nInfoNCE scores one positive pair against $N - 1$ negatives with a softmax:\n$L = -\\mathbb{E}\\Big[\\log \\frac{e^{s(x, y^+)}}{\\sum_{j=1}^{N} e^{s(x, y_j)}}\\Big]$.\nIt is a cross-entropy over $N$ candidates. Its minimum gives a lower bound $I(X;Y) \\ge \\log N - L$. Two practical consequences follow. The bound can never exceed $\\log N$, so certifying large mutual information requires large batches or many negatives. And a lower loss does not always mean better representations; the loss is a training signal, not a precise measurement of information. CLIP's symmetric loss is InfoNCE applied in both directions.\n\n## Preference losses\nDirect preference optimisation and similar methods can be derived from a reward objective with a KL penalty to a reference model. The optimal policy under that objective is the reference reweighted by the exponentiated reward, and the loss compares log-probability ratios between preferred and rejected responses. The KL appears implicitly in those ratios.\n\n## Proper scoring\nLog loss is a strictly proper scoring rule: its expected value is minimised only by reporting the true probabilities. That is why it encourages calibrated predictions, and why models trained on it can be calibrated with small post-hoc corrections, while accuracy alone cannot.\n\n## Checking your understanding\nThree quick checks tie this lesson together. A binary classifier that always predicts the base rate of 10% has log loss equal to the label entropy, about 0.325 nats. Label smoothing with $\\varepsilon = 0.1$ on two classes raises the loss floor from 0 to the entropy of $(0.95, 0.05)$, about 0.199 nats. An InfoNCE loss of $\\ln N$ means the model is at chance among $N$ candidates and certifies no information at all.\n\n> Takeaway: most ML losses are information quantities: likelihood is cross-entropy and forward KL, soft targets change the loss floor, the VAE trades rate against distortion, and InfoNCE bounds mutual information by at most $\\log N$.",
+   "q": "You train an image classifier with 1,000 classes using label smoothing $\\varepsilon = 0.1$ (the target puts $0.9 + 0.1/1000$ on the true class and $0.1/1000$ on each other class). (a) What is the lowest possible training loss per example, in nats? (b) Why does the loss not reach zero even for a perfect model? (c) A contrastive model is trained with InfoNCE using batches of 256. Its loss reaches 1.0 nats. What lower bound on mutual information does this give, and what is the largest bound this setup could ever certify?",
+   "s": "(a) The minimum of cross-entropy over $q$ is the entropy of the target, reached at $q$ equal to the target. The target has one entry $0.9001$ and 999 entries $0.0001$, so $H = -0.9001\\ln 0.9001 - 999 \\times 0.0001 \\ln 0.0001 \\approx 0.0948 + 0.9201 \\approx 1.01$ nats. (b) With soft targets, the model's best prediction is the target itself, and cross-entropy then equals the target's entropy, not zero; a loss near 1.0 is the floor, not a failure. (c) The bound is $I \\ge \\ln N - L = \\ln 256 - 1.0 \\approx 5.55 - 1.0 = 4.55$ nats. The largest value it can ever certify is $\\ln 256 \\approx 5.55$ nats, reached at zero loss, however much information the two views truly share.",
+   "r": [
+    [
+     "Mueller, Kornblith and Hinton, When Does Label Smoothing Help? (2019)",
+     "https://arxiv.org/abs/1906.02629",
+     "Effects of label smoothing on calibration and distillation."
+    ],
+    [
+     "Hinton, Vinyals and Dean, Distilling the Knowledge in a Neural Network (2015)",
+     "https://arxiv.org/abs/1503.02531",
+     "Soft targets with temperature."
+    ],
+    [
+     "van den Oord, Li and Vinyals, Representation Learning with Contrastive Predictive Coding (2018)",
+     "https://arxiv.org/abs/1807.03748",
+     "InfoNCE and its mutual-information bound."
+    ],
+    [
+     "Kingma and Welling, Auto-Encoding Variational Bayes (2013)",
+     "https://arxiv.org/abs/1312.6114",
+     "The evidence lower bound used by VAEs."
+    ]
+   ],
+   "k": [
+    "maximum likelihood",
+    "label smoothing",
+    "distillation",
+    "ELBO",
+    "InfoNCE"
+   ],
+   "x": [
+    "PyTorch"
+   ],
+   "p": [
+    "cross-entropy-loss",
+    "symmetric-clip-contrastive-loss",
+    "vae-training-step",
+    "dpo-closed-form-loss"
+   ]
+  },
+  {
+   "id": "15.06",
+   "t": "Estimating information from data",
+   "n": [
+    "Plugging empirical frequencies into the entropy formula underestimates entropy with small samples; the bias is roughly $(m-1)/(2N)$ nats for $m$ observed values and $N$ samples.",
+    "Mutual information estimates are biased upward for the same reason, so test them against a shuffled baseline.",
+    "For continuous data, results depend on binning; nearest-neighbour estimators and neural bounds avoid bins but bring their own bias and variance.",
+    "A model's predictive uncertainty splits into expected entropy (noise in the data) and mutual information between prediction and parameters (the model's own uncertainty)."
+   ],
+   "a": "## Why estimation is hard\nThe formulas in this module assume known distributions. In practice you have samples. Plugging empirical frequencies into the formulas is the obvious estimator, and for large samples over few values it works. With many possible values and limited data it fails in a predictable direction.\n\n## Bias of the plug-in entropy estimator\nValues that never appear in the sample get probability zero, and values that appear by chance are over-represented, so the empirical distribution looks more concentrated than the truth. The plug-in entropy is therefore biased downward. The Miller-Madow correction adds approximately $(m - 1)/(2N)$ nats, where $m$ is the number of distinct observed values and $N$ the sample size. When $m$ is comparable to $N$, even the corrected estimate is poor, and you should report a range rather than a number.\n\nFor mutual information, $\\hat{I} = \\hat{H}(X) + \\hat{H}(Y) - \\hat{H}(X, Y)$, and the joint table has many more cells than either margin, so its entropy is underestimated most. The result is positive mutual information between independent variables.\n\n! Example: information that was not there\n! A team ranked 3,000 high-cardinality categorical features (such as postcode and device model) by plug-in mutual information with a fraud label on 20,000 transactions. The top feature, a free-text merchant descriptor with 15,000 distinct values, scored highest. Shuffling the label and recomputing gave almost the same score, so the value was pure estimation bias. Comparing each feature with its own shuffled baseline, and grouping rare values, produced a ranking that held up on new data.\n\n## A shuffled baseline\nThe simplest defence works for any estimator: compute the statistic on the real data, then on many copies with one variable shuffled (which destroys dependence while keeping each margin). The real value is only meaningful if it clearly exceeds the shuffled distribution. This is a permutation test, and it also gives a p-value.\n\n## Continuous variables\n- Binning: estimates depend on bin width; too fine and the bias explodes, too coarse and dependence is hidden.\n- Nearest-neighbour estimators (Kraskov and colleagues): use distances to the $k$-th neighbour in the joint and marginal spaces. They are accurate in low dimensions and widely used for feature screening.\n- Neural bounds: train a critic network to maximise a lower bound such as InfoNCE (lesson 15.05). They scale to images and text, but the bounds are either capped (at $\\log N$) or have high variance, as Poole and colleagues show. Treat them as training signals, not precise measurements.\n\n## Uncertainty of predictions\nFor a single input, the entropy of a model's predicted distribution measures how unsure it is. With an ensemble or repeated dropout passes, you get several predictive distributions $p_1, \\dots, p_S$ and can split the uncertainty:\n$\\underbrace{H\\big[\\tfrac{1}{S}\\textstyle\\sum_s p_s\\big]}_{\\text{total}} = \\underbrace{\\tfrac{1}{S}\\textstyle\\sum_s H[p_s]}_{\\text{expected entropy}} + \\underbrace{I(y;\\theta \\mid x)}_{\\text{disagreement}}$.\n\n%%layers Two sources of predictive uncertainty.\nTotal predictive entropy | how spread out the averaged prediction is\nExpected entropy | uncertainty each member has: noise or ambiguity in the data (aleatoric)\n*Mutual information | disagreement between members: the model's own uncertainty (epistemic)\n%%\n\nActive learning methods that pick inputs with high mutual information (often called BALD) target the second kind, which more labels can reduce. Out-of-distribution detection also leans on it: inputs unlike the training data tend to produce disagreement.\n\n## Reporting information quantities\n- State units (bits or nats) and the estimator used.\n- Report a confidence interval, for example from a bootstrap over samples.\n- Compare with a shuffled baseline for mutual information.\n- Prefer differences between models evaluated on the same data and estimator; absolute values are less reliable than comparisons.\n\n## Worked numbers\nWith $N = 100$ samples of a variable that takes $m = 20$ observed values, the Miller-Madow correction adds $(20 - 1)/200 = 0.095$ nats, about 0.14 bits, to the plug-in entropy. If the true distribution is uniform over 20 values, its entropy is $\\ln 20 \\approx 3.0$ nats, so the correction is small relative to the total but large relative to differences you might want to detect between two features. With $m = 80$ observed values from the same 100 samples, the correction grows to about 0.4 nats and the estimate is unreliable.\n\n> Takeaway: information quantities estimated from samples are biased (entropy down, mutual information up), so correct, compare with shuffled baselines and report intervals; for predictions, splitting entropy into expected entropy and mutual information separates data noise from model uncertainty.",
+   "q": "You run a model with dropout active 20 times on one input and average the predicted class distributions. (a) The averaged distribution has entropy 1.2 nats, and the average of the 20 individual entropies is 0.3 nats. What is the mutual information between the prediction and the model parameters, and what does it say? (b) For another input, both numbers are 1.2 nats. How do the two inputs differ? (c) Which input should you send for labelling first in active learning?",
+   "s": "(a) The mutual information is the total predictive entropy minus the expected entropy: $1.2 - 0.3 = 0.9$ nats. Each dropout sample is fairly confident (low individual entropy) but the samples disagree, so the uncertainty comes from the model, not the data. (b) For the second input the mutual information is 0: every dropout sample predicts the same spread-out distribution. The model agrees with itself that the input is ambiguous, which points to noise or genuine ambiguity in the data. (c) The first: labelling it can reduce the model's uncertainty. Labelling the second is unlikely to help because the ambiguity is in the data itself.",
+   "r": [
+    [
+     "Kraskov, Stoegbauer and Grassberger, Estimating Mutual Information (2003)",
+     "https://arxiv.org/abs/cond-mat/0305641",
+     "Nearest-neighbour estimation for continuous variables."
+    ],
+    [
+     "Poole et al., On Variational Bounds of Mutual Information (2019)",
+     "https://arxiv.org/abs/1905.06922",
+     "Bias and variance of neural mutual-information estimators."
+    ],
+    [
+     "Wikipedia, Entropy (information theory)",
+     "https://en.wikipedia.org/wiki/Entropy_(information_theory)",
+     "Includes estimation and related quantities."
+    ],
+    [
+     "MacKay, Information Theory, Inference, and Learning Algorithms (free book)",
+     "https://www.inference.org.uk/itprnn/book.pdf",
+     "Background for the Bayesian view of uncertainty."
+    ]
+   ],
+   "k": [
+    "entropy estimation",
+    "bias",
+    "predictive uncertainty",
+    "mutual information estimators"
+   ],
+   "x": [
+    "NumPy",
+    "scikit-learn"
+   ],
+   "p": [
+    "dropout-train-and-mc-predict",
+    "bootstrap-confidence-interval",
+    "expected-calibration-error",
+    "k-fold-cross-validation"
+   ]
+  }
+ ]
+}

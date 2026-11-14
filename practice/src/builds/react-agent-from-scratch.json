@@ -1,0 +1,13 @@
+{"id": "react-agent-from-scratch", "kind": "project", "group": "Agentic Systems",
+ "title": "Build a ReAct Agent",
+ "blurb": "Write the reason-act-observe loop yourself: parse model output, run tools safely, carry state, enforce a policy and grade whole trajectories.",
+ "intro": "A ReAct agent alternates between a model that proposes the next action and ordinary code that executes it and reports back. The steps build the code half, using scripted model replies so everything is deterministic: a strict parser for the text format, a tool dispatcher that turns every failure into an observation, an immutable state update with a step limit, the loop itself, a policy check between decision and execution, and trajectory metrics that separate lucky answers from good runs. The capstone puts the policy inside the loop and evaluates the result.",
+ "steps": [
+  {"name": "Parse a ReAct step", "problem": "parse-react-step"},
+  {"name": "Dispatch a tool call", "problem": "dispatch-tool-call"},
+  {"name": "Advance the agent state", "problem": "advance-agent-state"},
+  {"name": "Run the loop", "problem": "run-react-loop"},
+  {"name": "Authorise a tool call", "problem": "authorize-tool-call", "note": "Authorisation is code between the model and the tool, never a prompt instruction."},
+  {"name": "Evaluate a trajectory", "problem": "evaluate-agent-trajectory"}
+ ],
+ "capstone": "react-agent-capstone"}

@@ -1,0 +1,13 @@
+{"id": "quantization-from-scratch", "kind": "project", "group": "ML Systems and GPU Programming",
+ "title": "Quantization from Scratch",
+ "blurb": "Implement the main ways to shrink a model: affine codes, group-wise int4 with protected channels, SmoothQuant, GPTQ, NF4 and a quantised KV cache.",
+ "intro": "Quantisation trades a little accuracy for much less memory and bandwidth. The steps build the formats and algorithms in order of sophistication: affine quantisation with a zero point, group-wise 4-bit weights that keep salient channels in full precision, SmoothQuant's migration of activation outliers into weights, GPTQ's column-by-column error feedback, NF4's normal-quantile levels, and the size of a quantised KV cache. The capstone quantises a small MLP four ways and compares output error against storage.",
+ "steps": [
+  {"name": "Quantise with a zero point", "problem": "affine-uint8-quantize"},
+  {"name": "Group-wise 4-bit weights with protected columns", "problem": "int4-with-outlier-columns"},
+  {"name": "SmoothQuant smoothing factors", "problem": "smoothquant-smoothing-factors"},
+  {"name": "GPTQ: error feedback column by column", "problem": "gptq-column-quantize"},
+  {"name": "NF4: nearest normal-float level", "problem": "nf4-quantize"},
+  {"name": "Size a quantised KV cache", "problem": "quantized-kv-cache-size"}
+ ],
+ "capstone": "quantization-error-capstone"}

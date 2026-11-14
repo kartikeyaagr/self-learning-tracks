@@ -7,11 +7,13 @@ META = dict(title='Transformer decoder block with cross-attention', tags=['Trans
 STATEMENT = r"""
 The decoder of an encoder-decoder transformer has three pre-LN sublayers, each with a residual connection:
 
-$$\begin{aligned}
+$$
+\begin{aligned}
 h_1 &= x + \mathrm{SelfAttn}(\mathrm{LN}_1(x)) && \text{causal: position } i \text{ sees } j \le i \\
 h_2 &= h_1 + \mathrm{CrossAttn}(\mathrm{LN}_2(h_1),\ \text{memory}) && \text{queries from the decoder, keys/values from the encoder} \\
 y &= h_2 + \mathrm{FFN}(\mathrm{LN}_3(h_2))
-\end{aligned}$$
+\end{aligned}
+$$
 
 Write `decoder_block(x, memory, p, n_heads, mem_mask=None)` that returns `(y, cross_weights)`.
 

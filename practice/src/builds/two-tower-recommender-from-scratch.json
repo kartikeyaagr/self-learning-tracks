@@ -1,0 +1,12 @@
+{"id": "two-tower-recommender-from-scratch", "kind": "project", "group": "Recommendation and Ranking",
+ "title": "Build a Two-Tower Recommender",
+ "blurb": "Build the retrieval stage of a recommender: two towers, in-batch negatives, the logQ correction, top-K retrieval and recall, tail recall and coverage.",
+ "intro": "Large recommenders first retrieve a few hundred candidates from millions of items, and two-tower models are the standard way to do it: one network for users, one for items, scored by a dot product. The steps score every user against every item, train with the other items in a batch as negatives, correct the bias that sampling puts on popular items, retrieve the top items a user has not seen, and judge the lists by recall, tail recall and coverage. The capstone trains normalised linear towers with in-batch negatives, with and without the correction, and evaluates full-catalogue retrieval.",
+ "steps": [
+  {"name": "Score users against items", "problem": "two-tower-scores"},
+  {"name": "Train with in-batch negatives", "problem": "info-nce-loss"},
+  {"name": "Correct in-batch sampling bias with log q", "problem": "in-batch-softmax-logq"},
+  {"name": "Retrieve the top K unseen items", "problem": "top-k-recommendations"},
+  {"name": "Measure recall@K, tail recall and coverage", "problem": "recall-tail-coverage"}
+ ],
+ "capstone": "two-tower-capstone"}

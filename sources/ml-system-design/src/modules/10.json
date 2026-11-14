@@ -1,0 +1,397 @@
+{
+ "n": "10",
+ "name": "Case studies: ranking and recommendation",
+ "lessons": [
+  {
+   "id": "10.01",
+   "t": "Case study: people you may know",
+   "n": [
+    "People-you-may-know is link prediction on a social graph: score pairs of users who are not yet connected by how likely a connection is, and how valuable it would be.",
+    "Candidates come mainly from the graph itself (friends of friends, shared groups, schools, workplaces, contact uploads), because the space of all pairs is far too large.",
+    "A good suggestion needs both people to act: one sends a request, the other accepts. The label and objective should reflect both steps.",
+    "Privacy constraints shape what signals may be used and what a suggestion may reveal."
+   ],
+   "a": "## Requirements\nClarify the goal. More connections help a social network because people with friends on it return more often; but unwanted suggestions irritate users and can expose sensitive relationships. Assume 1 billion users, 300 connections on average, suggestions refreshed daily with immediate updates after a new connection, and under 100 ms to render the list.\n\n## Metrics\nThe primary online metric is accepted connections per user per week, ideally weighted by whether the pair later interacts. Guardrails: request rejection or ignore rate, blocks and reports after a suggestion, and hides of the suggestion unit. Offline: recall at 20 against connections formed in the following week, and calibration of the acceptance probability.\n\n## Why candidate generation dominates\nThere are about $10^{18}$ possible pairs; nothing can score them. Friends of friends alone give $300 \\times 300 = 90{,}000$ two-hop paths per user before deduplication, which is already large. Triadic closure (two people with a common friend tend to connect) makes this the richest source. Rank two-hop candidates by the number of mutual connections and how strong those mutual ties are, keeping the top 1,000 or so.\n\nOther sources add people the graph does not reach yet:\n- Shared groups, schools and employers within overlapping years.\n- Contact uploads, with consent and within regional rules.\n- Nearest neighbours in a graph embedding (node2vec-style or a graph neural network).\n- Recent profile views in either direction, if policy allows.\n\n## Data and labels\nEach impression of a suggestion is a training example. The outcome has two steps: did the viewer send a request, and did the other person accept? Model both, and rank by their product, perhaps weighted by the predicted value of the connection. Suggestions that were never shown have no label, so log impressions with their positions.\n\n! Example: optimising the wrong step\n! A team optimised for requests sent. Request volume rose by 15%, but acceptance fell from 40% to 28% because the model learned to suggest popular strangers whom many people request. Ranking by the probability of an accepted request, and adding the receiver's past acceptance rate as a feature, restored acceptance while keeping most of the gain in accepted connections.\n\n## Features\n- Graph: number of mutual connections, their strength, overlap of groups, two-hop path counts, embedding similarity.\n- Profile: same school, employer, city, language.\n- Activity: how active each person is, how many pending requests the receiver already has.\n- Context: how the candidate was generated, and how many times it has been shown before (fatigue).\n\n## Model\nA gradient-boosted tree or a two-tower plus cross-feature network predicts the two probabilities. Two-tower embeddings also serve retrieval. Graph neural networks over the friendship graph give strong embeddings but are costly to train at this scale; train on sampled neighbourhoods.\n\n## Serving\n%%flow People-you-may-know. Candidates are built offline and patched when the graph changes.\nFriendship graph -(daily batch: two-hop, groups, embeddings)-> Candidate store per user\nNew connection event -(streaming two-hop update)-> Candidate store per user\nPage request -(fetch ~1,000 candidates)-> *Ranker -(filters: blocks, privacy, already pending)-> Top 20 suggestions\n%%\n\n## Privacy\nDo not suggest people in ways that reveal sensitive facts (for example, two people who saw the same doctor because both uploaded the doctor's number). Allow opt-out from contact-based suggestions, exclude blocked users in both directions, and avoid explanations that disclose private information.\n\n## Monitoring\nTrack accepted connections, reject and block rates, and the share of suggestions from each source. Watch new users separately: they have no graph yet and depend on contacts and profile signals.\n\n## Likely follow-up questions\n- \"How do you help a new user with zero connections?\" Use contact upload (with consent), school and workplace, and location-based groups, then refresh immediately after the first few connections.\n- \"Should popular accounts be suggested to everyone?\" Cap how often one person is suggested per day, because receivers with thousands of pending requests rarely accept.\n- \"How would you test a new candidate source?\" Measure its incremental recall offline, then run an experiment and check accepted connections, not just impressions.\n\n## Trade-offs\n- Growth versus annoyance: more aggressive suggestions add connections but raise reject and block rates.\n- Signals versus privacy: contact uploads and profile views are strong but sensitive.\n- Batch freshness versus cost: daily batch plus event-driven updates is a common compromise.\n\n> Takeaway: generate candidates from the graph (mostly friends of friends), rank by the probability that a request is both sent and accepted, refresh on new connections, and design privacy rules in from the start.",
+   "q": "Design the \"people you may know\" feature for a social network with 1 billion users and an average of 300 connections each. Suggestions appear on the home page and in a dedicated tab. Cover candidates, labels, the ranking model, serving and privacy.",
+   "s": "Generate candidates from the graph: friends of friends (scored by mutual count and their closeness), shared groups, schools and workplaces, and uploaded contacts where permitted, plus nearest neighbours in a graph embedding space. Precompute a few thousand candidates per user in a daily batch job with a streaming update when a new connection forms. Rank with a model predicting the probability that a request is sent and accepted, using mutual-connection features, embedding similarity, profile overlap and activity; weight by value such as later interaction. Labels are impressions followed by request and acceptance, with non-acceptances as negatives. Filter blocked users and apply privacy rules. Evaluate offline with recall at k on future connections; online with accepted connections per user and downstream engagement. Monitor graph growth and fairness to new users. Trade-offs: graph growth versus spam requests, and broad reach versus privacy.",
+   "rubric": [
+    "Frames the task as link prediction with a two-step outcome (request, then acceptance)",
+    "Generates candidates from graph structure, especially friends of friends, plus other sources",
+    "Explains why scoring all pairs is impossible and how candidate counts are bounded",
+    "Uses mutual-connection and embedding features, with point-in-time correctness",
+    "Precomputes candidates in batch and refreshes on new connections",
+    "Evaluates with recall on future connections and online accepted connections, not just clicks",
+    "Addresses privacy, blocking and sensitive inferences",
+    "Discusses new users with few connections and avoiding spammy request behaviour"
+   ],
+   "r": [
+    [
+     "Wikipedia, Link prediction",
+     "https://en.wikipedia.org/wiki/Link_prediction",
+     "Problem definition and classic graph heuristics."
+    ],
+    [
+     "Wikipedia, Triadic closure",
+     "https://en.wikipedia.org/wiki/Triadic_closure",
+     "Why friends of friends are the strongest candidate source."
+    ],
+    [
+     "Grover and Leskovec, node2vec: Scalable Feature Learning for Networks (2016)",
+     "https://arxiv.org/abs/1607.00653",
+     "Learning node embeddings from random walks."
+    ],
+    [
+     "Ying et al., Graph Convolutional Neural Networks for Web-Scale Recommender Systems (PinSage, 2018)",
+     "https://arxiv.org/abs/1806.01973",
+     "Graph neural networks at the scale of billions of edges."
+    ]
+   ],
+   "k": [
+    "friend recommendation",
+    "link prediction",
+    "graph features",
+    "two-sided acceptance"
+   ],
+   "x": [],
+   "p": [
+    "precision-recall-at-k",
+    "hit-rate-and-mrr",
+    "word2vec-training-pairs",
+    "embedding-similarity"
+   ]
+  },
+  {
+   "id": "10.02",
+   "t": "Case study: ad click prediction",
+   "n": [
+    "Ad click prediction feeds an auction, so the model must be calibrated: the predicted probability multiplies the bid to decide which ad wins and what it pays.",
+    "Data is huge and sparse (ad, user, context IDs and their crosses), and positives are rare, so negative downsampling with a calibration correction is standard.",
+    "Ads and campaigns change constantly, so freshness matters; models are retrained or updated online every few hours or continuously.",
+    "Evaluation uses normalised log loss and calibration offline, and revenue, advertiser value and user experience online."
+   ],
+   "a": "## Requirements\nClarify the auction. In a typical design, each ad's expected value is bid times predicted click probability (for cost-per-click ads) or bid times click probability times conversion probability (for cost-per-conversion ads). The ranking and the price both depend on the probability, so it must be calibrated, not just well ordered. Assume 200,000 auctions per second, 1,000 eligible ads per auction after targeting, and 50 ms for the whole auction.\n\n## Metrics\nOffline: log loss, often normalised by the log loss of always predicting the average CTR (normalised entropy), and calibration (predicted versus observed CTR in buckets). AUC is useful but ignores calibration. Online: revenue per thousand impressions, advertiser return on spend, click-through, and user-side guardrails such as ad hides and session length.\n\n## Data and labels\nEach impression is an example; a click within a short window is a positive. CTR is often around 1%, so data is very imbalanced and huge. Keep all positives and a random fraction $w$ of negatives. The model then predicts $p'$ on the downsampled data; recover the true probability with\n$p = p' / (p' + (1 - p')/w)$.\nForgetting this correction inflates every bid.\n\nConversions arrive later than clicks (hours to days). For conversion models, handle delayed labels by waiting, or by modelling the delay.\n\n! Example: a calibration bug that cost money\n! After a pipeline change, the negative sampling rate for one region changed from 10% to 5%, but the correction still used 10%. The model's predicted CTR for that region rose by roughly 80%. Ranking order within the region barely changed, so AUC stayed flat, but advertisers there were charged more per click than the clicks were worth. A daily calibration check by region would have caught it in hours.\n\n## Features\n- IDs: user, ad, campaign, advertiser, query, page, with learned embeddings.\n- Historical counters: CTR of this ad, this advertiser, this user on this category, over several windows.\n- Context: device, time, position, page type.\n- Crosses: user interest by ad category, query by ad text.\n\n## Model\nLogistic regression on hashed crosses, trained online, was the classic baseline and remains a sensible fallback. Modern systems use deep models with embeddings and explicit crossing layers (DCN, DCN-v2) or attention over the user's recent behaviour. Multi-task heads can predict click and conversion together.\n\n## Serving\n%%flow Ad auction. Targeting and a light model cut candidates; the heavy model scores a few hundred.\nAd request -(targeting, budget, eligibility)-> ~1,000 ads -(light model)-> ~200 ads -(feature lookup)-> *CTR model -(calibrated pCTR)-> Auction -(bid x pCTR + quality)-> Winner and price\n%%\n\n## Freshness\nNew ads appear constantly and old ones change. Train every few hours, or continuously, warm-starting from the previous weights. For new ads with no history, rely on advertiser and content features, and allow a little exploration so they gather data.\n\n## Monitoring\nTrack calibration by segment hourly, normalised entropy on fresh data, feature freshness (a stale CTR counter quietly harms results), and revenue. Alert on sudden calibration shifts after deployments.\n\n## Likely follow-up questions\n- \"Why not optimise AUC?\" Because the auction uses the probability itself; a perfectly ordered but miscalibrated model sets wrong prices.\n- \"How do you handle position bias?\" Include position as a feature in training and set it to a fixed value at serving, or model examination separately.\n- \"How do you protect users from too many low-quality ads?\" Add a quality or user-cost term to the auction score and cap ad load per session.\n\n## Trade-offs\n- Model size versus latency: the heavy model can only score a few hundred ads.\n- Freshness versus stability: frequent updates follow trends but risk bad pushes; keep automatic validation gates.\n- Platform revenue versus advertiser return and user experience: optimising only revenue erodes the other two.\n\n## A numeric sanity check\n\nAt 200,000 auctions per second and 200 ads scored per auction, the heavy model makes 40 million predictions per second. If one prediction costs about 1 million floating-point operations, that is $4 \\times 10^{13}$ FLOP/s, which a few dozen modern accelerators can supply in theory, but memory bandwidth for embedding lookups is usually the real limit. This is why embedding tables are sharded across machines, user features are computed once per request rather than once per ad, and the light model exists at all.\n\n> Takeaway: ad CTR models feed an auction, so calibration is essential; downsample negatives and correct for it, learn sparse IDs and crosses, keep the model fresh, and monitor calibration by segment.",
+   "q": "Design the click-through-rate prediction system for an ads platform that runs 200,000 auctions per second, each with about 1,000 eligible ads, and must return a winner within 50 ms. Explain the labels, model, calibration, how predictions enter the auction, and how you keep the model fresh.",
+   "s": "Retrieve a few hundred eligible ads by targeting and a light model, then score them with a CTR model. Labels are clicks on impressions, joined after a short attribution window; downsample negatives (for example keep 5%) and correct predicted probabilities back to the true base rate. Use a deep model with ID embeddings and explicit crosses (DCN or similar) over user, ad, advertiser, query and context features, plus historical CTR counters. Calibrate per segment, because expected value equals bid times pCTR; check reliability curves. Rank by bid times pCTR plus a quality term, with the price set by the auction rules. Train continuously or every few hours on fresh logs, warm-starting from the previous model. Evaluate with normalised cross-entropy and calibration offline, then online revenue, advertiser return and user metrics such as ad hides. Monitor calibration drift and feature delays.",
+   "rubric": [
+    "Explains that predictions enter an auction, so calibration matters as much as ranking",
+    "Describes a retrieval or filtering stage before the heavy CTR model",
+    "Uses negative downsampling with a correct calibration adjustment",
+    "Proposes sparse ID embeddings and feature crosses with counters for history",
+    "Keeps the model fresh with frequent or online training and handles new ads",
+    "Evaluates with log loss or normalised entropy and calibration, not only AUC",
+    "Considers advertiser value and user experience alongside platform revenue",
+    "Monitors calibration and feature pipeline delays in production"
+   ],
+   "r": [
+    [
+     "He et al., Practical Lessons from Predicting Clicks on Ads at Facebook (2014)",
+     "https://quinonero.net/Publications/predicting-clicks-facebook.pdf",
+     "Negative downsampling, freshness and normalised entropy."
+    ],
+    [
+     "McMahan et al., Ad Click Prediction: a View from the Trenches (2013)",
+     "https://research.google/pubs/ad-click-prediction-a-view-from-the-trenches/",
+     "Online learning for click prediction at scale."
+    ],
+    [
+     "Wang et al., Deep and Cross Network for Ad Click Predictions (2017)",
+     "https://arxiv.org/abs/1708.05123",
+     "Learning feature crosses explicitly."
+    ],
+    [
+     "Wikipedia, Real-time bidding",
+     "https://en.wikipedia.org/wiki/Real-time_bidding",
+     "How auctions use predicted click and conversion rates."
+    ]
+   ],
+   "k": [
+    "CTR prediction",
+    "calibration",
+    "auctions",
+    "online learning"
+   ],
+   "x": [],
+   "p": [
+    "log-loss-binary-cross-entropy",
+    "expected-calibration-error",
+    "auc-roc",
+    "uniform-negative-sampling"
+   ]
+  },
+  {
+   "id": "10.03",
+   "t": "Case study: notification ranking",
+   "n": [
+    "Notification ranking decides which notifications to send, when, and how many, trading short-term engagement against annoyance and disabled notifications.",
+    "The right target is the causal effect of sending (uplift), not the probability of opening, because some users would have visited anyway.",
+    "Volume control is a constrained optimisation per user: a daily budget, minimum value thresholds and quiet hours.",
+    "Long-term effects (users turning notifications off or uninstalling) appear slowly, so experiments need long-running holdouts."
+   ],
+   "a": "## Requirements\nClarify what types exist and which are mandatory. Direct messages and security alerts must always be delivered promptly; likes, friend posts and recommendations are optional. Assume 300 million daily users, tens of candidate events per user per day, a target of a few optional notifications per user per day, and a decision within seconds of an event (or batched for digest types).\n\n## Metrics\nThe tempting metric, open rate, is misleading: a notification about something the user would have seen anyway is opened but adds nothing. Better metrics:\n- Incremental daily active users or sessions caused by notifications (measured against a holdout).\n- Opt-out rate (notifications disabled for the app or for a type) and uninstalls.\n- Meaningful actions after opening (replying, posting), not just opening.\n\n## Data and labels\nEach sent notification has outcomes: opened, dismissed, led to actions, followed by an opt-out. To estimate uplift, some candidates that would have been sent must be randomly withheld; the difference in outcomes between sent and withheld groups, conditioned on features, is the effect. Keep a small, permanent holdout of users who get a reduced volume to measure long-term effects.\n\n! Example: open rate up, users down\n! A team trained a ranker on open probability and raised sends for users who opened often. Open rate rose 12%, but a three-month holdout showed that heavy users who received more notifications disabled them at twice the previous rate, and daily users in that group fell slightly. Switching the target to uplift in sessions and adding a predicted opt-out cost reduced volume by 20% with no loss in daily users.\n\n## Features\n- User: notification history, recent opens and dismissals, time since last visit, typical active hours, settings.\n- Notification: type, actor (close friend or stranger), content popularity, freshness.\n- Context: how many notifications already sent today, time of day, device.\n\n## Model\nTrain a multi-task model with heads for open, meaningful action and negative outcome. For uplift, use a two-model approach (one on treated, one on control data) or a model with treatment as an input, trained on randomised data. Value per candidate is roughly\n$V = \\Delta P(\\text{session}) \\cdot b - P(\\text{negative}) \\cdot c$,\nwith business weights $b$ and $c$ tuned by experiment.\n\n## Volume control and timing\nA per-user scheduler holds candidates and decides:\n- Threshold: send only when $V$ exceeds a minimum.\n- Budget: at most $k$ optional notifications per day, with $k$ adapted per user.\n- Timing: delay non-urgent candidates to the user's likely active time; never during quiet hours.\n- Aggregation: combine related events into one notification.\n\n## Serving\n%%flow Notification pipeline. Urgent types bypass ranking; others wait in a per-user scheduler.\nEvent streams -(candidate generation, deduplication, aggregation)-> Candidates per user -(features)-> *Value model -(uplift minus annoyance)-> Per-user scheduler -(budget, timing, quiet hours)-> Push service\nDirect messages and security alerts -(bypass)-> Push service\n%%\n\n## Monitoring\nTrack opt-out rates by type, volume per user distribution, uplift estimates from holdouts, and delivery delays. Alert when a new notification type causes a spike in opt-outs.\n\n## Likely follow-up questions\n- \"How do you launch a new notification type?\" Start with a small randomised rollout, measure uplift and opt-outs, and only then let the ranker trade it against existing types.\n- \"What about users who never open notifications?\" Reduce volume to a minimum and rely on in-app surfaces; sending more rarely helps them.\n- \"Could email and push be ranked together?\" Yes, with channel as a feature and per-channel budgets.\n\n## Trade-offs\n- Short-term sessions versus long-term opt-outs: the core tension; long holdouts are the only reliable measure.\n- Personalised volume versus fairness to content creators who rely on notifications for reach.\n- Fast sending versus better timing.\n\n## A numeric sanity check\n\nWith 300 million daily users and an average of three optional notifications each, the system sends about 900 million optional pushes a day, around 10,000 per second, with sharp peaks in the evening. If each user has 30 candidates, the value model scores about 9 billion candidates a day; a small model on CPU handles this, but the per-user scheduler needs durable state, because a lost queue means lost or duplicated notifications. Holdouts of 1% of users still contain 3 million people, enough to detect small changes in retention.\n\n> Takeaway: rank notifications by their causal value (uplift minus annoyance) rather than open rate, control volume and timing per user, let urgent types bypass ranking, and measure long-term effects with permanent holdouts.",
+   "q": "Design the system that decides which push notifications to send to each user of a social app with 300 million daily users. Many events (likes, comments, new posts, friend activity) could trigger a notification. Explain what you optimise, how you control volume and timing, and how you measure long-term effects.",
+   "s": "Collect candidate notifications from event streams per user, deduplicate and aggregate them (for example \"5 people liked your photo\"). Score each candidate with models for the probability of open and, ideally, the uplift in sessions or meaningful actions compared with not sending, plus the probability of a negative response (dismiss, disable, uninstall). Value = uplift benefit minus annoyance cost. A per-user scheduler sends candidates whose value exceeds a threshold, within a daily budget, outside quiet hours, at times when the user is likely to engage; urgent types such as direct messages bypass the ranker. Labels come from sends with outcomes and from randomised holdouts that estimate uplift. Evaluate with long-running holdout groups that receive fewer notifications to measure retention and opt-out. Monitor opt-out rates by type and volume per user.",
+   "rubric": [
+    "Defines the objective as incremental value (uplift) rather than open rate",
+    "Includes a negative-outcome model (dismissals, opt-outs, uninstalls) in the value",
+    "Aggregates and deduplicates candidate notifications before ranking",
+    "Designs per-user volume control with budgets, thresholds and quiet hours",
+    "Handles timing (when to send) and urgent types that bypass ranking",
+    "Uses randomised holdouts to estimate uplift and long-term effects",
+    "Monitors opt-outs and engagement per notification type",
+    "Discusses the short-term versus long-term trade-off explicitly"
+   ],
+   "r": [
+    [
+     "Wikipedia, Uplift modelling",
+     "https://en.wikipedia.org/wiki/Uplift_modelling",
+     "Predicting the effect of an action rather than an outcome."
+    ],
+    [
+     "Wikipedia, Push technology",
+     "https://en.wikipedia.org/wiki/Push_technology",
+     "Background on push notifications."
+    ],
+    [
+     "Google, Rules of Machine Learning",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "Choosing objectives and watching long-term effects."
+    ]
+   ],
+   "k": [
+    "notifications",
+    "uplift",
+    "volume control",
+    "long-term effects"
+   ],
+   "x": [],
+   "p": [
+    "log-loss-binary-cross-entropy",
+    "b-test-significance",
+    "linucb-contextual-bandit",
+    "thompson-sampling-beta-bernoulli"
+   ]
+  },
+  {
+   "id": "10.04",
+   "t": "Case study: product recommendations at scale",
+   "n": [
+    "E-commerce recommendation covers several surfaces (home page, product page, cart, email) with different goals: discovery, substitutes, complements and reminders.",
+    "Signals are implicit (views, add-to-cart, purchases) and sparse, with a long tail of products that have little data.",
+    "A standard design has multiple candidate sources (item-to-item co-occurrence, two-tower embeddings, popularity by segment) and a ranker predicting purchase or revenue.",
+    "Business constraints (availability, margins, repeated purchases, diversity) belong in re-ranking, and evaluation must use time-based splits."
+   ],
+   "a": "## Requirements\nClarify the surfaces and their purpose:\n- Product page \"customers also bought\": complements (a case for a phone) and close alternatives.\n- Home page: discovery and reminders of items the user is considering.\n- Cart and email: complements and replenishment.\n\nAssume 100 million products, 200 million monthly users, page latency budget of 100 ms for recommendations, and stock and prices that change hourly.\n\n## Metrics\nOnline: conversion rate and revenue per visitor attributed to the units, plus add-to-cart rate. Guardrails: diversity, share of recommendations for out-of-stock items, and complaints. Offline: recall at k and NDCG on the next purchases, with time-based splits (train on weeks 1 to 8, test on week 9) so that future data never leaks into training.\n\n## Data\nImplicit signals of increasing strength: views, add-to-cart, purchase. Purchases are sparse (most users buy rarely) and views are noisy. Weight signals by strength, and keep session order, since what someone viewed in the last ten minutes says much about their current intent.\n\n## Candidates\n- Item-to-item co-occurrence: products often bought or viewed together, normalised (for example with a lift or cosine measure) so that bestsellers do not appear for everything.\n- Two-tower retrieval: a user tower over recent behaviour and profile, an item tower over item ID and content features, trained with in-batch negatives and a logQ correction for popularity.\n- Recently viewed and abandoned-cart items.\n- Popular and trending items within the user's segments (region, category interests).\n\n! Example: everything recommends the same charger\n! A store's first co-purchase recommender suggested the same cheap phone charger on 30% of product pages, because it appeared in so many baskets. Replacing raw co-occurrence counts with a lift score (how much more often two items co-occur than chance) and capping any single item's share of slots spread recommendations across many more products and raised add-to-cart from the unit by 9%.\n\n## Ranking\nA ranker (DLRM-style or gradient-boosted) scores a few hundred candidates with user, item, cross and context features. Multi-task heads predict click, add-to-cart and purchase; combine them as expected value, optionally weighted by margin. Include price relative to the user's usual spend, and whether the item is in stock.\n\n## Cold start\n- New products: content embeddings from title, description, images and category put them into the retrieval space on day one. Reserve a small share of slots for exploration.\n- New users: popular items by region and entry point, then quick adaptation from session behaviour.\n\n## Re-ranking\nRemove out-of-stock items and items just purchased (unless consumable), deduplicate variants (sizes, colours, sellers), ensure category diversity, and apply sponsored-slot rules.\n\n## Serving\n%%flow Product page recommendations. Item neighbours are precomputed; session context re-ranks them live.\nPurchase and view logs -(daily batch)-> Item neighbours and embeddings\nProduct page request -(fetch neighbours + user context)-> Candidates -(features)-> *Ranker -(stock, dedup, diversity)-> Top 12 items\n%%\n\n## Monitoring\nTrack catalogue coverage (share of products ever recommended), concentration on top items, out-of-stock recommendations, latency, and per-surface conversion. Rebuild item neighbours daily and refresh embeddings weekly or faster.\n\n## Likely follow-up questions\n- \"How do you avoid recommending a fridge to someone who just bought one?\" Track purchase cycles per category; durable goods are suppressed for months, consumables are promoted near their repurchase time.\n- \"Should margin be in the objective?\" It can be, as a weight, but test it carefully; optimising margin alone can reduce trust and conversion.\n- \"How would you evaluate the effect on long-tail sellers?\" Track their share of impressions and sales by experiment arm.\n\n## Trade-offs\n- Relevance versus diversity and discovery.\n- Short-term conversion versus long-term trust (recommending only expensive or sponsored items).\n- Precomputed neighbours (cheap, stale) versus live retrieval (fresh, costly).\n\n## A numeric sanity check\n\nItem-to-item neighbours for 100 million products at 50 neighbours each are 5 billion pairs; stored as 8-byte IDs plus a 4-byte score, that is about 60 GB, which fits comfortably in a distributed key-value store and is cheap to read per page. Two-tower item embeddings at 128 dimensions in 8-bit form take about 13 GB, small enough to replicate the nearest-neighbour index widely. The ranker sees a few hundred candidates per request, so its cost is set by request volume, not catalogue size.\n\n> Takeaway: design per surface, combine normalised co-occurrence, embeddings and popularity as candidate sources, rank by expected purchase value, solve cold start with content features, and apply stock and repetition rules in re-ranking.",
+   "q": "Design product recommendations for a large online store with 100 million products and 200 million monthly users. Cover the home page and the \"customers also bought\" unit on product pages. Explain candidates, the ranker, cold start, business constraints and evaluation.",
+   "s": "Treat the two surfaces differently. Product page: item-to-item candidates from co-purchase and co-view counts (normalised to avoid popularity bias) plus embedding neighbours, ranked for complements, excluding the same product from other sellers. Home page: candidates from a two-tower model on recent behaviour, recently viewed items, co-purchase neighbours of recent purchases, and trending items in the user's segments. A ranker predicts click, add-to-cart and purchase, combined into expected value with margin as an optional weight. Cold start: content embeddings from titles, images and categories for new products; popular-by-segment and onboarding signals for new users. Re-rank for availability, diversity, and to avoid recommending what was just bought (unless consumable). Evaluate with time-based splits (recall at k, NDCG), then experiments on revenue per visitor and conversion. Monitor coverage, popularity concentration and stock-outs.",
+   "rubric": [
+    "Distinguishes surfaces and their goals (complements on product pages, discovery on the home page)",
+    "Uses multiple candidate sources including item-to-item co-occurrence and two-tower retrieval",
+    "Corrects for popularity bias in co-occurrence or retrieval training",
+    "Ranks with a model of purchase or value, not only clicks",
+    "Handles cold start for new products and new users with content features and popularity",
+    "Applies business rules in re-ranking: availability, already purchased, diversity",
+    "Evaluates with time-based splits and online revenue or conversion experiments",
+    "Monitors catalogue coverage and concentration on popular items"
+   ],
+   "r": [
+    [
+     "Wikipedia, Collaborative filtering",
+     "https://en.wikipedia.org/wiki/Collaborative_filtering",
+     "Item-based and user-based methods."
+    ],
+    [
+     "Wang et al., Billion-scale Commodity Embedding for E-commerce Recommendation in Alibaba (2018)",
+     "https://arxiv.org/abs/1803.02349",
+     "Item embeddings from behaviour graphs with side information for cold start."
+    ],
+    [
+     "Yi et al., Sampling-Bias-Corrected Neural Modeling for Large Corpus Item Recommendations (2019)",
+     "https://research.google/pubs/sampling-bias-corrected-neural-modeling-for-large-corpus-item-recommendations/",
+     "Two-tower retrieval with logQ correction."
+    ],
+    [
+     "Naumov et al., Deep Learning Recommendation Model for Personalization and Recommendation Systems (DLRM, 2019)",
+     "https://arxiv.org/abs/1906.00091",
+     "A reference ranking architecture with sparse embeddings."
+    ]
+   ],
+   "k": [
+    "e-commerce recommendation",
+    "collaborative filtering",
+    "two-tower",
+    "cold start"
+   ],
+   "x": [],
+   "p": [
+    "item-item-cf-scores",
+    "implicit-als-user-factors",
+    "in-batch-softmax-logq",
+    "catalog-coverage-and-novelty"
+   ]
+  },
+  {
+   "id": "10.05",
+   "t": "Case study: short-video feed recommendation",
+   "n": [
+    "A short-video feed shows one item at a time and gets a strong signal after every swipe, so the system can adapt within a single session.",
+    "Watch signals need normalising: completion of a 10-second clip means less than completion of a 60-second one, and replays and shares are stronger than views.",
+    "New creators and new videos need deliberate exploration, usually as staged distribution to growing audiences based on early engagement.",
+    "The objective must look beyond time spent in one session, towards satisfaction and return visits, with diversity and safety in re-ranking."
+   ],
+   "a": "## Requirements\nThis differs from a long-form home page (see 08.04). The feed shows one video at a time, full screen, and the user swipes within seconds. Each swipe is feedback. Assume 500 million daily users, 40 videos per session, 50 million new videos a day, and a budget of 100 ms to return the next batch of videos.\n\nAt 500 million users times a few sessions times 40 videos, the system serves tens of billions of views a day; the ranker must be efficient, and most work must be cached.\n\n## Signals and labels\n- Watch time, normalised: completion rate, and whether the video was replayed. A 15-second video watched twice is a stronger signal than a 3-minute video abandoned halfway.\n- Explicit positives: like, share, comment, follow the creator, save.\n- Negatives: skip within one or two seconds, \"not interested\", report.\n\nCombine these in a multi-task model rather than one blended label, so that weights can be tuned later without retraining.\n\n## Candidates\n- Two-tower retrieval with a user tower over long-term interests and the current session's last 20 videos.\n- Followed creators' new videos.\n- Trending in the user's region and language.\n- A fresh pool of recently uploaded videos for exploration.\n- Similar videos to ones just liked (item-to-item embeddings).\n\n## Ranking\nA multi-task ranker predicts completion, like, share, follow, skip and report for a few hundred candidates. The value score is a weighted sum, e.g. $V = w_1 \\hat{p}_{\\text{complete}} + w_2 \\hat{p}_{\\text{share}} + w_3 \\hat{p}_{\\text{follow}} - w_4 \\hat{p}_{\\text{skip}}$, with weights set by experiments on retention rather than by guesswork.\n\n! Example: a feed that narrowed too fast\n! A model update raised average session length by 6%, but a month later users in that arm reported the feed felt repetitive and day-30 retention was slightly lower. Sessions had narrowed to two or three topics. Adding a topic-diversity constraint in re-ranking and a small exploration slot every eight videos recovered the retention loss while keeping most of the session gain.\n\n## Exploration for new videos\nStaged distribution: show each new video to a small, relevant audience (a few hundred viewers). If its completion and share rates beat peers in its category, promote it to a larger pool, then larger still. This gives every creator a chance, limits exposure for poor or harmful videos, and produces labels quickly. Bandit methods (Thompson sampling on early engagement) formalise the promotion decision.\n\n## Re-ranking\nLimit consecutive videos from one creator or topic, insert exploration slots, apply safety and integrity filters, and respect user fatigue (do not repeat a video unless rewatch is likely).\n\n## Serving\n%%flow Short-video feed. The client fetches small batches so each swipe can change what comes next.\nSwipe events -(streaming)-> Session state\nFeed request -(user + session state)-> Candidate sources -(~1,000)-> *Multi-task ranker -(value score)-> Re-rank -(diversity, safety, exploration)-> Next 4-8 videos\n%%\nPrefetch video files for the next few items on the client so playback starts instantly.\n\n## Evaluation\nOffline: per-head AUC and calibration, NDCG on sessions. Online: day-1 and day-7 retention, satisfaction survey responses, shares, and time spent as one metric among several. Keep a long-running holdout to watch for slow effects.\n\n## Monitoring\nTrack creator and topic concentration, new-video reach, prevalence of harmful content in sampled views, and per-head calibration. Alert when one topic or creator takes an unusual share of impressions.\n\n## Likely follow-up questions\n- \"How do you handle a new user?\" Show diverse popular videos by region and language, learn fast from the first 10 to 20 swipes, and ask optional interest questions.\n- \"How do you stop clickbait thumbnails or first seconds?\" Weight completion and post-view actions more than the first seconds, and penalise high early-skip videos.\n- \"How do you protect teenagers?\" Stricter content filters, limits on sensitive topics, and session-time reminders, enforced outside the ranker.\n\n## Trade-offs\n- Time spent versus satisfaction and long-term retention.\n- Exploration cost versus fresh content supply and creator fairness.\n- In-session adaptation versus stability; too much adaptation chases noise from a single swipe.\n\n> Takeaway: use every swipe as normalised feedback, combine multi-task predictions into a value score tuned on retention, explore new videos with staged audiences, and re-rank for diversity and safety rather than optimising time spent alone.",
+   "q": "Design the recommendation system for a full-screen short-video feed with 500 million daily users, 50 million new videos a day, and an average session of 40 videos. Explain the signals, candidate generation, ranking, exploration for new videos, and how you avoid optimising only for time spent.",
+   "s": "Treat every swipe as feedback. Normalise watch time by video length (completion rate, rewatches), and add explicit signals: likes, shares, follows, comments, and negative ones such as quick skips and \"not interested\". Candidates come from a two-tower model on the user's long-term and in-session history, followed creators, trending items by region, and a fresh-content pool. A multi-task ranker predicts completion, like, share, follow and skip, combined into a value score tuned by experiments on retention. Re-rank for diversity of creators and topics, safety and fatigue. Fetch the next few videos in small batches so the session state updates after each swipe. Exploration: give each new video a small initial audience; promote to larger pools if engagement beats its peers. Evaluate with experiments on day-7 retention and satisfaction surveys, with long-running holdouts. Monitor creator concentration, new-video reach and harmful-content prevalence.",
+   "rubric": [
+    "Explains the differences of a single-item swipe feed (dense feedback, in-session adaptation)",
+    "Normalises watch signals by video length and includes explicit and negative signals",
+    "Uses several candidate sources including in-session behaviour and fresh content",
+    "Ranks with multi-task heads combined into a value score tuned for retention or satisfaction",
+    "Designs staged exploration for new videos and creators",
+    "Re-ranks for diversity, safety and fatigue",
+    "Evaluates beyond time spent, with retention, surveys and long-term holdouts",
+    "Handles serving with small batches and fast session-state updates"
+   ],
+   "r": [
+    [
+     "Covington, Adams and Sargin, Deep Neural Networks for YouTube Recommendations (2016)",
+     "https://research.google/pubs/deep-neural-networks-for-youtube-recommendations/",
+     "Candidate generation and ranking for video."
+    ],
+    [
+     "Zhao et al., Recommending What Video to Watch Next: A Multitask Ranking System (2019)",
+     "https://research.google/pubs/recommending-what-video-to-watch-next-a-multitask-ranking-system/",
+     "Multi-task ranking and position bias."
+    ],
+    [
+     "Wikipedia, Multi-armed bandit",
+     "https://en.wikipedia.org/wiki/Multi-armed_bandit",
+     "Balancing exploration and exploitation."
+    ]
+   ],
+   "k": [
+    "short-video feed",
+    "sequential recommendation",
+    "exploration",
+    "watch signals"
+   ],
+   "x": [],
+   "p": [
+    "in-batch-softmax-logq",
+    "ndcg-at-k",
+    "mmr-diversity-rerank",
+    "thompson-sampling-beta-bernoulli"
+   ]
+  },
+  {
+   "id": "10.06",
+   "t": "Case study: search autocomplete",
+   "n": [
+    "Autocomplete predicts the query a user is typing from a prefix, under a strict latency budget (tens of milliseconds) per keystroke.",
+    "A strong design retrieves candidates from popular past queries with a prefix index (trie), then ranks them with personal, contextual and freshness features.",
+    "Typos, rare prefixes and new events need fallbacks: fuzzy matching, and a generative model for completions not seen before.",
+    "Suggestions are shown to everyone, so filtering offensive, unsafe and personal content is a core requirement."
+   ],
+   "a": "## Requirements\nAssume 50,000 searches per second at peak, about 8 keystrokes each (so 400,000 autocomplete requests per second, fewer with client-side debouncing), a 30 ms budget per keystroke including network, and up to 10 suggestions. Ask about languages and whether personalisation is allowed.\n\n## Metrics\nOffline: mean reciprocal rank (MRR) of the query the user eventually submitted, and keystrokes saved. Online: suggestion acceptance rate, time to complete the search, and searches abandoned. Safety: rate of reported or offensive suggestions, which must be near zero.\n\n## Data\nQuery logs give the candidates and their popularity. Normalise case, whitespace and punctuation, and count by distinct users rather than raw volume, so that one script repeating a query cannot make it popular. Require a minimum number of distinct users before a query is eligible, which also protects privacy: a query typed by only one person may contain personal data.\n\n## Candidates\n- Prefix index: a trie or sorted list mapping each prefix to its top completions, precomputed with a score of decayed frequency (recent weeks weigh more). Precomputing top-k per prefix makes lookup a single read.\n- Personal history: the user's own recent queries that match the prefix.\n- Trending layer: queries rising sharply in the last hour, updated every few minutes from the stream.\n- Fuzzy matching: prefixes within edit distance 1 or 2, for typos.\n- Generative fallback: a small language model that completes rare prefixes, filtered and constrained to well-formed queries.\n\n! Example: a news event the index missed\n! When a major storm was named, users typed its name for hours before the daily index rebuild included it, and autocomplete offered unrelated older queries. Adding a trending layer that counted query prefixes in five-minute windows and merged rising queries into suggestions brought the storm's name into the list within ten minutes of the first spike.\n\n## Ranking\nA light model (gradient-boosted trees or a small network) re-ranks 50 to 100 candidates using: global popularity, trend score, match type (exact prefix versus fuzzy), the user's history, location, language and device. It must run in a few milliseconds.\n\n## Safety filtering\nSuggestions put words in front of users who did not type them. Filter with blocklists, a classifier for offensive, sexual, violent and hateful content, and rules for names of private individuals. Be careful with queries that pair a person's name with a negative claim. Filtering happens when building the index and again at serving time for the trending and generative layers.\n\n## Serving\n%%flow Autocomplete request. Most answers come from an in-memory prefix index; other layers are merged in.\nQuery logs -(daily: normalise, count, filter)-> Prefix index with top-k\nQuery stream -(5-minute windows)-> Trending layer\nKeystroke -(prefix)-> Prefix index + trending + personal history -(candidates)-> *Light ranker -(safety filter)-> Top 10 suggestions\n%%\nServe from in-memory replicas in each region; cache popular prefixes at the edge. The client debounces keystrokes and drops stale responses.\n\n## Monitoring\nTrack latency percentiles, acceptance, MRR on fresh logs, and reports of offensive suggestions with an urgent removal path. Watch for coordinated attempts to push a query into suggestions.\n\n## Likely follow-up questions\n- \"How large is the prefix index?\" With 100 million eligible queries and top-10 per prefix, storing query IDs rather than strings keeps it to tens of gigabytes, which fits in memory per region.\n- \"How do you personalise without leaking?\" Use only the user's own history on their own device or account, never show other users' rare queries.\n- \"Should the generative model be used for every keystroke?\" No; it is a fallback for rare prefixes, because it is slower and harder to make safe.\n\n## Trade-offs\n- Popularity versus personalisation and freshness.\n- Coverage of rare prefixes versus safety: generated suggestions are riskier.\n- Latency versus ranking quality: every millisecond spent ranking is taken from the network budget.\n\n## A numeric sanity check\n\nAt 400,000 requests per second and a 30 ms budget, the network round trip usually takes 10 to 20 ms, leaving roughly 5 to 10 ms for lookup, ranking and filtering. A precomputed top-k lookup takes well under a millisecond; ranking 100 candidates with a small tree model takes one or two. If each server handles 20,000 requests per second, about 20 servers per region suffice before replication for failures. Debouncing on the client, sending a request only after 50 to 100 ms without a new keystroke, can cut traffic substantially.\n\n> Takeaway: answer most keystrokes from a precomputed prefix index, merge personal, trending and fuzzy candidates, rank with a light model, and treat safety filtering and distinct-user thresholds as core requirements.",
+   "q": "Design query autocomplete for a search engine with 50,000 queries per second at peak (each typed with about 8 keystrokes). Suggestions must appear within 30 ms of each keystroke. Explain candidate generation, ranking, handling of typos and new events, and safety filtering.",
+   "s": "Build a prefix index (trie or sorted table) over popular queries from logs, storing the top 20 completions per prefix precomputed by frequency with time decay; this answers most requests from memory in a few milliseconds. Add candidates from the user's own recent searches, fuzzy matching (edit distance 1 to 2) for typos, and a small language model for prefixes with no matches. A light ranker scores candidates on popularity, freshness (trending queries in the last hour), the user's history, location and language. Filter offensive, sexual, violent and personal-information suggestions with blocklists and a classifier, and require a minimum number of distinct users for any query to appear. Evaluate offline with mean reciprocal rank and keystrokes saved; online with suggestion acceptance and time to search. Serve from in-memory replicas close to users; update the trending layer every few minutes.",
+   "rubric": [
+    "Clarifies keystroke volume and the strict per-keystroke latency budget",
+    "Uses a prefix index with precomputed top completions per prefix",
+    "Ranks candidates with popularity, freshness, personalisation and context",
+    "Handles typos with fuzzy matching and rare prefixes with a generative fallback",
+    "Adds a fast-updating trending layer for new events",
+    "Filters unsafe and personal content, with a minimum distinct-user threshold",
+    "Evaluates with MRR or keystrokes saved and online acceptance",
+    "Serves from in-memory replicas near users with caching"
+   ],
+   "r": [
+    [
+     "Wikipedia, Autocomplete",
+     "https://en.wikipedia.org/wiki/Autocomplete",
+     "Background and common approaches."
+    ],
+    [
+     "Wikipedia, Trie",
+     "https://en.wikipedia.org/wiki/Trie",
+     "The prefix tree used for fast lookup of completions."
+    ],
+    [
+     "Wikipedia, Learning to rank",
+     "https://en.wikipedia.org/wiki/Learning_to_rank",
+     "Ranking candidate completions."
+    ]
+   ],
+   "k": [
+    "query autocomplete",
+    "prefix matching",
+    "language models",
+    "latency"
+   ],
+   "x": [],
+   "p": [
+    "n-gram-language-model",
+    "hit-rate-and-mrr",
+    "edit-distance",
+    "spell-correction"
+   ]
+  },
+  {
+   "id": "10.07",
+   "t": "Case study: news feed ranking",
+   "n": [
+    "Feed ranking orders posts from friends, groups, pages and recommendations by a value model that combines many predicted actions with tuned weights.",
+    "Candidate inventory is mostly given (posts from connections since the last visit) plus recommended content, so ranking quality and objectives matter more than retrieval.",
+    "Integrity (misinformation, harmful content, engagement bait) is handled with demotions and filters inside the ranking stack.",
+    "Weights in the value model are policy choices; they are tuned by long experiments on retention and user-reported satisfaction."
+   ],
+   "a": "## Requirements\nClarify inventory and constraints. The feed shows friends' posts, group and page posts, and recommended content from outside the user's network. Assume 1,500 eligible connected posts per visit plus a few hundred recommended, a few visits a day, and 300 ms to return the first screen.\n\n## Metrics\nOnline: daily and weekly active users, meaningful interactions (comments and shares between friends), time spent, hides and reports, and survey answers to \"was this worth your time?\". Integrity: prevalence of violating content among views, measured by sampling. Offline: per-task AUC and calibration, and NDCG of the value score against logged engagement.\n\n## Inventory\n- Connected posts since the last visit.\n- Older connected posts not yet seen that had strong engagement (\"you may have missed\").\n- Recommended posts from a two-tower retrieval model over the user's interests.\n\n## Model\n- Light ranker: a small model on precomputed features cuts 2,000 to about 500.\n- Heavy ranker: a multi-task network with heads for like, comment, share, click, long view, hide and report. Attention over the user's recent interactions (DIN-style) captures current interests.\n- Value model: $V = \\sum_i w_i \\hat{p}_i$, with negative weights for hide and report. Choosing the weights is a product decision: a high weight on comments promotes discussion but also promotes provocative posts.\n\n! Example: weights that rewarded outrage\n! After a team raised the weight on comments to promote conversation, comments rose 8%. Sampling showed that much of the gain came from heated, divisive threads, and survey satisfaction fell. Adding a predicted-report penalty, down-weighting comments on posts from non-friends, and adding a satisfaction-survey head to the value model kept most of the conversation gain without the drop in satisfaction.\n\n## Integrity in ranking\nIntegrity classifiers score each candidate for misinformation (often linked to fact-checker ratings), borderline content, engagement bait (\"comment yes if you agree\") and clickbait. Violating content is removed upstream; borderline content is demoted by a multiplier in the value score. Integrity models must be fast enough to run on every candidate, or their scores cached per post.\n\n## Re-ranking\nAvoid long runs of posts from one author or of one type (all videos), mix connected and recommended content within limits, boost freshness for time-sensitive posts, and respect user controls such as \"see first\" and snoozes.\n\n## Serving\n%%flow Feed ranking. Post features are cached; user features come from a feature store; the first screen is ranked first.\nPost events -(streaming counters)-> Post feature cache\nFeed request -(inventory: connected + recommended)-> ~2,000 posts -(light ranker)-> ~500 -(heavy multi-task model)-> *Value model + integrity demotions -(re-rank: diversity, freshness)-> Feed\n%%\nRank the first screen with priority and the rest asynchronously as the user scrolls.\n\n## Monitoring\nWatch training-serving skew (features computed differently online and offline), counter freshness, per-head calibration, integrity prevalence, and the distribution of impressions across authors. Changes to weights should go through the same experiment process as model changes.\n\n## Likely follow-up questions\n- \"How do you rank posts from a new friend with no interaction history?\" Use the friendship's recency and mutual friends as features, and give new connections a temporary boost.\n- \"How do you avoid a feed full of recommendations?\" Cap the recommended share and measure its effect on retention separately for light and heavy users.\n- \"How do you evaluate a change that may only matter over months?\" Keep a long-running holdout and track retention and satisfaction surveys there.\n\n## Trade-offs\n- Engagement versus wellbeing and integrity: explicit negative weights and survey heads are the levers.\n- Connected content versus recommendations: recommendations add engagement but can crowd out friends.\n- Model size versus latency, solved by staged ranking and caching.\n\n## A numeric sanity check\n\nIf 1 billion daily users open the feed three times and each request scores 2,000 candidates with the light model and 500 with the heavy one, that is 6 trillion light and 1.5 trillion heavy predictions a day, about 17 million heavy predictions per second on average. Post features are shared across all users who see a post, so caching them per post rather than per request is the single largest saving. Computing user features once per request, not once per candidate, is the second.\n\n> Takeaway: rank feed inventory with a multi-stage, multi-task model combined into a value score whose weights are product choices, build integrity demotions into ranking, re-rank for diversity, and judge changes by long-term retention and satisfaction.",
+   "q": "Design the ranking system for a social network's home feed. Each user has about 1,500 eligible posts since their last visit from friends, groups and pages, plus recommended posts. Explain the objective, the model, integrity handling, freshness and how you evaluate changes.",
+   "s": "Gather inventory: posts from connections since last visit, unseen older high-value posts, and recommended posts from a retrieval model. A light ranker trims to about 500; a heavy multi-task model predicts like, comment, share, long view, hide and report, using attention over the user's recent interactions. A value model combines these as a weighted sum, with weights favouring meaningful interactions (comments, shares between friends) and penalising negative feedback. Integrity classifiers demote or remove misinformation, borderline content and engagement bait. Re-rank for diversity of authors and content types, and freshness. Evaluate with experiments on retention, meaningful interactions and survey-based satisfaction, with long-running holdouts. Monitor integrity prevalence, creator distribution and training-serving skew. Trade-offs: engagement versus wellbeing and integrity, and friends' content versus recommendations.",
+   "rubric": [
+    "Describes inventory sources including connections and recommended content",
+    "Uses a multi-stage ranker with a multi-task heavy model",
+    "Defines a value model with explicit weights, including negative signals",
+    "Integrates integrity classifiers as demotions or filters inside ranking",
+    "Re-ranks for diversity, freshness and author variety",
+    "Evaluates with long-running experiments and satisfaction surveys, not only engagement",
+    "Addresses feature freshness and training-serving skew",
+    "Discusses trade-offs between engagement, wellbeing and integrity"
+   ],
+   "r": [
+    [
+     "Zhou et al., Deep Interest Network for Click-Through Rate Prediction (2017)",
+     "https://arxiv.org/abs/1706.06978",
+     "Attending over a user's recent behaviour when scoring an item."
+    ],
+    [
+     "Zhao et al., Recommending What Video to Watch Next: A Multitask Ranking System (2019)",
+     "https://research.google/pubs/recommending-what-video-to-watch-next-a-multitask-ranking-system/",
+     "Multi-task ranking with competing objectives."
+    ],
+    [
+     "Wikipedia, Recommender system",
+     "https://en.wikipedia.org/wiki/Recommender_system",
+     "Overview of approaches and evaluation."
+    ],
+    [
+     "Google, Rules of Machine Learning",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "Objectives, launches and monitoring."
+    ]
+   ],
+   "k": [
+    "feed ranking",
+    "multi-objective",
+    "integrity",
+    "value model"
+   ],
+   "x": [],
+   "p": [
+    "ndcg-at-k",
+    "mmr-diversity-rerank",
+    "training-serving-skew",
+    "point-in-time-feature-join"
+   ]
+  }
+ ]
+}

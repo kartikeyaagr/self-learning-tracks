@@ -1,0 +1,591 @@
+<svg role="img" aria-label="Upsampling a constant input. A kernel-3 stride-2 transposed convolution gives a repeating 1, 2, 4 checkerboard; a kernel-4 stride-2 one is even in the interior; bilinear resize plus convolution is flat" style="width:100%;height:auto;max-width:640px" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 494.28 182.143325" xmlns="http://www.w3.org/2000/svg" version="1.1" xmlns:c2pa="http://c2pa.org/manifest">
+<defs>
+<style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+</defs>
+<g id="figure_1">
+<g id="patch_1">
+<path d="M 0 182.143325 
+L 494.28 182.143325 
+L 494.28 -0 
+L 0 -0 
+L 0 182.143325 
+z
+" style="fill: none; opacity: 0"/>
+</g>
+<g id="axes_1">
+<g id="patch_2">
+<path d="M 7.2 174.943325 
+L 148.341176 174.943325 
+L 148.341176 33.802148 
+L 7.2 33.802148 
+L 7.2 174.943325 
+z
+" style="fill: none; opacity: 0"/>
+</g>
+<g clip-path="url(#pf5bfd090b4)">
+<image xlink:href="data:image/png;base64,
+iVBORw0KGgoAAAANSUhEUgAAAMQAAADECAYAAADApo5rAAACSklEQVR4nO3cwW3DMBBFQSdQX6ydnbAT+foKiNcRMNPA6h8eeNPPfd/3a9Dee/Lca601es++vzW973f0GvxzgoAQBIQgIAQBIQgIQUAIAkIQEIKAEASEICAEASEICEFACAJCEBCCgBAEhCAgBAEhCAhBQAgCQhAQgoAQBMQ1/a/Oc87ovWn2PZsXAkIQEIKAEASEICAEASEICEFACAJCEBCCgBAEhCAgBAEhCAhBQAgCQhAQgoAQBIQgIAQBIQgIQUAIAkIQEIKAuNZa3/6Gj7Lv2ab3eSEgBAEhCAhBQAgCQhAQgoAQBIQgIAQBIQgIQUAIAkIQEIKAEASEICAEASEICEFACAJCEBCCgBAEhCAgBAEhCIhr7z168Jwzem+afc/mhYAQBIQgIAQBIQgIQUAIAkIQEIKAEASEICAEASEICEFACAJCEBCCgBAEhCAgBAEhCAhBQAgCQhAQgoAQBIQgIK611re/4aPse7bpfV4ICEFACAJCEBCCgBAEhCAgBAEhCAhBQAgCQhAQgoAQBIQgIAQBIQgIQUAIAkIQEIKAEASEICAEASEICEFACALi2nuPHjznjN6bZt+zeSEgBAEhCAhBQAgCQhAQgoAQBIQgIAQBIQgIQUAIAkIQEIKAEASEICAEASEICEFACAJCEBCCgBAEhCAgBAEhCIhrrfXtb/go+55tep8XAkIQEIKAEASEICAEASEICEFACAJCEBCCgBAEhCAgBAEhCAhBQAgCQhAQgoAQBIQgIAQBIQgIQUAIAkIQEIKAeANUwTXV4ZBiTQAAAABJRU5ErkJggg==" id="imagee030b30845" transform="scale(1 -1) translate(0 -141.12)" x="7.2" y="-33.823325" width="141.12" height="141.12"/>
+</g>
+<g id="matplotlib.axis_1"/>
+<g id="matplotlib.axis_2"/>
+<g id="patch_3">
+<path d="M 7.2 174.943325 
+L 7.2 33.802148 
+" style="fill: none; stroke: var(--line,#dcdcdc); stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+</g>
+<g id="patch_4">
+<path d="M 148.341176 174.943325 
+L 148.341176 33.802148 
+" style="fill: none; stroke: var(--line,#dcdcdc); stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+</g>
+<g id="patch_5">
+<path d="M 7.2 174.943325 
+L 148.341176 174.943325 
+" style="fill: none; stroke: var(--line,#dcdcdc); stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+</g>
+<g id="patch_6">
+<path d="M 7.2 33.802148 
+L 148.341176 33.802148 
+" style="fill: none; stroke: var(--line,#dcdcdc); stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+</g>
+<g id="text_1">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="17.281513" y="46.481317" transform="rotate(-0 17.281513 46.481317)">4</text>
+</g>
+<g id="text_2">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="37.444538" y="46.481317" transform="rotate(-0 37.444538 46.481317)">2</text>
+</g>
+<g id="text_3">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="57.607563" y="46.481317" transform="rotate(-0 57.607563 46.481317)">4</text>
+</g>
+<g id="text_4">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="77.770588" y="46.481317" transform="rotate(-0 77.770588 46.481317)">2</text>
+</g>
+<g id="text_5">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="97.933613" y="46.481317" transform="rotate(-0 97.933613 46.481317)">4</text>
+</g>
+<g id="text_6">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="118.096639" y="46.481317" transform="rotate(-0 118.096639 46.481317)">2</text>
+</g>
+<g id="text_7">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="138.259664" y="46.481317" transform="rotate(-0 138.259664 46.481317)">4</text>
+</g>
+<g id="text_8">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="17.281513" y="66.644343" transform="rotate(-0 17.281513 66.644343)">2</text>
+</g>
+<g id="text_9">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="37.444538" y="66.644343" transform="rotate(-0 37.444538 66.644343)">1</text>
+</g>
+<g id="text_10">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="57.607563" y="66.644343" transform="rotate(-0 57.607563 66.644343)">2</text>
+</g>
+<g id="text_11">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="77.770588" y="66.644343" transform="rotate(-0 77.770588 66.644343)">1</text>
+</g>
+<g id="text_12">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="97.933613" y="66.644343" transform="rotate(-0 97.933613 66.644343)">2</text>
+</g>
+<g id="text_13">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="118.096639" y="66.644343" transform="rotate(-0 118.096639 66.644343)">1</text>
+</g>
+<g id="text_14">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="138.259664" y="66.644343" transform="rotate(-0 138.259664 66.644343)">2</text>
+</g>
+<g id="text_15">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="17.281513" y="86.807368" transform="rotate(-0 17.281513 86.807368)">4</text>
+</g>
+<g id="text_16">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="37.444538" y="86.807368" transform="rotate(-0 37.444538 86.807368)">2</text>
+</g>
+<g id="text_17">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="57.607563" y="86.807368" transform="rotate(-0 57.607563 86.807368)">4</text>
+</g>
+<g id="text_18">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="77.770588" y="86.807368" transform="rotate(-0 77.770588 86.807368)">2</text>
+</g>
+<g id="text_19">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="97.933613" y="86.807368" transform="rotate(-0 97.933613 86.807368)">4</text>
+</g>
+<g id="text_20">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="118.096639" y="86.807368" transform="rotate(-0 118.096639 86.807368)">2</text>
+</g>
+<g id="text_21">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="138.259664" y="86.807368" transform="rotate(-0 138.259664 86.807368)">4</text>
+</g>
+<g id="text_22">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="17.281513" y="106.970393" transform="rotate(-0 17.281513 106.970393)">2</text>
+</g>
+<g id="text_23">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="37.444538" y="106.970393" transform="rotate(-0 37.444538 106.970393)">1</text>
+</g>
+<g id="text_24">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="57.607563" y="106.970393" transform="rotate(-0 57.607563 106.970393)">2</text>
+</g>
+<g id="text_25">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="77.770588" y="106.970393" transform="rotate(-0 77.770588 106.970393)">1</text>
+</g>
+<g id="text_26">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="97.933613" y="106.970393" transform="rotate(-0 97.933613 106.970393)">2</text>
+</g>
+<g id="text_27">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="118.096639" y="106.970393" transform="rotate(-0 118.096639 106.970393)">1</text>
+</g>
+<g id="text_28">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="138.259664" y="106.970393" transform="rotate(-0 138.259664 106.970393)">2</text>
+</g>
+<g id="text_29">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="17.281513" y="127.133418" transform="rotate(-0 17.281513 127.133418)">4</text>
+</g>
+<g id="text_30">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="37.444538" y="127.133418" transform="rotate(-0 37.444538 127.133418)">2</text>
+</g>
+<g id="text_31">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="57.607563" y="127.133418" transform="rotate(-0 57.607563 127.133418)">4</text>
+</g>
+<g id="text_32">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="77.770588" y="127.133418" transform="rotate(-0 77.770588 127.133418)">2</text>
+</g>
+<g id="text_33">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="97.933613" y="127.133418" transform="rotate(-0 97.933613 127.133418)">4</text>
+</g>
+<g id="text_34">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="118.096639" y="127.133418" transform="rotate(-0 118.096639 127.133418)">2</text>
+</g>
+<g id="text_35">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="138.259664" y="127.133418" transform="rotate(-0 138.259664 127.133418)">4</text>
+</g>
+<g id="text_36">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="17.281513" y="147.296443" transform="rotate(-0 17.281513 147.296443)">2</text>
+</g>
+<g id="text_37">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="37.444538" y="147.296443" transform="rotate(-0 37.444538 147.296443)">1</text>
+</g>
+<g id="text_38">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="57.607563" y="147.296443" transform="rotate(-0 57.607563 147.296443)">2</text>
+</g>
+<g id="text_39">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="77.770588" y="147.296443" transform="rotate(-0 77.770588 147.296443)">1</text>
+</g>
+<g id="text_40">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="97.933613" y="147.296443" transform="rotate(-0 97.933613 147.296443)">2</text>
+</g>
+<g id="text_41">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="118.096639" y="147.296443" transform="rotate(-0 118.096639 147.296443)">1</text>
+</g>
+<g id="text_42">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="138.259664" y="147.296443" transform="rotate(-0 138.259664 147.296443)">2</text>
+</g>
+<g id="text_43">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="17.281513" y="167.459469" transform="rotate(-0 17.281513 167.459469)">4</text>
+</g>
+<g id="text_44">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="37.444538" y="167.459469" transform="rotate(-0 37.444538 167.459469)">2</text>
+</g>
+<g id="text_45">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="57.607563" y="167.459469" transform="rotate(-0 57.607563 167.459469)">4</text>
+</g>
+<g id="text_46">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="77.770588" y="167.459469" transform="rotate(-0 77.770588 167.459469)">2</text>
+</g>
+<g id="text_47">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="97.933613" y="167.459469" transform="rotate(-0 97.933613 167.459469)">4</text>
+</g>
+<g id="text_48">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="118.096639" y="167.459469" transform="rotate(-0 118.096639 167.459469)">2</text>
+</g>
+<g id="text_49">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="138.259664" y="167.459469" transform="rotate(-0 138.259664 167.459469)">4</text>
+</g>
+<g id="text_50">
+<text style="font-weight: 700; font-size: 10px; font-family:inherit; fill: var(--ink,#272727)" transform="translate(31.086994 15.799414)">transposed conv</text>
+<text style="font-weight: 700; font-size: 10px; font-family:inherit; fill: var(--ink,#272727)" transform="translate(29.463557 27.802148)">kernel 3, stride 2</text>
+</g>
+</g>
+<g id="axes_2">
+<g id="patch_7">
+<path d="M 176.569412 174.943325 
+L 317.710588 174.943325 
+L 317.710588 33.802148 
+L 176.569412 33.802148 
+L 176.569412 174.943325 
+z
+" style="fill: none; opacity: 0"/>
+</g>
+<g clip-path="url(#p1611631279)">
+<image xlink:href="data:image/png;base64,
+iVBORw0KGgoAAAANSUhEUgAAAMQAAADECAYAAADApo5rAAAB80lEQVR4nO3TMQHDABDEsGv4c/6uZpAMEgIv/t3dDdi2PW8HwJcYAsIQEIaAMASEISAMAWEICENAGALCEBCGgDAEhCEgDAFhCAhDQBgCwhAQhoAwBIQhIAwBYQgIQ0AYAsIQEIaAMASEISAMAWEICENAGALCEBCGgDAEhCEgDAFhCAhDQBgCwhAQhoAwBIQhIAwBYQgIQ0AYAsIQEIaAMASEISAMAWEICENAGALCEBCGgDAEhCEgDAFhCAhDQBgCwhAQhoAwBIQhIAwBYQgIQ0AYAsIQEIaAMASEISAMAWEICENAGALCEBCGgDAEhCEgDAFhCAhDQBgCwhAQhoAwBIQhIAwBYQgIQ0AYAsIQEIaAMASEISAMAWEICENAGALCEBCGgDAEhCEgDAFhCAhDQBgCwhAQhoAwBIQhIAwBYQgIQ0AYAsIQEIaAMASEISAMAWEICENAGALCEBCGgDAEhCEgDAFhCAhDQBgCwhAQhoAwBIQhIAwBYQgIQ0AYAsIQEIaAMASEISAMAWEICENAGALCEBCGgDAEhCEgDAFhCAhDQBgCwhAQhoAwBIQhIAwBYQgIQ0AYAsIQEIaAMASEISAMAWEICENAGALCEBCGgDAEhCEgDAFhCAhDQBgCwhAQhoAwBIQhIAwBYQgIQ0AYAsIQEH/JdQWELu75cAAAAABJRU5ErkJggg==" id="imagec868348843" transform="scale(1 -1) translate(0 -141.12)" x="176.4" y="-33.823325" width="141.12" height="141.12"/>
+</g>
+<g id="matplotlib.axis_3"/>
+<g id="matplotlib.axis_4"/>
+<g id="patch_8">
+<path d="M 176.569412 174.943325 
+L 176.569412 33.802148 
+" style="fill: none; stroke: var(--line,#dcdcdc); stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+</g>
+<g id="patch_9">
+<path d="M 317.710588 174.943325 
+L 317.710588 33.802148 
+" style="fill: none; stroke: var(--line,#dcdcdc); stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+</g>
+<g id="patch_10">
+<path d="M 176.569412 174.943325 
+L 317.710588 174.943325 
+" style="fill: none; stroke: var(--line,#dcdcdc); stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+</g>
+<g id="patch_11">
+<path d="M 176.569412 33.802148 
+L 317.710588 33.802148 
+" style="fill: none; stroke: var(--line,#dcdcdc); stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+</g>
+<g id="text_51">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="186.650924" y="46.481317" transform="rotate(-0 186.650924 46.481317)">4</text>
+</g>
+<g id="text_52">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="206.81395" y="46.481317" transform="rotate(-0 206.81395 46.481317)">4</text>
+</g>
+<g id="text_53">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="226.976975" y="46.481317" transform="rotate(-0 226.976975 46.481317)">4</text>
+</g>
+<g id="text_54">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="247.14" y="46.481317" transform="rotate(-0 247.14 46.481317)">4</text>
+</g>
+<g id="text_55">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="267.303025" y="46.481317" transform="rotate(-0 267.303025 46.481317)">4</text>
+</g>
+<g id="text_56">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="287.46605" y="46.481317" transform="rotate(-0 287.46605 46.481317)">4</text>
+</g>
+<g id="text_57">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="307.629076" y="46.481317" transform="rotate(-0 307.629076 46.481317)">4</text>
+</g>
+<g id="text_58">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="186.650924" y="66.644343" transform="rotate(-0 186.650924 66.644343)">4</text>
+</g>
+<g id="text_59">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="206.81395" y="66.644343" transform="rotate(-0 206.81395 66.644343)">4</text>
+</g>
+<g id="text_60">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="226.976975" y="66.644343" transform="rotate(-0 226.976975 66.644343)">4</text>
+</g>
+<g id="text_61">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="247.14" y="66.644343" transform="rotate(-0 247.14 66.644343)">4</text>
+</g>
+<g id="text_62">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="267.303025" y="66.644343" transform="rotate(-0 267.303025 66.644343)">4</text>
+</g>
+<g id="text_63">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="287.46605" y="66.644343" transform="rotate(-0 287.46605 66.644343)">4</text>
+</g>
+<g id="text_64">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="307.629076" y="66.644343" transform="rotate(-0 307.629076 66.644343)">4</text>
+</g>
+<g id="text_65">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="186.650924" y="86.807368" transform="rotate(-0 186.650924 86.807368)">4</text>
+</g>
+<g id="text_66">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="206.81395" y="86.807368" transform="rotate(-0 206.81395 86.807368)">4</text>
+</g>
+<g id="text_67">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="226.976975" y="86.807368" transform="rotate(-0 226.976975 86.807368)">4</text>
+</g>
+<g id="text_68">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="247.14" y="86.807368" transform="rotate(-0 247.14 86.807368)">4</text>
+</g>
+<g id="text_69">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="267.303025" y="86.807368" transform="rotate(-0 267.303025 86.807368)">4</text>
+</g>
+<g id="text_70">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="287.46605" y="86.807368" transform="rotate(-0 287.46605 86.807368)">4</text>
+</g>
+<g id="text_71">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="307.629076" y="86.807368" transform="rotate(-0 307.629076 86.807368)">4</text>
+</g>
+<g id="text_72">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="186.650924" y="106.970393" transform="rotate(-0 186.650924 106.970393)">4</text>
+</g>
+<g id="text_73">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="206.81395" y="106.970393" transform="rotate(-0 206.81395 106.970393)">4</text>
+</g>
+<g id="text_74">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="226.976975" y="106.970393" transform="rotate(-0 226.976975 106.970393)">4</text>
+</g>
+<g id="text_75">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="247.14" y="106.970393" transform="rotate(-0 247.14 106.970393)">4</text>
+</g>
+<g id="text_76">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="267.303025" y="106.970393" transform="rotate(-0 267.303025 106.970393)">4</text>
+</g>
+<g id="text_77">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="287.46605" y="106.970393" transform="rotate(-0 287.46605 106.970393)">4</text>
+</g>
+<g id="text_78">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="307.629076" y="106.970393" transform="rotate(-0 307.629076 106.970393)">4</text>
+</g>
+<g id="text_79">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="186.650924" y="127.133418" transform="rotate(-0 186.650924 127.133418)">4</text>
+</g>
+<g id="text_80">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="206.81395" y="127.133418" transform="rotate(-0 206.81395 127.133418)">4</text>
+</g>
+<g id="text_81">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="226.976975" y="127.133418" transform="rotate(-0 226.976975 127.133418)">4</text>
+</g>
+<g id="text_82">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="247.14" y="127.133418" transform="rotate(-0 247.14 127.133418)">4</text>
+</g>
+<g id="text_83">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="267.303025" y="127.133418" transform="rotate(-0 267.303025 127.133418)">4</text>
+</g>
+<g id="text_84">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="287.46605" y="127.133418" transform="rotate(-0 287.46605 127.133418)">4</text>
+</g>
+<g id="text_85">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="307.629076" y="127.133418" transform="rotate(-0 307.629076 127.133418)">4</text>
+</g>
+<g id="text_86">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="186.650924" y="147.296443" transform="rotate(-0 186.650924 147.296443)">4</text>
+</g>
+<g id="text_87">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="206.81395" y="147.296443" transform="rotate(-0 206.81395 147.296443)">4</text>
+</g>
+<g id="text_88">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="226.976975" y="147.296443" transform="rotate(-0 226.976975 147.296443)">4</text>
+</g>
+<g id="text_89">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="247.14" y="147.296443" transform="rotate(-0 247.14 147.296443)">4</text>
+</g>
+<g id="text_90">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="267.303025" y="147.296443" transform="rotate(-0 267.303025 147.296443)">4</text>
+</g>
+<g id="text_91">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="287.46605" y="147.296443" transform="rotate(-0 287.46605 147.296443)">4</text>
+</g>
+<g id="text_92">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="307.629076" y="147.296443" transform="rotate(-0 307.629076 147.296443)">4</text>
+</g>
+<g id="text_93">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="186.650924" y="167.459469" transform="rotate(-0 186.650924 167.459469)">4</text>
+</g>
+<g id="text_94">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="206.81395" y="167.459469" transform="rotate(-0 206.81395 167.459469)">4</text>
+</g>
+<g id="text_95">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="226.976975" y="167.459469" transform="rotate(-0 226.976975 167.459469)">4</text>
+</g>
+<g id="text_96">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="247.14" y="167.459469" transform="rotate(-0 247.14 167.459469)">4</text>
+</g>
+<g id="text_97">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="267.303025" y="167.459469" transform="rotate(-0 267.303025 167.459469)">4</text>
+</g>
+<g id="text_98">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="287.46605" y="167.459469" transform="rotate(-0 287.46605 167.459469)">4</text>
+</g>
+<g id="text_99">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="307.629076" y="167.459469" transform="rotate(-0 307.629076 167.459469)">4</text>
+</g>
+<g id="text_100">
+<text style="font-weight: 700; font-size: 10px; font-family:inherit; fill: var(--ink,#272727)" transform="translate(200.456406 15.799414)">transposed conv</text>
+<text style="font-weight: 700; font-size: 10px; font-family:inherit; fill: var(--ink,#272727)" transform="translate(198.832969 27.802148)">kernel 4, stride 2</text>
+</g>
+</g>
+<g id="axes_3">
+<g id="patch_12">
+<path d="M 345.938824 174.943325 
+L 487.08 174.943325 
+L 487.08 33.802148 
+L 345.938824 33.802148 
+L 345.938824 174.943325 
+z
+" style="fill: none; opacity: 0"/>
+</g>
+<g clip-path="url(#pf264f678d7)">
+<image xlink:href="data:image/png;base64,
+iVBORw0KGgoAAAANSUhEUgAAAMUAAADECAYAAAAvZOVVAAAB8klEQVR4nO3ToQHAIBDAwNL9d34cIguAuJsgJmtm5gOO/3YAvMYUEKaAMAWEKSBMAWEKCFNAmALCFBCmgDAFhCkgTAFhCghTQJgCwhQQpoAwBYQpIEwBYQoIU0CYAsIUEKaAMAWEKSBMAWEKCFNAmALCFBCmgDAFhCkgTAFhCghTQJgCwhQQpoAwBYQpIEwBYQoIU0CYAsIUEKaAMAWEKSBMAWEKCFNAmALCFBCmgDAFhCkgTAFhCghTQJgCwhQQpoAwBYQpIEwBYQoIU0CYAsIUEKaAMAWEKSBMAWEKCFNAmALCFBCmgDAFhCkgTAFhCghTQJgCwhQQpoAwBYQpIEwBYQoIU0CYAsIUEKaAMAWEKSBMAWEKCFNAmALCFBCmgDAFhCkgTAFhCghTQJgCwhQQpoAwBYQpIEwBYQoIU0CYAsIUEKaAMAWEKSBMAWEKCFNAmALCFBCmgDAFhCkgTAFhCghTQJgCwhQQpoAwBYQpIEwBYQoIU0CYAsIUEKaAMAWEKSBMAWEKCFNAmALCFBCmgDAFhCkgTAFhCghTQJgCwhQQpoAwBYQpIEwBYQoIU0CYAsIUEKaAMAWEKSBMAWEKCFNAmALCFBCmgDAFhCkgTAFhCghTQJgCwhQQpoAwBYQpIEwBYQoIU0CYAsIUEKaA2FlmBYRMpFelAAAAAElFTkSuQmCC" id="imaged1168799a8" transform="scale(1 -1) translate(0 -141.12)" x="345.6" y="-33.823325" width="141.84" height="141.12"/>
+</g>
+<g id="matplotlib.axis_5"/>
+<g id="matplotlib.axis_6"/>
+<g id="patch_13">
+<path d="M 345.938824 174.943325 
+L 345.938824 33.802148 
+" style="fill: none; stroke: var(--line,#dcdcdc); stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+</g>
+<g id="patch_14">
+<path d="M 487.08 174.943325 
+L 487.08 33.802148 
+" style="fill: none; stroke: var(--line,#dcdcdc); stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+</g>
+<g id="patch_15">
+<path d="M 345.938824 174.943325 
+L 487.08 174.943325 
+" style="fill: none; stroke: var(--line,#dcdcdc); stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+</g>
+<g id="patch_16">
+<path d="M 345.938824 33.802148 
+L 487.08 33.802148 
+" style="fill: none; stroke: var(--line,#dcdcdc); stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+</g>
+<g id="text_101">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="356.020336" y="46.481317" transform="rotate(-0 356.020336 46.481317)">1</text>
+</g>
+<g id="text_102">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="376.183361" y="46.481317" transform="rotate(-0 376.183361 46.481317)">1</text>
+</g>
+<g id="text_103">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="396.346387" y="46.481317" transform="rotate(-0 396.346387 46.481317)">1</text>
+</g>
+<g id="text_104">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="416.509412" y="46.481317" transform="rotate(-0 416.509412 46.481317)">1</text>
+</g>
+<g id="text_105">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="436.672437" y="46.481317" transform="rotate(-0 436.672437 46.481317)">1</text>
+</g>
+<g id="text_106">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="456.835462" y="46.481317" transform="rotate(-0 456.835462 46.481317)">1</text>
+</g>
+<g id="text_107">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="476.998487" y="46.481317" transform="rotate(-0 476.998487 46.481317)">1</text>
+</g>
+<g id="text_108">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="356.020336" y="66.644343" transform="rotate(-0 356.020336 66.644343)">1</text>
+</g>
+<g id="text_109">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="376.183361" y="66.644343" transform="rotate(-0 376.183361 66.644343)">1</text>
+</g>
+<g id="text_110">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="396.346387" y="66.644343" transform="rotate(-0 396.346387 66.644343)">1</text>
+</g>
+<g id="text_111">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="416.509412" y="66.644343" transform="rotate(-0 416.509412 66.644343)">1</text>
+</g>
+<g id="text_112">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="436.672437" y="66.644343" transform="rotate(-0 436.672437 66.644343)">1</text>
+</g>
+<g id="text_113">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="456.835462" y="66.644343" transform="rotate(-0 456.835462 66.644343)">1</text>
+</g>
+<g id="text_114">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="476.998487" y="66.644343" transform="rotate(-0 476.998487 66.644343)">1</text>
+</g>
+<g id="text_115">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="356.020336" y="86.807368" transform="rotate(-0 356.020336 86.807368)">1</text>
+</g>
+<g id="text_116">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="376.183361" y="86.807368" transform="rotate(-0 376.183361 86.807368)">1</text>
+</g>
+<g id="text_117">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="396.346387" y="86.807368" transform="rotate(-0 396.346387 86.807368)">1</text>
+</g>
+<g id="text_118">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="416.509412" y="86.807368" transform="rotate(-0 416.509412 86.807368)">1</text>
+</g>
+<g id="text_119">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="436.672437" y="86.807368" transform="rotate(-0 436.672437 86.807368)">1</text>
+</g>
+<g id="text_120">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="456.835462" y="86.807368" transform="rotate(-0 456.835462 86.807368)">1</text>
+</g>
+<g id="text_121">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="476.998487" y="86.807368" transform="rotate(-0 476.998487 86.807368)">1</text>
+</g>
+<g id="text_122">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="356.020336" y="106.970393" transform="rotate(-0 356.020336 106.970393)">1</text>
+</g>
+<g id="text_123">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="376.183361" y="106.970393" transform="rotate(-0 376.183361 106.970393)">1</text>
+</g>
+<g id="text_124">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="396.346387" y="106.970393" transform="rotate(-0 396.346387 106.970393)">1</text>
+</g>
+<g id="text_125">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="416.509412" y="106.970393" transform="rotate(-0 416.509412 106.970393)">1</text>
+</g>
+<g id="text_126">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="436.672437" y="106.970393" transform="rotate(-0 436.672437 106.970393)">1</text>
+</g>
+<g id="text_127">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="456.835462" y="106.970393" transform="rotate(-0 456.835462 106.970393)">1</text>
+</g>
+<g id="text_128">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="476.998487" y="106.970393" transform="rotate(-0 476.998487 106.970393)">1</text>
+</g>
+<g id="text_129">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="356.020336" y="127.133418" transform="rotate(-0 356.020336 127.133418)">1</text>
+</g>
+<g id="text_130">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="376.183361" y="127.133418" transform="rotate(-0 376.183361 127.133418)">1</text>
+</g>
+<g id="text_131">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="396.346387" y="127.133418" transform="rotate(-0 396.346387 127.133418)">1</text>
+</g>
+<g id="text_132">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="416.509412" y="127.133418" transform="rotate(-0 416.509412 127.133418)">1</text>
+</g>
+<g id="text_133">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="436.672437" y="127.133418" transform="rotate(-0 436.672437 127.133418)">1</text>
+</g>
+<g id="text_134">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="456.835462" y="127.133418" transform="rotate(-0 456.835462 127.133418)">1</text>
+</g>
+<g id="text_135">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="476.998487" y="127.133418" transform="rotate(-0 476.998487 127.133418)">1</text>
+</g>
+<g id="text_136">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="356.020336" y="147.296443" transform="rotate(-0 356.020336 147.296443)">1</text>
+</g>
+<g id="text_137">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="376.183361" y="147.296443" transform="rotate(-0 376.183361 147.296443)">1</text>
+</g>
+<g id="text_138">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="396.346387" y="147.296443" transform="rotate(-0 396.346387 147.296443)">1</text>
+</g>
+<g id="text_139">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="416.509412" y="147.296443" transform="rotate(-0 416.509412 147.296443)">1</text>
+</g>
+<g id="text_140">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="436.672437" y="147.296443" transform="rotate(-0 436.672437 147.296443)">1</text>
+</g>
+<g id="text_141">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="456.835462" y="147.296443" transform="rotate(-0 456.835462 147.296443)">1</text>
+</g>
+<g id="text_142">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="476.998487" y="147.296443" transform="rotate(-0 476.998487 147.296443)">1</text>
+</g>
+<g id="text_143">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="356.020336" y="167.459469" transform="rotate(-0 356.020336 167.459469)">1</text>
+</g>
+<g id="text_144">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="376.183361" y="167.459469" transform="rotate(-0 376.183361 167.459469)">1</text>
+</g>
+<g id="text_145">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="396.346387" y="167.459469" transform="rotate(-0 396.346387 167.459469)">1</text>
+</g>
+<g id="text_146">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="416.509412" y="167.459469" transform="rotate(-0 416.509412 167.459469)">1</text>
+</g>
+<g id="text_147">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="436.672437" y="167.459469" transform="rotate(-0 436.672437 167.459469)">1</text>
+</g>
+<g id="text_148">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="456.835462" y="167.459469" transform="rotate(-0 456.835462 167.459469)">1</text>
+</g>
+<g id="text_149">
+<text style="font-size: 10px; font-family:inherit; text-anchor: middle; fill: var(--accent,#2a6fdb)" x="476.998487" y="167.459469" transform="rotate(-0 476.998487 167.459469)">1</text>
+</g>
+<g id="text_150">
+<text style="font-weight: 700; font-size: 10px; font-family:inherit; fill: var(--ink,#272727)" transform="translate(383.689099 15.799414)">bilinear ×2,</text>
+<text style="font-weight: 700; font-size: 10px; font-family:inherit; fill: var(--ink,#272727)" transform="translate(351.186756 27.802148)">then 3×3 average conv</text>
+</g>
+</g>
+</g>
+<defs>
+<clipPath id="pf5bfd090b4">
+<rect x="7.2" y="33.802148" width="141.141176" height="141.141176"/>
+</clipPath>
+<clipPath id="p1611631279">
+<rect x="176.569412" y="33.802148" width="141.141176" height="141.141176"/>
+</clipPath>
+<clipPath id="pf264f678d7">
+<rect x="345.938824" y="33.802148" width="141.141176" height="141.141176"/>
+</clipPath>
+</defs>
+<metadata><c2pa:manifest>AAAWgmp1bWIAAAAeanVtZGMycGEAEQAQgAAAqgA4m3EDYzJwYQAAABZcanVtYgAAAEdqdW1kYzJtYQARABCAAACqADibcQN1cm46YzJwYTo1ZWQ5NDAwZi1jM2Q5LTRlMGQtYTA3Ny1iNjRmMjJlOWE3YjAAAAADl2p1bWIAAAApanVtZGMyYXMAEQAQgAAAqgA4m3EDYzJwYS5hc3NlcnRpb25zAAAAALxqdW1iAAAARGp1bWRjYm9yABEAEIAAAKoAOJtxE2MycGEuaW5ncmVkaWVudC52MwAAAAAYYzJzaDFos6aRP++3X/9ee4x7yXkAAABwY2JvcqNpZGM6Zm9ybWF0bWltYWdlL3N2Zyt4bWxqaW5zdGFuY2VJRHgseG1wOmlpZDo5MzVkYjAzYS1hNTBhLTQ4OWYtYmFhZi0wZWMzMzJmOGQ5Y2ZscmVsYXRpb25zaGlwaHBhcmVudE9mAAAB4mp1bWIAAABBanVtZGNib3IAEQAQgAAAqgA4m3ETYzJwYS5hY3Rpb25zLnYyAAAAABhjMnNoL9+phJRRb8k0IoJbHHPCzgAAAZljYm9yomdhY3Rpb25zgqJmYWN0aW9ua2MycGEub3BlbmVkanBhcmFtZXRlcnOha2luZ3JlZGllbnRzgaJjdXJseC1zZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmluZ3JlZGllbnQudjNkaGFzaFggXZO7eDkwk8EG/A91r3xIajIWgLa7r2I58T1xbM+hnQGkZmFjdGlvbngdY29tLmFudGhyb3BpYy5jbGF1ZGUucHJvdmlkZWRqcGFyYW1ldGVyc6F4H2NvbS5hbnRocm9waWMub3JpZ2luLWNvbmZpZGVuY2VndW5rbm93bmtkZXNjcmlwdGlvbnhmQ2xhdWRlIHByb3ZpZGVkIHRoaXMgZmlsZSBhdCB0aGUgcmVxdWVzdCBvZiBhIHVzZXIgYW5kIG1heSBoYXZlIGNyZWF0ZWQgb3IgbW9kaWZpZWQgdGhlIGZpbGUgY29udGVudHMubXNvZnR3YXJlQWdlbnShZG5hbWVmQ2xhdWRlcmFsbEFjdGlvbnNJbmNsdWRlZPUAAADIanVtYgAAAEBqdW1kY2JvcgARABCAAACqADibcRNjMnBhLmhhc2guZGF0YQAAAAAYYzJzaIEEnyYJMKMJQnZsojfPhrAAAACAY2JvcqVjYWxnZnNoYTI1NmNwYWRMAAAAAAAAAAAAAAAAZGhhc2hYIEEVV2vBkLS+17MuKHkLEVgKJxyb0gbLoaQGPhnixgxNZG5hbWVuanVtYmYgbWFuaWZlc3RqZXhjbHVzaW9uc4GiZXN0YXJ0GZYIZmxlbmd0aBkeBAAAAj5qdW1iAAAAJ2p1bWRjMmNsABEAEIAAAKoAOJtxA2MycGEuY2xhaW0udjIAAAACD2Nib3KlY2FsZ2ZzaGEyNTZpc2lnbmF0dXJleE1zZWxmI2p1bWJmPS9jMnBhL3VybjpjMnBhOjVlZDk0MDBmLWMzZDktNGUwZC1hMDc3LWI2NGYyMmU5YTdiMC9jMnBhLnNpZ25hdHVyZWppbnN0YW5jZUlEeCx4bXA6aWlkOmJmZjcwODJkLTk2NmItNDlmNy04NTQzLWNmNTUxNDM0OWYwM3JjcmVhdGVkX2Fzc2VydGlvbnODomN1cmx4LXNlbGYjanVtYmY9YzJwYS5hc3NlcnRpb25zL2MycGEuaW5ncmVkaWVudC52M2RoYXNoWCBdk7t4OTCTwQb8D3WvfEhqMhaAtruvYjnxPXFsz6GdAaJjdXJseCpzZWxmI2p1bWJmPWMycGEuYXNzZXJ0aW9ucy9jMnBhLmFjdGlvbnMudjJkaGFzaFggOyrzipzH2wk7OZuTZTWybbkAO7Z3MpE63UNeJhP4/ISiY3VybHgpc2VsZiNqdW1iZj1jMnBhLmFzc2VydGlvbnMvYzJwYS5oYXNoLmRhdGFkaGFzaFggbJaLbE8qEuOoj1RR+QES1qVbsIRSM1b/xKhVBW7RHVF0Y2xhaW1fZ2VuZXJhdG9yX2luZm+jZG5hbWVvQW50aHJvcGljIEZpbGVzZ3ZlcnNpb25lMS4wLjBrc3BlY1ZlcnNpb25lMi40LjAAABA4anVtYgAAAChqdW1kYzJjcwARABCAAACqADibcQNjMnBhLnNpZ25hdHVyZQAAABAIY2JvctKEWQISogEmGCFZAgowggIGMIIBjaADAgECAhRA5aAK7sI50L64g/oGQgU9Z1UTADAKBggqhkjOPQQDAzBJMRcwFQYDVQQKEw5BbnRocm9waWMsIFBCQzEuMCwGA1UEAxMlQW50aHJvcGljIENvbnRlbnQgQ3JlZGVudGlhbHMgUm9vdCBDQTAeFw0yNjA4MDcxODQzNTZaFw0yODA4MDYxOTQzNTZaMEQxFzAVBgNVBAoTDkFudGhyb3BpYywgUEJDMSkwJwYDVQQDEyBBbnRocm9waWMgQ2xhdWRlIENvbnRlbnQgU2lnbmluZzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABJh6CmvLUBgFFNU0vUKlOVtE6djd17L5SuwX0LemFisBM3dkd/3cyjxFA3Qo5S46fX0/ihY0VZ7mfb9KF703t5OjWDBWMA4GA1UdDwEB/wQEAwIHgDAVBgNVHSUEDjAMBgorBgEEAYPoXgIBMAwGA1UdEwEB/wQCMAAwHwYDVR0jBBgwFoAUzlHiBIFOZFsj+OPEz5o+nMHXXMIwCgYIKoZIzj0EAwMDZwAwZAIwMXMdFJ4BetLLVY7ORuE9noqbbAZOZn/aArXyTwFAZfKrPzxF2vPoJNf1+UCdg1XGAjBwX1zd9WGqYkqmL5SFqw1QySjr1zJfpJM9+1rdDwSPLMOPOjKuiXjoU/pUUeG9RwmhY3BhZFkNngAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPZYQJEkBCEBHxnio7GyvYD7c0TumEmJi/285Bl2a36ElmZwFqZXU+dXFKB7vfAs9gHT8fbVNc8K1ynjMaQyA/nQT9c=</c2pa:manifest></metadata></svg>

@@ -1,0 +1,12 @@
+{"id": "llm-serving-scheduler-from-scratch", "kind": "project", "group": "ML Systems and GPU Programming",
+ "title": "LLM Serving Scheduler from Scratch",
+ "blurb": "Build the scheduler of an LLM server: cached attention, continuous batching, latency metrics, KV sizing and block allocation, then find and fix a tail-latency problem.",
+ "intro": "Serving throughput comes from batching many requests through each decode step, and latency comes from how the scheduler orders prefills and decodes. The steps build one cached decode step, a continuous-batching scheduler with a KV budget, the latency metrics (time to first token, time per output token, throughput), the KV cache size per token, and a paged block allocator. The capstone simulates a scheduler on a bursty trace and shows how chunked prefill bounds the inter-token stalls that prefill-first scheduling causes.",
+ "steps": [
+  {"name": "Attend with a KV cache", "problem": "decode-attention-with-kv-cache"},
+  {"name": "Plan a continuous batching step", "problem": "simulate-continuous-batching"},
+  {"name": "Measure TTFT, TPOT and throughput", "problem": "ttft-tpot-itl-and-token-throughput"},
+  {"name": "Size the KV cache", "problem": "kv-cache-memory-for-mha-mqa-gqa-and-mla"},
+  {"name": "Allocate KV cache blocks", "problem": "pagedattention-block-allocation"}
+ ],
+ "capstone": "serving-tail-latency-capstone"}

@@ -1,0 +1,12 @@
+{"id": "grpo-from-scratch", "kind": "project", "group": "Reinforcement Learning",
+ "title": "Train a Reasoning Model with GRPO",
+ "blurb": "Build Group Relative Policy Optimization: group-relative advantages, KL to the reference, the clipped loss, length normalisation and pass@k.",
+ "intro": "GRPO trains reasoning models with verifiable rewards by sampling a group of answers per prompt and scoring each against its own group, so no value network is needed. The steps build group-relative advantages, the per-token KL estimate that keeps the policy near its starting point, the clipped GRPO loss, a comparison of length normalisations that exposes a bias towards long or short answers, and the unbiased pass@k estimator used to measure what training changed. The capstone runs a full GRPO update on a softmax answer policy and reports exact pass@1 and pass@k before and after.",
+ "steps": [
+  {"name": "Compute group-relative advantages", "problem": "normalize-grpo-group-advantages"},
+  {"name": "Estimate the KL divergence per token", "problem": "score-kl-regularized-policy-batch"},
+  {"name": "Write the clipped GRPO loss", "problem": "grpo-group-relative-advantage"},
+  {"name": "Compare three length normalisations", "problem": "compare-sequence-and-token-length-normalization"},
+  {"name": "Estimate pass@k from samples", "problem": "pass-at-k-estimator"}
+ ],
+ "capstone": "grpo-step-capstone"}

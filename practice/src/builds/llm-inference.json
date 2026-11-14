@@ -1,0 +1,12 @@
+{"id": "llm-inference", "kind": "project", "group": "LLM Engineering",
+ "title": "LLM Inference Server",
+ "blurb": "Build the parts of an inference server around the model: cached decoding, request batching, sampling, latency metrics and a request handler with stopping rules.",
+ "intro": "An inference server turns a model into an API. The steps cover one decode step with a KV cache, dynamic batching with a size cap and a timeout, per-request sampling settings, the latency metrics users feel (time to first token, time per output token), and tail percentiles from a request log. The capstone is the request handler: validation, a decode loop with end-of-sequence, stop sequences and token and context limits, streaming chunks and usage accounting.",
+ "steps": [
+  {"name": "One decode step with a KV cache", "problem": "decode-attention-with-kv-cache"},
+  {"name": "Dynamic request batching", "problem": "dynamic-request-batching"},
+  {"name": "Per-request sampling settings", "problem": "temperature-top-k-and-top-p-sampling"},
+  {"name": "TTFT, TPOT and throughput", "problem": "ttft-tpot-itl-and-token-throughput"},
+  {"name": "Tail latency percentiles", "problem": "p50-p95-and-p99-inference-latency"}
+ ],
+ "capstone": "inference-request-handler"}

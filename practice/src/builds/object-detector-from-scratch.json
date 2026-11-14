@@ -1,0 +1,12 @@
+{"id": "object-detector-from-scratch", "kind": "project", "group": "Computer Vision",
+ "title": "Build an Object Detector's Back Half",
+ "blurb": "Everything around the detection network: IoU, box encoding, anchor labelling, class-aware NMS and average precision, joined into a full post-processing and evaluation pipeline.",
+ "intro": "A detector's network predicts scores and box offsets for thousands of anchors; turning those into a handful of correct boxes, and measuring how correct they are, is its own engineering problem. The steps build IoU between box sets, encoding and decoding box offsets, labelling anchors as positive, background or ignored, class-aware non-maximum suppression, and average precision for one class. The capstone decodes raw outputs for several images, filters and suppresses them, caps the detections and reports per-class AP and mAP.",
+ "steps": [
+  {"name": "Compute an IoU matrix", "problem": "iou-matrix"},
+  {"name": "Decode predicted offsets into boxes", "problem": "box-encode-and-decode"},
+  {"name": "Label anchors as positive, background or ignored", "problem": "rpn-anchor-target-assignment"},
+  {"name": "Remove duplicates with class-aware NMS", "problem": "non-maximum-suppression"},
+  {"name": "Compute average precision for one class", "problem": "detection-average-precision"}
+ ],
+ "capstone": "detector-postprocess-capstone"}

@@ -1,0 +1,293 @@
+{
+ "n": "16",
+ "name": "Graph theory for ML",
+ "desc": "Graphs as matrices: Laplacians, spectral clustering, random walks, backpropagation graphs and message passing.",
+ "part": "Information and graphs",
+ "lessons": [
+  {
+   "id": "16.01",
+   "t": "Graphs and their matrices",
+   "n": [
+    "A graph $G = (V, E)$ can be stored as an adjacency list, an edge list or an adjacency matrix $A$; real graphs are sparse, so lists and sparse matrices are the practical choices.",
+    "The degree matrix $D$ holds node degrees on its diagonal; $D$, $A$ and their combinations give the matrices that the rest of the module uses.",
+    "Powers of the adjacency matrix count walks: $(A^k)_{ij}$ is the number of walks of length $k$ from $i$ to $j$.",
+    "Many ML datasets are graphs in disguise: user-item interactions form a bipartite graph whose biadjacency matrix is the interaction matrix."
+   ],
+   "a": "## Where this module sits\nLinear algebra (modules 03 to 08) gave you matrices, eigenvalues and projections. Graphs connect those tools to data made of relationships: social networks, road maps, molecules, citations, user-item interactions, and the computation graphs that backpropagation runs on. This module builds the matrix view of graphs, then uses it for spectral methods, random walks and graph neural networks.\n\n## Basic vocabulary\nA graph has nodes $V$ and edges $E$. Edges may be:\n- Undirected (friendship) or directed (follows, links, citations).\n- Unweighted or weighted (road length, interaction count, similarity).\n- Between nodes of one type, or between two types (users and items), in which case the graph is bipartite.\n\nThe degree of a node is the number (or total weight) of its edges. In a directed graph, in-degree and out-degree differ. Real graphs usually have heavy-tailed degree distributions: most nodes have few edges and a few hubs have very many.\n\n## Storage\n- Adjacency matrix: $A_{ij} = 1$ (or the weight) if there is an edge from $i$ to $j$. Memory $O(|V|^2)$; fast to check one edge; convenient for algebra.\n- Adjacency list: for each node, the list of its neighbours. Memory $O(|V| + |E|)$; fast to iterate neighbours.\n- Edge list: a list of $(i, j)$ pairs, often with a weight. Graph learning libraries usually store edges this way, as two integer arrays.\n- Compressed sparse row (CSR): the adjacency list packed into arrays, giving sparse matrix products and fast neighbour access.\n\nFor an undirected graph, $A$ is symmetric. Self-loops put entries on the diagonal.\n\n%%layers The matrices built from a graph, used throughout this module.\nAdjacency A | which nodes connect, and with what weight\nDegree D | diagonal matrix of row sums of A\n*Laplacian L = D - A | differences across edges; lesson 16.02\nTransition P = D^-1 A | random-walk step probabilities; lesson 16.04\nNormalised adjacency | the propagation matrix in graph neural networks; lesson 16.06\n%%\n\n## What matrix products mean\nMultiplying a vector of node values $x$ by $A$ sums each node's neighbours' values: $(Ax)_i = \\sum_j A_{ij} x_j$. Dividing by degree, $D^{-1}Ax$, averages them. This \"aggregate over neighbours\" operation is the core of graph neural networks.\n\nPowers count walks. $(A^2)_{ij}$ is the number of length-2 walks from $i$ to $j$, which for $i \\neq j$ is the number of common neighbours. People-you-may-know systems rely on exactly this quantity (friends of friends), and item-item recommendation uses $R^\\top R$, where $R$ is the user-item matrix, to count users who interacted with both items.\n\n! Example: common neighbours as a matrix product\n! Users A, B and C are friends with D and E; user F is friends only with E. The common-neighbour counts are entries of $A^2$: A and B share two neighbours (D and E), A and F share one (E). A friend recommender that suggests pairs with many common neighbours would rank B above F for A. At scale, the same counts are computed with sparse operations over each user's two-hop neighbourhood rather than by forming $A^2$.\n\n## Bipartite graphs and interaction matrices\nA user-item interaction matrix $R$ (users by items) is the biadjacency matrix of a bipartite graph. The full adjacency matrix is $\\begin{pmatrix} 0 & R \\\\ R^\\top & 0 \\end{pmatrix}$. Thinking of recommendation as a graph problem suggests graph methods: random walks from a user through items to other items (lesson 16.04), or graph neural networks over the bipartite graph (lesson 16.06).\n\n## Practical notes\n- Store graphs sparsely; a dense matrix is only reasonable up to tens of thousands of nodes.\n- Keep a mapping between external IDs and contiguous integer indices; most libraries need the latter.\n- Decide early whether edges are directed, and whether to add reverse edges; many algorithms assume symmetry.\n- Hubs dominate neighbour aggregation and sampling costs; cap or sample neighbours of very high-degree nodes.\n\n## Degree distributions in practice\nAverage degree hides a lot. In a social graph with average degree 400, the median user may have 150 friends while a few accounts have millions of followers. Algorithms whose cost grows with the square of a node's degree (counting common neighbours, for example) are dominated by those hubs. Check the maximum and high percentiles of degree before choosing an algorithm, and treat extreme hubs separately.\n\n> Takeaway: store real graphs as sparse lists or matrices, and use the adjacency, degree and related matrices as tools; matrix-vector products aggregate neighbours and matrix powers count walks.",
+   "q": "A social graph has 10 million users and 2 billion friendship pairs (undirected). (a) How much memory would a dense adjacency matrix take at one bit per entry, and how much does an edge list take with 4-byte node IDs storing each undirected edge once? (b) What is the average degree? (c) How would you count the triangles in a small graph using its adjacency matrix, and why is that impractical here?",
+   "s": "(a) A dense matrix has $10^{14}$ entries; at one bit each that is $1.25\\times10^{13}$ bytes, about 12.5 TB. An edge list with two 4-byte IDs per edge takes $2\\times10^9 \\times 8 = 16$ GB. (b) Each edge adds 1 to two degrees, so the average degree is $2|E|/|V| = 4\\times10^9/10^7 = 400$. (c) The number of triangles is $\\mathrm{tr}(A^3)/6$: $(A^3)_{ii}$ counts closed walks of length 3 from $i$, and each triangle is counted 6 times (3 starting nodes, 2 directions). Forming $A^3$ densely here is infeasible; instead, for each edge, intersect the sorted neighbour lists of its endpoints, which uses only the sparse structure.",
+   "r": [
+    [
+     "Wikipedia, Adjacency matrix",
+     "https://en.wikipedia.org/wiki/Adjacency_matrix",
+     "Definitions and the walk-counting property."
+    ],
+    [
+     "Wikipedia, Sparse matrix",
+     "https://en.wikipedia.org/wiki/Sparse_matrix",
+     "Storage formats such as COO and CSR."
+    ],
+    [
+     "Hamilton, Graph Representation Learning (free book)",
+     "https://www.cs.mcgill.ca/~wlh/grl_book/",
+     "Chapter 2 covers graph statistics and matrix views."
+    ]
+   ],
+   "k": [
+    "adjacency matrix",
+    "adjacency list",
+    "degree",
+    "sparse formats"
+   ],
+   "x": [
+    "NumPy",
+    "SciPy"
+   ],
+   "p": [
+    "matrix-multiplication",
+    "matrix-trace",
+    "item-item-cf-scores",
+    "matrix-vector-multiplication"
+   ]
+  },
+  {
+   "id": "16.02",
+   "t": "The graph Laplacian and spectral ideas",
+   "n": [
+    "The Laplacian $L = D - A$ satisfies $x^\\top L x = \\sum_{(i,j)\\in E} w_{ij}(x_i - x_j)^2$, so it measures how much a signal on the nodes varies across edges.",
+    "$L$ is symmetric and positive semi-definite; its smallest eigenvalue is 0 with the constant eigenvector, and the number of zero eigenvalues equals the number of connected components.",
+    "The second-smallest eigenvalue measures how well connected the graph is, and its eigenvector (the Fiedler vector) suggests a good two-way split.",
+    "Laplacian eigenvectors act like frequencies on the graph: small eigenvalues give smooth patterns, large ones give rapidly varying patterns."
+   ],
+   "a": "## The Laplacian as a difference operator\nFor an undirected graph with weights $w_{ij}$, define $L = D - A$. For any vector $x$ that assigns a number to each node,\n$x^\\top L x = \\sum_{(i,j)\\in E} w_{ij}(x_i - x_j)^2$.\nEach edge contributes the squared difference between its endpoints. A small value means $x$ is smooth over the graph: connected nodes have similar values. This one identity explains most of the Laplacian's uses.\n\nConsequences:\n- $x^\\top L x \\ge 0$ for all $x$, so $L$ is positive semi-definite and its eigenvalues are non-negative.\n- The constant vector gives $x^\\top L x = 0$, so 0 is always an eigenvalue with eigenvector $\\mathbf{1}$.\n- If the graph has $c$ connected components, any vector constant on each component gives zero, so 0 has multiplicity $c$.\n\n## Eigenvalues as frequencies\nOrder the eigenvalues $0 = \\lambda_1 \\le \\lambda_2 \\le \\dots \\le \\lambda_n$ with orthonormal eigenvectors $u_1, \\dots, u_n$. By the Rayleigh quotient, $u_k$ minimises $x^\\top L x / x^\\top x$ among vectors orthogonal to the previous ones. Small eigenvalues therefore have smooth eigenvectors, and large eigenvalues have eigenvectors that flip sign across many edges. On a path or ring graph, the eigenvectors are exactly sines and cosines, which is why the Laplacian eigenbasis is called the graph Fourier basis.\n\nExpanding a node signal in this basis, $x = \\sum_k \\hat{x}_k u_k$, and shrinking the high-frequency coefficients smooths the signal over the graph. Graph neural networks perform a cheap version of this low-pass filtering (lesson 16.06).\n\n## Connectivity and the Fiedler vector\n$\\lambda_2$, the algebraic connectivity, is zero if and only if the graph is disconnected, and it is small when the graph has a bottleneck: two well-connected groups joined by few edges. Its eigenvector, the Fiedler vector, tends to take positive values on one group and negative values on the other. Splitting nodes by the sign of the Fiedler vector is a classic way to cut a graph in two, and it is the starting point of spectral clustering (lesson 16.03).\n\n%%flow From a graph to a two-way split.\nGraph -(build L = D - A)-> Laplacian -(smallest eigenvectors)-> *Fiedler vector -(sign of each entry)-> Two groups with few edges between them\n%%\n\n! Example: two communities and a bridge\n! Two groups of five nodes are each fully connected internally and joined by a single edge. The Laplacian's second eigenvalue is small (about 0.30), while the next one is 5, reflecting the bottleneck. The Fiedler vector takes values of about $-0.33$ on one group and $+0.33$ on the other, with the two bridge nodes closer to zero ($\\mp 0.23$). Splitting by sign recovers the two groups exactly. Adding a second bridging edge between two other nodes raises $\\lambda_2$ to about 0.63, as the graph becomes better connected.\n\n## Normalised Laplacians\nGraphs with very unequal degrees make $L$ dominated by hubs. Two normalised versions fix this:\n- Symmetric: $L_{\\text{sym}} = I - D^{-1/2} A D^{-1/2}$. Its eigenvalues lie in $[0, 2]$.\n- Random-walk: $L_{\\text{rw}} = I - D^{-1}A = I - P$, where $P$ is the random-walk transition matrix (lesson 16.04).\nThey have the same eigenvalues, and their eigenvectors are related by a rescaling with $D^{1/2}$. The largest eigenvalue of $L_{\\text{sym}}$ equals 2 exactly when a connected component is bipartite.\n\n## Computing eigenvectors\nFor large sparse graphs you never form a dense eigendecomposition. Iterative methods (Lanczos, LOBPCG) find a few of the smallest eigenvectors using only sparse matrix-vector products. Power iteration on a shifted matrix finds extreme eigenvectors simply, though slowly when eigenvalues are close.\n\n## Where the Laplacian appears in ML\n- Spectral clustering and graph partitioning (lesson 16.03).\n- Laplacian regularisation in semi-supervised learning: add $\\lambda\\, f^\\top L f$ to the loss so that predictions $f$ vary little across edges of a similarity graph, spreading labels to unlabelled neighbours.\n- Laplacian eigenmaps: use the smallest non-trivial eigenvectors as a low-dimensional embedding that keeps neighbours close.\n- Positional encodings for graph transformers, using the first few Laplacian eigenvectors.\n- Graph convolution, derived as a low-order polynomial filter of the Laplacian (lesson 16.06).\n\n> Takeaway: the Laplacian measures variation across edges; its zero eigenvalues count components, its second eigenvector reveals bottlenecks, and its eigenvectors form a frequency basis that underlies spectral clustering and graph convolutions.",
+   "q": "Consider the path graph on three nodes, 1 - 2 - 3, with unit weights. (a) Write $L$. (b) Its eigenvalues are 0, 1 and 3; find an eigenvector for each and describe it as a pattern on the path. (c) Evaluate $x^\\top L x$ for $x = (1, 0, -1)$ and explain the number.",
+   "s": "(a) Degrees are 1, 2, 1, so $L = \\begin{pmatrix} 1 & -1 & 0 \\\\ -1 & 2 & -1 \\\\ 0 & -1 & 1 \\end{pmatrix}$. (b) Eigenvalue 0: $(1,1,1)$, constant across the path. Eigenvalue 1: $(1, 0, -1)$; check $Lx = (1, 0, -1)$. It changes once, slowly, from one end to the other. Eigenvalue 3: $(1, -2, 1)$; check $Lx = (3, -6, 3)$. It alternates sign at every edge, the fastest pattern possible. (c) $x^\\top L x = (1-0)^2 + (0-(-1))^2 = 2$, the sum of squared differences across the two edges. Normalising by $x^\\top x = 2$ gives 1, the eigenvalue, as expected for an eigenvector.",
+   "r": [
+    [
+     "Wikipedia, Laplacian matrix",
+     "https://en.wikipedia.org/wiki/Laplacian_matrix",
+     "Definitions, normalised variants and properties."
+    ],
+    [
+     "von Luxburg, A Tutorial on Spectral Clustering (2007)",
+     "https://arxiv.org/abs/0711.0189",
+     "Sections 2 and 3 cover graph Laplacians and their properties."
+    ],
+    [
+     "Hamilton, Graph Representation Learning (free book)",
+     "https://www.cs.mcgill.ca/~wlh/grl_book/",
+     "Chapter 2 on spectral graph theory."
+    ]
+   ],
+   "k": [
+    "graph Laplacian",
+    "connected components",
+    "Fiedler vector",
+    "normalised Laplacian"
+   ],
+   "x": [
+    "NumPy",
+    "SciPy"
+   ],
+   "p": [
+    "eigendecomposition",
+    "rbf-kernel-matrix",
+    "matrix-rank",
+    "spectral-norm-by-power-iteration"
+   ]
+  },
+  {
+   "id": "16.03",
+   "t": "Spectral clustering",
+   "n": [
+    "Spectral clustering builds a similarity graph over data points, embeds each point using the smallest eigenvectors of a Laplacian, then runs k-means in that embedding.",
+    "It solves a relaxed version of a graph cut problem: separate the points into groups with little similarity between groups and enough points in each group.",
+    "It can find non-convex clusters, such as rings and interleaved moons, that k-means on raw features cannot.",
+    "The choices that matter most are the similarity graph (neighbours and kernel width) and the number of clusters, for which the eigengap is a useful guide."
+   ],
+   "a": "## Why another clustering method\nk-means finds compact, roughly spherical clusters. Many real groupings are not like that: communities in a network, objects in an image, manifold-shaped data. Spectral clustering instead asks for groups that are internally connected and weakly connected to each other, where \"connected\" is defined by a similarity graph. It turns the problem into linear algebra on the graph Laplacian from lesson 16.02.\n\n## The algorithm\n1. Build a similarity graph over the $n$ points.\n2. Form a Laplacian, usually the symmetric normalised one, $L_{\\text{sym}} = I - D^{-1/2} W D^{-1/2}$.\n3. Compute the $k$ eigenvectors with the smallest eigenvalues and stack them as columns of an $n \\times k$ matrix $U$.\n4. Normalise each row of $U$ to unit length (this step, from Ng, Jordan and Weiss, helps with unequal cluster sizes).\n5. Run k-means on the rows of $U$; point $i$ gets the cluster of row $i$.\n\n%%flow Spectral clustering pipeline.\nData points -(kNN graph with Gaussian weights)-> Similarity graph -(normalised Laplacian)-> L_sym -(k smallest eigenvectors)-> *Spectral embedding -(row-normalise, k-means)-> Cluster labels\n%%\n\n## Building the similarity graph\nThis is the step that decides the result.\n- $k$-nearest-neighbour graph: connect each point to its nearest neighbours, then symmetrise. Robust to varying density; a common default is $k$ around $\\log n$ to a few tens.\n- $\\varepsilon$-neighbourhood graph: connect points closer than $\\varepsilon$. Sensitive to density differences.\n- Gaussian weights: $w_{ij} = \\exp(-\\|x_i - x_j\\|^2/2\\sigma^2)$. If $\\sigma$ is too large, everything is similar and structure disappears; too small and the graph falls apart into many components. A common choice sets $\\sigma$ from the distance to the $k$-th neighbour, possibly per point.\n\nFeature scaling matters as it does for any distance-based method.\n\n## Why it works: cuts and relaxations\nSplitting a graph into groups $A_1, \\dots, A_k$ cuts the edges between groups. Minimising the cut weight alone tends to slice off single points, so normalised versions divide by group size or volume. The normalised cut objective\n$\\mathrm{Ncut}(A_1,\\dots,A_k) = \\sum_i \\frac{\\mathrm{cut}(A_i, \\bar{A}_i)}{\\mathrm{vol}(A_i)}$\npenalises small groups. Minimising it exactly is NP-hard. Writing it with indicator vectors and relaxing them to real values turns it into minimising a Rayleigh quotient of the normalised Laplacian, whose solution is its smallest eigenvectors. k-means on the embedding rounds the real-valued solution back to discrete groups.\n\nIf the graph has exactly $k$ disconnected components, the $k$ smallest eigenvalues are all zero and the eigenvectors are indicator vectors (after rotation), so the embedding puts each component at a single point. With weak connections between groups, the embedding is a small perturbation of that ideal, which is why the method is reliable when clusters are well separated in the graph.\n\n! Example: segmenting an image\n! Treating each pixel of a 100 by 100 image as a node, with edges between nearby pixels weighted by colour similarity, gives a sparse graph of 10,000 nodes. Spectral clustering with $k = 4$ separated a red mug, a white table, a blue wall and a dark shadow, where k-means on colour alone had merged the shadow with the mug's darker side. Spatial edges kept each region connected; colour weights kept the boundaries sharp.\n\n## Choosing the number of clusters\nThe eigengap heuristic: compute the first several eigenvalues and choose $k$ where the gap $\\lambda_{k+1} - \\lambda_k$ is largest relative to the earlier gaps. A clear gap indicates $k$ well-separated groups; no clear gap means the data has no obvious cluster structure at this scale.\n\n## Cost and scale\nA dense similarity matrix needs $O(n^2)$ memory, and a dense eigendecomposition $O(n^3)$ time, feasible up to perhaps tens of thousands of points. For larger data, use a sparse $k$NN graph and an iterative eigensolver for the few smallest eigenvectors, or approximate the similarity matrix with the Nystroem method or landmark points.\n\n## Limitations\n- Results depend heavily on graph construction; try several neighbourhood sizes and check stability.\n- Clusters of very different densities are hard for a single kernel width.\n- New points need the graph rebuilt or an out-of-sample approximation.\n\n> Takeaway: spectral clustering embeds points with the smallest eigenvectors of a normalised Laplacian built from a similarity graph, then runs k-means; it solves a relaxed normalised cut, finds non-convex clusters, and lives or dies by how the graph is built.",
+   "q": "You cluster 2,000 points shaped as two interleaved half-moons. k-means with $k = 2$ splits each moon in half. (a) Explain why. (b) Describe a spectral clustering pipeline that separates the moons, including how you build the graph. (c) The first eigenvalues of the normalised Laplacian are 0, 0.002, 0.31, 0.35, 0.40. How many clusters does the eigengap suggest?",
+   "s": "(a) k-means assigns each point to the nearest centroid, which produces convex regions separated by a straight boundary; no straight line separates two interleaved moons. (b) Build a symmetric $k$-nearest-neighbour graph (for example 10 neighbours) with Gaussian weights $w_{ij} = \\exp(-\\|x_i - x_j\\|^2 / 2\\sigma^2)$, where $\\sigma$ is around the typical neighbour distance. Points within one moon are linked in a chain; few edges cross between moons. Compute the two smallest eigenvectors of the symmetric normalised Laplacian, normalise each row of the resulting $2000 \\times 2$ matrix to unit length, and run k-means with $k = 2$ on the rows. (c) Two: the first two eigenvalues are near zero and there is a large jump from 0.002 to 0.31 before the rest, which are similar to each other.",
+   "r": [
+    [
+     "von Luxburg, A Tutorial on Spectral Clustering (2007)",
+     "https://arxiv.org/abs/0711.0189",
+     "The standard reference, including graph construction and the cut view."
+    ],
+    [
+     "Wikipedia, Spectral clustering",
+     "https://en.wikipedia.org/wiki/Spectral_clustering",
+     "Algorithm summary and variants."
+    ],
+    [
+     "Hamilton, Graph Representation Learning (free book)",
+     "https://www.cs.mcgill.ca/~wlh/grl_book/",
+     "Spectral methods as a foundation for graph embeddings."
+    ]
+   ],
+   "k": [
+    "spectral clustering",
+    "similarity graphs",
+    "normalised cut",
+    "eigengap"
+   ],
+   "x": [
+    "NumPy",
+    "scikit-learn"
+   ],
+   "p": [
+    "rbf-kernel-matrix",
+    "k-means-clustering",
+    "eigendecomposition",
+    "k-means-initialization"
+   ]
+  },
+  {
+   "id": "16.04",
+   "t": "Random walks, Markov chains and PageRank",
+   "n": [
+    "A random walk on a graph moves to a neighbour chosen in proportion to edge weight; its transition matrix is $P = D^{-1}A$ and its state distribution evolves as $\\pi_{t+1} = \\pi_t P$.",
+    "On a connected, non-bipartite undirected graph the walk converges to a stationary distribution proportional to node degree, at a rate set by the spectral gap.",
+    "PageRank is the stationary distribution of a walk that, with probability $1-\\alpha$, jumps to a random node; the jump makes it unique and lets power iteration converge at rate $\\alpha$.",
+    "Short random walks generate training data for node embeddings and power personalised recommendations."
+   ],
+   "a": "## Random walks on graphs\nStart at a node, move to a neighbour chosen with probability proportional to edge weight, and repeat. The transition matrix is $P = D^{-1}A$: row $i$ holds the probabilities of moving from $i$ to each node, and each row sums to 1. If $\\pi_t$ is a row vector giving the probability of being at each node at step $t$, then\n$\\pi_{t+1} = \\pi_t P$, so $\\pi_t = \\pi_0 P^t$.\n\nA random walk is a Markov chain: the next state depends only on the current one. Everything about long-run behaviour follows from the eigenvalues of $P$.\n\n## The stationary distribution\nA distribution $\\pi$ with $\\pi = \\pi P$ is stationary: once the walk reaches it, it stays. For a connected undirected graph,\n$\\pi_i = \\frac{d_i}{\\sum_j d_j} = \\frac{d_i}{2|E|}$\n(weighted degrees for weighted graphs). A walk spends time in proportion to how connected a node is.\n\nThe walk converges to $\\pi$ from any start if the graph is connected and not bipartite. On a bipartite graph the walk alternates between the two sides and never settles; adding a self-loop to each node (a \"lazy\" walk) fixes this. The speed of convergence depends on the second-largest eigenvalue modulus of $P$: the larger the spectral gap, the faster the walk mixes. $P$ is similar to $I - L_{\\text{sym}}$, so this gap is directly related to the Laplacian eigenvalues of lesson 16.02, and graphs with bottlenecks mix slowly.\n\n## PageRank\nOn the web, links are directed, some pages have no outgoing links, and parts of the graph trap the walk. PageRank fixes all three by teleportation: at each step, with probability $\\alpha$ follow a random outgoing link, otherwise jump to a page chosen uniformly (or from a chosen distribution). Pages with no outgoing links jump uniformly. The PageRank vector satisfies\n$r = \\frac{1-\\alpha}{n}\\mathbf{1}^\\top + \\alpha\\, r P$,\nwith $\\alpha = 0.85$ the classic choice. The teleport term guarantees a unique solution.\n\n## Computing it: power iteration\nStart from the uniform vector and repeat $r \\leftarrow \\frac{1-\\alpha}{n}\\mathbf{1}^\\top + \\alpha\\, r P$. The error shrinks by a factor of at least $\\alpha$ each step, so 50 iterations reduce it by a factor of about $0.85^{50} \\approx 3\\times10^{-4}$. Each iteration is one sparse matrix-vector product, which scales to billions of edges on a cluster.\n\n%%flow Power iteration for PageRank.\nUniform start r0 -(r P: follow links, weight alpha)-> Propagated rank -(+ teleport mass)-> *Updated r -(repeat until change is tiny)-> PageRank scores\n%%\n\n! Example: personalised PageRank for recommendations\n! Replace the uniform teleport with a jump back to one user's node on a user-item graph. The stationary distribution then concentrates on items near that user in the graph: items liked by users who liked the same things. A recommender that ran short walks with restarts from each user, counted visits to items, and filtered already-seen items produced candidates comparable to a matrix factorisation model, and it updated instantly as new interactions arrived because no retraining was needed.\n\n## Random walks for embeddings\nTreat short random walks as sentences of node IDs and train skip-gram embeddings on them (DeepWalk). Nodes that co-occur on walks get similar vectors, so the embedding reflects graph proximity. node2vec biases the walk with two parameters that trade off breadth-first exploration (capturing structural roles) against depth-first exploration (capturing communities). The resulting embeddings feed classifiers or link predictors, or serve as candidate generators.\n\n## Hitting times and diffusion\nOther walk quantities are useful too. The hitting time from $i$ to $j$ (expected steps to reach $j$) and the commute time (there and back) act as graph distances that account for all paths, not just the shortest. Diffusion, $\\pi_0 e^{-tL}$ in continuous time, spreads mass smoothly and is used for label propagation and graph-based semi-supervised learning.\n\n## Practical notes\n- Normalise directed graphs carefully; nodes without out-links need a rule.\n- Hubs attract walks; for recommendations, downweight popular items or normalise visit counts by degree.\n- Monte Carlo walks approximate personalised PageRank cheaply when only the top results are needed.\n\n> Takeaway: a random walk's transition matrix $P = D^{-1}A$ drives a distribution toward a stationary one (degree-proportional on undirected graphs); PageRank adds teleportation for a unique, fast-converging answer, and short walks underpin node embeddings and graph recommenders.",
+   "q": "Three web pages link as follows: A links to B and C, B links to C, C links to A. (a) Write the transition matrix $P$. (b) Find the stationary distribution without damping. (c) With damping $\\alpha = 0.85$, PageRank satisfies $r = \\frac{1-\\alpha}{3}\\mathbf{1}^\\top + \\alpha\\, r P$. The solution is about $(0.388, 0.215, 0.397)$. Explain why C ranks highest and how damping changed the ranking compared with (b).",
+   "s": "(a) Rows are sources: $P = \\begin{pmatrix} 0 & 0.5 & 0.5 \\\\ 0 & 0 & 1 \\\\ 1 & 0 & 0 \\end{pmatrix}$. (b) Solve $\\pi = \\pi P$: $\\pi_A = \\pi_C$, $\\pi_B = 0.5\\pi_A$, $\\pi_C = 0.5\\pi_A + \\pi_B = \\pi_A$. Normalising, $\\pi = (0.4, 0.2, 0.4)$. (c) C receives links from both A and B, so it collects more of the walk's probability. Without damping, A and C tie because all of C's rank flows to A. Damping sends 15% of each step to a random page, so A no longer receives all of C's rank undiluted, and C edges ahead of A while B rises slightly from the uniform jumps.",
+   "r": [
+    [
+     "Wikipedia, PageRank",
+     "https://en.wikipedia.org/wiki/PageRank",
+     "Definition, damping and computation."
+    ],
+    [
+     "Wikipedia, Markov chain",
+     "https://en.wikipedia.org/wiki/Markov_chain",
+     "Stationary distributions and convergence."
+    ],
+    [
+     "Grover and Leskovec, node2vec: Scalable Feature Learning for Networks (2016)",
+     "https://arxiv.org/abs/1607.00653",
+     "Biased random walks to learn node embeddings."
+    ],
+    [
+     "Wikipedia, Random walk",
+     "https://en.wikipedia.org/wiki/Random_walk",
+     "Background on random walks in general."
+    ]
+   ],
+   "k": [
+    "random walks",
+    "stationary distribution",
+    "PageRank",
+    "power iteration"
+   ],
+   "x": [
+    "NumPy",
+    "SciPy"
+   ],
+   "p": [
+    "matrix-vector-multiplication",
+    "spectral-norm-by-power-iteration",
+    "word2vec-training-pairs",
+    "eigendecomposition"
+   ]
+  },
+  {
+   "id": "16.05",
+   "t": "Computational graphs and backpropagation",
+   "n": [
+    "A computation is a directed acyclic graph: nodes are operations or values, edges carry intermediate results; the forward pass visits nodes in topological order.",
+    "Reverse-mode differentiation visits nodes in reverse topological order, multiplying local derivatives and summing contributions where a value feeds several consumers.",
+    "For a scalar loss of many parameters, reverse mode costs a small constant multiple of the forward pass, which is why backpropagation scales to billions of parameters.",
+    "Memory, not compute, is the usual limit: the backward pass needs forward activations, and checkpointing trades recomputation for memory."
+   ],
+   "a": "## Where this lesson sits\nML Maths 09.19 introduced the chain rule on computation graphs and 09.38 worked through backpropagation for a linear layer. This lesson takes the graph view: what properties of the graph make backpropagation correct and efficient, and how they connect to the rest of this module.\n\n## Computations as directed acyclic graphs\nAny program that computes a loss from inputs and parameters, without loops that depend on values, can be written as a directed acyclic graph (DAG). Leaves are inputs and parameters; internal nodes are operations; edges carry values. Because there are no cycles, the nodes have a topological order in which every node comes after all its inputs. The forward pass evaluates nodes in that order. (Loops and recursion are unrolled into a larger DAG for the specific input, which is what dynamic frameworks record.)\n\nTopological sorting takes linear time: repeatedly emit a node with no unprocessed inputs (Kahn's algorithm), or run a depth-first search and reverse the finishing order.\n\n## The backward pass\nWrite $\\bar{v} = \\partial f/\\partial v$ for the gradient of the final scalar $f$ with respect to node $v$ (the \"adjoint\"). Start with $\\bar{f} = 1$ and visit nodes in reverse topological order. Each node $u$ that consumes $v$ contributes $\\bar{u}\\,\\partial u/\\partial v$, and contributions add:\n$\\bar{v} = \\sum_{u \\in \\text{consumers}(v)} \\bar{u}\\,\\frac{\\partial u}{\\partial v}$.\nReverse topological order guarantees that every consumer's adjoint is final before it is used.\n\n%%flow Forward and backward passes on a DAG.\nInputs and parameters -(topological order)-> Operations -(store activations)-> *Scalar loss -(reverse topological order: multiply local derivatives, sum over consumers)-> Gradients for every parameter\n%%\n\n## Why reverse mode\nFor $f: \\mathbb{R}^n \\to \\mathbb{R}$, forward-mode differentiation propagates one directional derivative per pass, so all $n$ partial derivatives need $n$ passes. Reverse mode propagates the adjoint of the single output backward and yields all $n$ partial derivatives in one pass, at a cost of a small constant (typically 2 to 3) times the forward pass. In matrix language, reverse mode computes vector-Jacobian products, forward mode computes Jacobian-vector products. Training has one scalar loss and many parameters, so reverse mode wins by a factor of $n$.\n\n! Example: the gradient that was half its true size\n! A hand-written autodiff engine passed unit tests on chains of operations but gave wrong gradients for a model with weight tying, where one embedding matrix was used both for input lookups and for output logits. The engine assigned gradients with \"=\" instead of \"+=\", so whichever use was processed last overwrote the other. Gradient checks with finite differences flagged the tied matrix immediately; switching to accumulation fixed it.\n\n## Memory\nThe backward pass needs values from the forward pass (for example, the input to a multiplication to compute its derivative). Storing all activations costs memory proportional to the depth times the batch size times the width, often more than the parameters themselves. Gradient checkpointing stores only some activations and recomputes the rest during the backward pass; storing every $\\sqrt{n}$-th layer of an $n$-layer network gives $O(\\sqrt{n})$ memory for about one extra forward pass.\n\n## Graph structure and efficiency\n- Shared subexpressions: a value used by several consumers is computed once and its adjoint summed, which is where reverse mode saves work compared with differentiating each path separately.\n- Fan-in and fan-out determine where gradients accumulate and where parallelism is possible.\n- Compilers fuse chains of element-wise nodes into one kernel, reducing memory traffic; the DAG makes these rewrites safe.\n- Higher-order derivatives differentiate the backward graph itself; Hessian-vector products cost a few passes, not $n$.\n\n## Links to the rest of the module\nThe computation graph is a different kind of graph from the data graphs elsewhere in this module: its nodes are operations, not entities. But the same ideas recur. Message passing in graph neural networks (lesson 16.06) is a forward pass over a data graph, and its backward pass runs over the computation graph built from it, with gradient flowing back along every edge used for a message.\n\n> Takeaway: backpropagation is reverse-topological traversal of a computation DAG, multiplying local derivatives and summing over consumers; one backward pass gives every parameter's gradient for a small constant cost, and memory for activations is the main limit.",
+   "q": "Let $a = x \\cdot y$, $b = a + x$, and $f = b^2$, with $x = 2$ and $y = 3$. (a) Draw the computation graph and give a topological order. (b) Run the backward pass to find $\\partial f/\\partial x$ and $\\partial f/\\partial y$. (c) Which node needs its gradient contributions summed, and what goes wrong if you overwrite instead of adding?",
+   "s": "(a) Nodes $x$ and $y$ feed $a$; $a$ and $x$ feed $b$; $b$ feeds $f$. One topological order is $x, y, a, b, f$. Forward: $a = 6$, $b = 8$, $f = 64$. (b) $\\bar{f} = 1$; $\\bar{b} = 2b = 16$; $\\bar{a} = \\bar{b} \\cdot 1 = 16$; $\\bar{y} = \\bar{a}\\cdot x = 32$; $\\bar{x} = \\bar{a}\\cdot y + \\bar{b}\\cdot 1 = 48 + 16 = 64$. Check: $f = (xy + x)^2$, so $\\partial f/\\partial x = 2(xy + x)(y + 1) = 2 \\cdot 8 \\cdot 4 = 64$ and $\\partial f/\\partial y = 2(xy + x)\\,x = 32$. (c) $x$ feeds both $a$ and $b$, so its gradient is the sum of two paths. Overwriting would keep only one path and give 48 or 16 instead of 64.",
+   "r": [
+    [
+     "Wikipedia, Automatic differentiation",
+     "https://en.wikipedia.org/wiki/Automatic_differentiation",
+     "Forward and reverse modes and their costs."
+    ],
+    [
+     "Wikipedia, Topological sorting",
+     "https://en.wikipedia.org/wiki/Topological_sorting",
+     "Ordering nodes of a directed acyclic graph."
+    ],
+    [
+     "Chen et al., Training Deep Nets with Sublinear Memory Cost (2016)",
+     "https://arxiv.org/abs/1604.06174",
+     "Gradient checkpointing."
+    ]
+   ],
+   "k": [
+    "computational graph",
+    "topological order",
+    "reverse-mode autodiff",
+    "gradient accumulation"
+   ],
+   "x": [
+    "Python",
+    "PyTorch"
+   ],
+   "p": [
+    "topologically-sort-computation-dag",
+    "build-scalar-expression-graph",
+    "run-reverse-mode-autodiff",
+    "accumulate-shared-path-gradients"
+   ]
+  },
+  {
+   "id": "16.06",
+   "t": "Message passing and graph neural networks",
+   "n": [
+    "A message-passing layer updates each node from its own state and an aggregate of messages from its neighbours: $h_v' = \\phi\\big(h_v, \\bigoplus_{u\\in N(v)} \\psi(h_u, h_v, e_{uv})\\big)$.",
+    "The graph convolutional network uses the normalised adjacency $\\hat{A} = \\tilde{D}^{-1/2}(A + I)\\tilde{D}^{-1/2}$, a low-pass filter over the graph: $H' = \\sigma(\\hat{A} H W)$.",
+    "Stacking $L$ layers gives each node information from its $L$-hop neighbourhood; too many layers over-smooth, making all node states similar.",
+    "Sum aggregation is more expressive than mean or max, and message-passing networks cannot distinguish graphs that the Weisfeiler-Lehman test cannot."
+   ],
+   "a": "## The message-passing idea\nLesson 16.01 noted that $Ax$ sums neighbours' values. A graph neural network (GNN) learns what to send and how to combine it. In each layer, every node:\n1. Computes a message from each neighbour, $m_{uv} = \\psi(h_u, h_v, e_{uv})$, possibly using edge features.\n2. Aggregates messages with a permutation-invariant function $\\bigoplus$ (sum, mean, max or attention-weighted sum).\n3. Updates its state, $h_v' = \\phi(h_v, \\text{aggregate})$, with a small neural network.\n\nThe same functions are shared across all nodes, so the model works on graphs of any size and shape, and it does not depend on how nodes are numbered.\n\n%%flow One message-passing layer for node v.\nNeighbour states h_u -(message function)-> Messages -(sum, mean, max or attention)-> *Aggregate -(update with h_v)-> New state h_v'\n%%\n\n## Graph convolutional networks\nThe GCN layer is the simplest widely used instance:\n$H' = \\sigma(\\hat{A} H W)$, with $\\hat{A} = \\tilde{D}^{-1/2}(A + I)\\tilde{D}^{-1/2}$,\nwhere $\\tilde{D}$ is the degree matrix of $A + I$. Adding self-loops keeps each node's own features; the symmetric normalisation stops high-degree nodes from producing huge sums.\n\nThe spectral connection: $\\hat{A} = I - \\tilde{L}_{\\text{sym}}$, where $\\tilde{L}_{\\text{sym}}$ is the normalised Laplacian of the graph with self-loops. In the Laplacian eigenbasis (lesson 16.02), multiplying by $\\hat{A}$ scales each frequency component by $1 - \\lambda$, which keeps smooth components and damps rapidly varying ones. A GCN layer is a fixed low-pass filter followed by a learned linear map and a non-linearity. This is why GCNs work well when neighbours tend to share labels (homophily) and poorly when they do not.\n\n## Depth, receptive field and over-smoothing\nAfter $L$ layers, node $v$'s state depends on its $L$-hop neighbourhood. More layers see further but also average more. Repeated multiplication by $\\hat{A}$ behaves like a random walk run for many steps (lesson 16.04): states converge toward a degree-weighted average over each connected component, so nodes become indistinguishable. Most GNNs therefore use 2 to 4 layers, with residual connections, normalisation, or jumping-knowledge schemes that combine outputs from several depths.\n\n! Example: deeper was worse\n! A team classifying papers in a citation graph found accuracy of about 81% with 2 GCN layers, falling to about 70% at 8 layers and lower beyond. The cosine similarity between embeddings of randomly chosen nodes rose from 0.3 to 0.95 as depth increased. Adding residual connections and using 3 layers with a wider hidden size recovered and slightly exceeded the 2-layer result.\n\n## Aggregators and expressiveness\n- Mean aggregation forgets how many neighbours a node has; max keeps only the strongest signal; sum keeps both counts and contents.\n- Xu and colleagues showed that message-passing GNNs are at most as powerful as the 1-dimensional Weisfeiler-Lehman graph isomorphism test, and that sum aggregation with an injective update (as in GIN) reaches that bound. Some simple structures, such as distinguishing two triangles from one hexagon when all nodes look alike, are beyond any such network without extra features.\n- Attention (GAT) learns a weight per neighbour, so a node can focus on relevant neighbours. A transformer is a GNN on a complete graph with attention aggregation, with positional encodings to recover structure.\n\n## Tasks and readouts\n- Node classification: a head on each final node state.\n- Link prediction: score a pair from its two node states, for example with a dot product, trained with sampled negative pairs.\n- Graph classification (molecules, programs): pool all node states with sum, mean or attention into one vector (a readout), then classify.\n\n## Scaling to large graphs\nFull-batch training needs the whole graph in memory. Mini-batch training must include each target node's multi-hop neighbourhood, which grows roughly as degree to the power of depth. Remedies: sample a fixed number of neighbours per hop (GraphSAGE), partition the graph into clusters and train on subgraphs, or precompute $\\hat{A}^k X$ once and train a simple model on the result.\n\n## Common mistakes\n- Leaking labels through the graph: in link prediction, the edges being predicted must be removed from the message-passing graph during training, or the model simply looks them up.\n- Ignoring direction: citations and follows are directed; symmetrising them may help or hurt, so test both.\n- Assuming homophily: on graphs where neighbours tend to differ (fraud rings linking to normal accounts, for example), plain GCN smoothing can hurt; keep a node's own features separate from the aggregate.\n\n> Takeaway: GNNs pass learned messages along edges and aggregate them with permutation-invariant functions; a GCN layer is low-pass filtering with the normalised adjacency, depth widens the receptive field but over-smooths, and sampling keeps large graphs tractable.",
+   "q": "A GCN for node classification has 2 layers, each $H' = \\mathrm{ReLU}(\\hat{A} H W)$. (a) Which nodes can influence the prediction for node $v$? (b) You increase the depth to 16 layers and accuracy drops sharply, with node embeddings becoming nearly identical. Explain using the random-walk view of $\\hat{A}$. (c) Your graph has 50 million nodes with average degree 100. Why does full-neighbourhood mini-batch training of a 3-layer GCN become expensive, and what is the standard fix?",
+   "s": "(a) Nodes within 2 hops of $v$: each layer mixes in direct neighbours, so two layers reach neighbours of neighbours. (b) $\\hat{A}$ is a normalised averaging operator, closely related to a random-walk transition matrix with self-loops. Applying it 16 times is like running a walk for 16 steps, which approaches the stationary distribution: each node's representation becomes a degree-weighted average over its whole component, and differences between nodes vanish. This is over-smoothing. Fixes include fewer layers, residual or skip connections, and normalisation designed to keep node states apart. (c) The receptive field grows as roughly degree to the power of depth: a 3-hop neighbourhood can reach $100^3 = 10^6$ nodes per target node. Neighbour sampling (GraphSAGE-style, for example 10 to 25 sampled neighbours per hop), or clustering the graph into subgraphs, keeps each mini-batch bounded.",
+   "r": [
+    [
+     "Kipf and Welling, Semi-Supervised Classification with Graph Convolutional Networks (2016)",
+     "https://arxiv.org/abs/1609.02907",
+     "The GCN layer and its spectral motivation."
+    ],
+    [
+     "Gilmer et al., Neural Message Passing for Quantum Chemistry (2017)",
+     "https://arxiv.org/abs/1704.01212",
+     "The general message-passing framework."
+    ],
+    [
+     "Xu et al., How Powerful are Graph Neural Networks? (2018)",
+     "https://arxiv.org/abs/1810.00826",
+     "Expressiveness and the link to the Weisfeiler-Lehman test."
+    ],
+    [
+     "Li, Han and Wu, Deeper Insights into Graph Convolutional Networks for Semi-Supervised Learning (2018)",
+     "https://arxiv.org/abs/1801.07606",
+     "GCN as Laplacian smoothing, and over-smoothing."
+    ]
+   ],
+   "k": [
+    "graph neural networks",
+    "message passing",
+    "graph convolution",
+    "over-smoothing"
+   ],
+   "x": [
+    "PyTorch"
+   ],
+   "p": [
+    "scaled-dot-product-attention",
+    "masked-mean-pooling",
+    "residual-block",
+    "layer-normalization"
+   ]
+  }
+ ]
+}

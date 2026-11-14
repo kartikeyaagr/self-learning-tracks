@@ -1,0 +1,12 @@
+{"id": "world-model-from-scratch", "kind": "project", "group": "Reinforcement Learning",
+ "title": "Plan with a Learned World Model",
+ "blurb": "Learn how the world responds to actions and plan inside that model: training pairs, compounding rollout error, random shooting, the cross-entropy method and cautious ensembles.",
+ "intro": "Model-based reinforcement learning fits a model of the environment and plans with it instead of learning purely by trial and error. The steps turn episodes into training pairs without leaking across episodes, measure how errors compound when a model is rolled forward on its own predictions, plan by random shooting, refine plans with the cross-entropy method, and penalise plans that an ensemble of models disagrees about. The capstone fits a dynamics model by least squares and uses it inside a model-predictive controller on the true system.",
+ "steps": [
+  {"name": "Turn episodes into training pairs", "problem": "episodes-to-transition-pairs"},
+  {"name": "Measure how rollout errors compound", "problem": "rollout-error-compounding"},
+  {"name": "Plan by random shooting", "problem": "random-shooting-planner"},
+  {"name": "One round of the cross-entropy method", "problem": "cem-planning-round"},
+  {"name": "Plan cautiously with an ensemble", "problem": "ensemble-pessimistic-planning"}
+ ],
+ "capstone": "world-model-mpc-capstone"}

@@ -1,0 +1,219 @@
+{
+ "n": "08",
+ "name": "Interview preparation",
+ "lessons": [
+  {
+   "id": "08.01",
+   "t": "Approaching the interview",
+   "n": [
+    "An ML system design interview tests judgement: can you turn a vague product problem into a working, measurable, maintainable ML system and explain the trade-offs?",
+    "Interviewers look for structure, clarifying questions, sensible defaults, numbers, awareness of data and labels, evaluation and monitoring, and depth where it matters.",
+    "Drive the conversation: propose a plan, check it with the interviewer, and adjust when they steer. Silence and long monologues both hurt.",
+    "Prepare by practising whole designs out loud against a timer, and by knowing a few standard architectures well enough to adapt them."
+   ],
+   "a": "## What the interview is testing\nAn ML system design interview gives you a product problem and about 45 minutes. There is no single right answer. The interviewer wants to see how you think: whether you clarify the goal, choose a sensible framing, reason about data and labels, pick models for good reasons, plan evaluation and serving, and anticipate what goes wrong in production. A candidate who designs a simple, well-measured system and explains trade-offs scores better than one who names many advanced models without connecting them.\n\n## What interviewers usually assess\n| Area | Strong signal\n| Problem understanding | asks about users, decisions, scale, latency, error costs\n| Framing | turns the goal into a clear ML task with a label and a metric\n| Data and labels | knows where labels come from, their delays and biases\n| Features | proposes concrete features, aware of freshness and leakage\n| Modelling | starts with a baseline, justifies the model and loss\n| Evaluation | offline metrics tied to online ones, A/B testing, slices\n| Serving | batch or online, latency budget, multi-stage if needed\n| Operations | monitoring, retraining, fallbacks, feedback loops\n| Communication | structured, concise, checks in with the interviewer\n\n## Before the interview\n- **Practise out loud**, with a timer, on a whiteboard or document. Designing in your head is not the same as explaining under time pressure.\n- **Know a few reference architectures** well: a two-tower retrieval plus ranking pipeline, a real-time risk scorer, a forecasting pipeline, a RAG system. Most questions are variations on these. The case studies in modules 09 to 11 cover them.\n- **Memorise a handful of numbers**: seconds in a day (86,400), typical latency budgets, memory per embedding, rough model inference costs (01.06).\n- **Prepare questions** you always ask at the start (01.04).\n\n%%flow How to spend preparation time. Breadth first, then depth on the common patterns.\nLearn the framework -(practise 10+ prompts out loud)-> Reference architectures -(go deep)-> *Ranking, risk, forecasting, RAG -(mock interviews)-> Feedback and gaps\n%%\n\n## During the interview\n- **Restate the problem** in one sentence and confirm it.\n- **Ask clarifying questions** for two to five minutes, then state assumptions with numbers.\n- **Outline the plan** on the board and say which areas you will cover.\n- **Go breadth first**, sketching the whole system, then go deep where the interviewer shows interest or where the problem is hardest.\n- **Think aloud** about trade-offs, and say which option you choose and why.\n- **Check in** every few minutes: \"Shall I go deeper on features or move to serving?\"\n- **Manage time**: leave five minutes for monitoring and iteration, which candidates often skip.\n\n! Example: two candidates, one prompt\n! Asked to design a restaurant recommender, one candidate immediately proposed a graph neural network with attention over user histories and spent 25 minutes on its architecture. Another asked about surfaces and scale, proposed popularity and location-based candidates as a baseline, then a two-tower retrieval and a gradient-boosted ranker with concrete features, explained the metrics and an A/B test, and finished with cold start, monitoring and a feedback-loop caveat. The second candidate got the offer; the first never discussed data, labels or evaluation.\n\n## When you are stuck\nSay what you know and propose a simple approach: \"I'm not sure of the best architecture for this; a reasonable baseline would be X, and I'd measure Y to decide whether to invest more.\" Interviewers value calibrated honesty over confident guessing.\n\n## After a practice session\nReview what you skipped. The most common gaps are labels, evaluation, and monitoring. Keep a checklist and add to it after each mock.\n\n## A note on time\n\nMost candidates run out of time rather than ideas. Glance at the clock at three points: after clarifying (about 8 minutes in), after the high-level design (about 20 minutes in), and when 10 minutes remain. If you are behind at the second check, say so and propose where to go deep, rather than trying to cover every component at the same level. Interviewers would rather see two parts done well and the rest named than eight parts sketched. Keep the last five minutes for monitoring, risks and questions, because those are where strong candidates separate themselves and where rushed candidates say nothing.\n\n> Takeaway: ML system design interviews test structured judgement; practise whole designs out loud, know a few reference architectures, clarify and state numeric assumptions, go breadth first, check in often, and leave time for evaluation, monitoring and trade-offs.",
+   "q": "You have 45 minutes and are asked to \"design a system that detects fake reviews on a shopping site\". Write the outline you would put on the whiteboard in the first three minutes, before any detail.",
+   "s": "A short outline: (1) Clarify: where reviews appear, volume (for example 500,000 new reviews a day), what action we take (remove, down-rank, send to review), latency (at submission or within hours), what labels exist (moderator decisions, user reports), cost of false removals versus missed fakes. (2) Framing: binary classifier for fake probability per review, plus account-level and network-level signals; thresholds for auto-remove and review queue. (3) Data and labels: moderator decisions, reports, known fraud rings; delayed and biased labels. (4) Features: text, reviewer history, purchase verification, timing bursts, graph links between accounts and products. (5) Model: baseline rules, then gradient-boosted trees plus a text encoder; graph features for rings. (6) Serving: score at submission and rescore in batch as graph signals accumulate. (7) Evaluation: precision at the auto-remove threshold, recall, reviewer load. (8) Monitoring and adversaries: drift, new attack patterns, appeals. Then ask the interviewer which area they want to go deeper on.",
+   "r": [
+    [
+     "Chip Huyen, Machine Learning Systems Design (free notes)",
+     "https://huyenchip.com/machine-learning-systems-design/toc.html",
+     "Interview-oriented notes and exercises."
+    ],
+    [
+     "Google, Rules of Machine Learning",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "A compact source of defensible defaults."
+    ],
+    [
+     "Chip Huyen, Designing Machine Learning Systems (book page)",
+     "https://huyenchip.com/books/",
+     "The lifecycle these interviews probe."
+    ]
+   ],
+   "k": [
+    "interviews",
+    "communication"
+   ],
+   "x": [],
+   "p": [
+    "training-serving-skew",
+    "p50-p95-and-p99-inference-latency",
+    "b-test-significance"
+   ]
+  },
+  {
+   "id": "08.02",
+   "t": "A framework for the 45 minutes",
+   "n": [
+    "A repeatable structure: clarify (5 min), frame the ML task and metrics (5), data and labels (5), features (5), models (8), evaluation (5), serving (7), monitoring and iteration (5).",
+    "Spend time in proportion to what is hard about the specific problem: labels for fraud, serving for feeds, evaluation for generative systems.",
+    "At each step, state a choice, a reason and the main alternative. That pattern makes trade-offs visible without long digressions.",
+    "End with risks and next steps; it shows you see the system as something that will run and change."
+   ],
+   "a": "## Why a framework helps\nUnder time pressure it is easy to spend 30 minutes on the model and never reach serving or monitoring. A fixed structure keeps you moving, makes sure you cover what interviewers look for, and gives the interviewer an obvious place to steer you. Adapt the timing to the problem, but keep the order.\n\n## The eight steps\n| Step | Minutes | Key outputs\n| 1. Clarify requirements | 5 | decision, users, scale, latency, error costs, constraints\n| 2. Frame the ML task | 5 | input, output, label, offline and online metrics, guardrails\n| 3. Data and labels | 5 | sources, logging, label definition and delay, sampling, splits\n| 4. Features | 5 | entity × freshness grid, key aggregates, leakage checks\n| 5. Models | 8 | baseline, main model and loss, cascade if needed\n| 6. Evaluation | 5 | offline metrics with slices, A/B test design, rollout\n| 7. Serving | 7 | batch or online, pipeline stages, latency budget, fallbacks\n| 8. Monitoring and iteration | 5 | drift, quality, retraining, feedback loops, risks\n\n%%flow The 45-minute arc. The arrows are where you check in with the interviewer.\nClarify -(confirm)-> Frame -(confirm)-> Data + labels -> Features -> Models -(check depth)-> Evaluation -> Serving -(check time)-> *Monitoring + risks\n%%\n\n## Step by step\n**Clarify.** Ask the questions from 01.04 and write the answers as numbers. \"10M users, 5% targeted weekly, batch is fine.\"\n\n**Frame.** One sentence: \"Binary classifier predicting X within Y days of a prediction date; optimise log loss; choose a threshold by capacity.\" Name the business metric and one or two guardrails.\n\n**Data and labels.** Where examples come from, how labels are defined and when they arrive, how negatives are sampled, how you split by time.\n\n**Features.** Group them, give three to five concrete strong features, and point out one leakage risk.\n\n**Models.** Baseline first, then the main model with a reason, then what you would try if it is not enough. Mention the loss and calibration if probabilities matter.\n\n**Evaluation.** Offline metric at the operating point, slices, and how you would run the online test.\n\n**Serving.** Batch, online or hybrid; stages and their sizes; latency budget split; fallbacks.\n\n**Monitoring and iteration.** What you watch, what triggers retraining, which feedback loops exist, and the top risks.\n\n## The choice-reason-alternative pattern\nAt each step, say three things: what you choose, why, and what you would consider instead. \"I'd start with gradient-boosted trees, because the features are tabular and we need fast iteration; if we add user histories as sequences, a neural model with a sequence encoder would be the next step.\" This shows judgement in one breath.\n\n! Example: adapting the time split\n! For a fraud prompt, a strong candidate spent ten minutes on labels and adversaries (delayed chargebacks, blocked transactions with no outcome, adaptive attackers) and only three on the model. For a feed-ranking prompt, the same candidate spent ten minutes on the serving pipeline and retrieval. The framework stayed the same; the emphasis followed the hard part of each problem.\n\n## Going deep\nInterviewers usually pick one or two areas to probe. Typical deep dives:\n- the loss and training data for a ranking model;\n- how to handle delayed or biased labels;\n- latency and cost of a multi-stage pipeline;\n- evaluating a generative system;\n- dealing with cold start or feedback loops.\n\nHave a ready answer with numbers for each of these.\n\n## Finishing well\nUse the last minutes to summarise the design in a few sentences, list the top two or three risks (label delay, drift, latency) and say what you would build first. Ending with a clear plan leaves a better impression than running out of time mid-sentence.\n\n## Practising the framework\nTime yourself on a few prompts and note where the minutes actually went. Most people overrun on models and run short on serving and monitoring. Practise saying each step's key outputs in two or three sentences, so that you can cover the whole arc quickly and still have time to go deep where the interviewer wants. Recording a mock and listening back is uncomfortable but shows filler and repetition quickly.\n\n> Takeaway: follow a fixed eight-step arc from clarifying to monitoring, weight time towards what is hardest in the specific problem, state a choice, a reason and an alternative at each step, and finish with risks and a build plan.",
+   "q": "Using the framework, give a one-sentence answer for each of the eight steps for \"design a system that predicts whether a customer will cancel a subscription in the next 30 days\".",
+   "s": "Clarify: the score drives a retention offer sent by email or in-app to at most 5% of 10M subscribers each week; offers cost money; batch scoring weekly is acceptable. Frame: binary classification of cancellation within 30 days of a weekly prediction date; offline metric precision and recall in the top 5%, online metric retained revenue net of offer cost (ideally uplift, since we care who responds to offers). Data and labels: subscription events, usage logs, billing, support tickets; label from cancellations in the 30 days after each prediction date, with point-in-time features. Features: usage trend over 1, 4 and 12 weeks, payment failures, plan and tenure, support contacts, feature adoption, price changes. Models: baseline rules (usage dropped 50%); gradient-boosted trees; later an uplift model to target customers whose decision the offer changes. Evaluation: time-based backtest, precision at 5%, calibration, slices by plan and region; A/B test of the targeting policy against random or rule-based targeting. Serving: weekly batch job writes scores to the CRM, with a fallback to the previous week's scores. Monitoring and iteration: drift in usage features, score distribution, offer acceptance and retention by decile; retrain monthly, watch for feedback because treated customers' labels change.",
+   "r": [
+    [
+     "Google, Machine Learning Crash Course: production ML systems",
+     "https://developers.google.com/machine-learning/crash-course/production-ml-systems",
+     "Components of a production ML system."
+    ],
+    [
+     "Chip Huyen, Machine Learning Systems Design (free notes)",
+     "https://huyenchip.com/machine-learning-systems-design/toc.html",
+     "Project flow from objectives to deployment."
+    ]
+   ],
+   "k": [
+    "interview framework",
+    "time management"
+   ],
+   "x": [],
+   "p": [
+    "ndcg-at-k",
+    "point-in-time-feature-join",
+    "optimize-throughput-and-cost-under-latency-slo"
+   ]
+  },
+  {
+   "id": "08.03",
+   "t": "Walkthrough: content moderation",
+   "n": [
+    "Content moderation combines rare positives, many policy categories, several content types (text, images, video), adversaries, human review capacity and high costs for both kinds of error.",
+    "A typical design has fast hashing for known bad content, multimodal classifiers per policy, thresholds for automatic action and human review, and feedback from appeals and reviewers.",
+    "Labels come from reviewers under changing policies. Version labels by policy, measure reviewer agreement and handle delays.",
+    "Evaluation is by policy and by language or region, at operating points tied to reviewer capacity, with monitoring for new attack patterns."
+   ],
+   "a": "## The prompt\n\"Design a system that detects violent and graphic content in uploaded images and videos.\" This walkthrough shows how the eight-step framework (08.02) applies, with the emphasis on labels, thresholds and adversaries. Module 11 includes a full case study on content moderation; this lesson focuses on how to present it in 45 minutes.\n\n## 1. Clarify (5 minutes)\nQuestions and assumed answers:\n- Volume: 50M uploads a day, about 580 per second, peaking near 2,000.\n- Content: images, short videos (under 60 s) and some long videos; captions and audio.\n- Actions: block at upload, blur with warning, restrict to adults, send to human review, allow.\n- Review capacity: 100,000 items a day across languages.\n- Latency: images scored before they appear; videos within a few minutes.\n- Costs: missing graphic violence harms users and advertisers; removing newsworthy content harms expression and trust.\n\n## 2. Frame (5 minutes)\nMulti-label classification over policies (graphic violence, gore, self-harm, and so on), producing a calibrated probability per policy. The decision layer maps probabilities to actions with two thresholds per policy. Online metrics: prevalence of violating views (estimated by random sampling), reviewer workload, appeal overturn rate. Guardrails: wrongful removal rate, latency.\n\n## 3. Data and labels (5 minutes)\nLabels come from human reviewers following written policies. Policies change, so labels are versioned by policy version. Measure agreement between reviewers; low agreement points to unclear guidelines. Sample for labelling in three ways: random (to estimate prevalence), near the thresholds (active learning), and from user reports.\n\n## 4. Features and models (10 minutes)\n%%flow Moderation pipeline. Cheap exact matching first, models next, people for the uncertain middle.\nUpload -(perceptual hash)-> Known-content match -(no match)-> *Multimodal classifier -(score per policy)-> Decision thresholds -(uncertain)-> Human review -(labels + appeals)-> Training data\n%%\n- **Hash matching** against known violating media catches re-uploads instantly and cheaply.\n- **Image model**: a pretrained vision encoder fine-tuned per policy.\n- **Video**: sample keyframes (for example one per second), score them, aggregate with max or attention pooling; run a deeper pass on uncertain videos.\n- **Text and audio**: captions, comments and transcripts through a text encoder; fuse with visual embeddings.\n- **Context**: uploader history, prior strikes, account age.\n\nBaseline: hash matching plus a frozen image-embedding classifier. Main model: fine-tuned multimodal encoder with per-policy heads and focal or weighted loss for rare positives.\n\n## 5. Evaluation and serving (10 minutes)\nEvaluate per policy at the operating points: precision for automatic action (high bar, for example 97%), recall including review, review volume per day, and slices by language, region and content type. Prevalence is estimated from a random sample labelled by reviewers.\n\nServing: images scored synchronously on GPU with batching in about 100 ms; short videos scored asynchronously, with content held from distribution until scored; long videos get a fast keyframe pass, then a deeper pass.\n\n## 6. Monitoring and adversaries (5 minutes)\nMonitor score distributions, action rates per policy and region, review queue length, appeal overturn rate and prevalence. Adversaries crop, filter, overlay text or splice content; add augmentations to training, update hashes quickly and retrain frequently. Keep a fast path for policy teams to add rules during crises.\n\n! Example: a trade-off to state out loud\n! \"For long videos, scoring every frame with the full model would cost about 30 GPU-seconds per video. I'd sample one frame per second with a lighter model and only run the full model on segments scoring above a low threshold, which keeps cost around 3 GPU-seconds while catching nearly all violating segments in our tests.\"\n\n## What interviewers want to hear\nRare positives and thresholds tied to reviewer capacity, versioned labels, multimodal models, hash matching for known content, per-policy and per-region evaluation, and adversarial monitoring. The model architecture matters less than these system decisions.\n\n## Likely follow-up questions\n\nBe ready for three probes. First, \"how do you handle a new policy with no labels?\": start with rules and keyword or hash lists, route matches to reviewers, use their decisions as the first labels, and train once a few thousand exist. Second, \"how do you stop reviewers burning out?\": blur by default, rotate queues, cap exposure per shift and let the model pre-sort so humans see fewer clear-cut cases. Third, \"what if a classifier is biased against a dialect?\": measure false-positive rates by language and region on a stratified sample, and fix with targeted labelling and per-slice thresholds rather than a global change.\n\n> Takeaway: for moderation, lead with volume, actions and reviewer capacity, then present hash matching, multimodal per-policy classifiers, two thresholds per policy, versioned reviewer labels, per-policy and per-region evaluation, and monitoring for adversaries.",
+   "q": "Walk through the design of a system that detects and acts on violent and graphic content in images and videos uploaded to a social platform with 50 million uploads a day. Cover the main stages and two key trade-offs.",
+   "s": "Clarify: about 580 uploads per second on average, perhaps 2,000 at peak; actions are block at upload, age-gate or blur, or send to review; review capacity about 100,000 items a day; latency target a few seconds for images, minutes for long videos. Stages: perceptual-hash matching against a database of known violating media blocks exact and near copies instantly; a multimodal classifier (image encoder on frames sampled from videos plus text from captions and audio transcripts) outputs per-policy probabilities; video uses sampled keyframes first and a deeper pass if uncertain. Thresholds per policy: auto-action above a high-precision threshold, review between thresholds sized to capacity, allow below; graphic but newsworthy content gets blur plus a warning rather than removal. Labels from reviewers with versioned guidelines and appeals; active learning picks uncertain items for labelling. Evaluation by policy and region at the operating points; monitor prevalence estimates from a random sample, appeal overturn rates, and new hashes. Trade-offs: speed versus accuracy for long videos (quick keyframe pass then deep pass), and precision versus recall per policy given the different harms of over- and under-enforcement.",
+   "rubric": [
+    "Clarifies volume, content types, actions, review capacity and latency",
+    "Uses hash matching for known content before ML",
+    "Proposes multimodal classifiers with per-policy outputs and explains video sampling",
+    "Sets two thresholds per policy tied to precision targets and reviewer capacity",
+    "Treats reviewer labels as versioned by policy, with agreement checks and appeals",
+    "Evaluates per policy and per language or region, with prevalence from random sampling",
+    "Handles adversaries and new content with monitoring, active learning and fast hash updates",
+    "Discusses trade-offs between speed, cost and accuracy, and between over- and under-enforcement"
+   ],
+   "r": [
+    [
+     "Kiela et al., The Hateful Memes Challenge: Detecting Hate Speech in Multimodal Memes (2020)",
+     "https://arxiv.org/abs/2005.04790",
+     "Why image and text must be judged together."
+    ],
+    [
+     "Radford et al., Learning Transferable Visual Models From Natural Language Supervision (CLIP, 2021)",
+     "https://arxiv.org/abs/2103.00020",
+     "Shared image-text embeddings, useful for multimodal classifiers."
+    ],
+    [
+     "Google, Rules of Machine Learning",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "Heuristics plus models; monitoring."
+    ]
+   ],
+   "k": [
+    "content moderation",
+    "interview walkthrough"
+   ],
+   "x": [],
+   "p": [
+    "precision-recall-curve-and-average-precision",
+    "sigmoid-focal-loss",
+    "text-deduplication-minhash",
+    "clip-zero-shot-classifier"
+   ]
+  },
+  {
+   "id": "08.04",
+   "t": "Walkthrough: video recommendation",
+   "n": [
+    "Video recommendation is the canonical multi-stage ranking problem: huge corpus, tight latency, many engagement signals and strong feedback loops.",
+    "Frame the objective around satisfaction, not clicks: expected watch time, completions, likes and surveys combined, with guardrails against clickbait and harmful content.",
+    "Use multi-source candidate generation, a multi-task ranker and a re-ranking layer for diversity, freshness and policy.",
+    "Evaluate offline with debiased metrics and online with long-running A/B tests on retention; plan for cold start and exploration."
+   ],
+   "a": "## The prompt\n\"Design the recommendation system for a video platform's home feed.\" Every interviewer has seen this question, so a structured, numeric answer stands out. Module 10 includes the full case study; here is how to present it in 45 minutes.\n\n## 1. Clarify\n- Surface: home feed in the app, 20 videos per page, infinite scroll.\n- Scale: 200M daily users, 5 home loads a day each, so about 11,600 per second on average, 30,000 at peak.\n- Corpus: 500M videos, 500,000 new each day.\n- Latency: 200 ms for the page, with about 150 ms for recommendation.\n- Goal: long-term satisfaction and retention, not just clicks.\n\n## 2. Frame\nRank videos for a user by expected value. Online metrics: daily active users, watch time per user, 28-day retention; guardrails: report rate, creator diversity, latency. Offline metrics: retrieval recall@500, ranking NDCG@20 with watch-time gains, calibration per head.\n\n## 3. Data and labels\nImpression logs with position, watch events (seconds, completion), likes, shares, subscribes, \"not interested\" and reports. Labels per impression per head. Time-based splits. Sample negatives from shown-but-not-watched impressions.\n\n## 4. Candidates and ranking\n%%flow Home-feed pipeline with budgets. The ranker's objective is the deep-dive topic.\nRequest -(parallel sources, 40 ms)-> 2,000 candidates -(filters)-> Light ranker -(15 ms)-> 400 -(multi-task ranker, 60 ms)-> *50 -(re-rank, 5 ms)-> 20 shown\n%%\nCandidate sources: two-tower retrieval (user tower from watch history and context, video tower from content and engagement), subscriptions, co-watch neighbours of recent videos, trending by region and language, and an exploration pool of new videos.\n\nRanker: multi-task network over user features, video features, context and cross features, with heads for click, watch time, like, share, subscribe and negative feedback. Value score combines them with weights tuned by experiment.\n\n## 5. Bias and feedback loops\nPosition bias: include position as a feature during training (set to a constant at serving) or use a shallow position tower. Exposure bias: log propensities, reserve a small exploration slice, evaluate with debiased metrics (07.03). Popularity concentration: diversity re-ranking and coverage guardrails.\n\n## 6. Serving\nVideo embeddings and candidate lists precomputed; user embedding computed per request from recent history (streaming features). Ranker on GPU or optimised CPU with batching. Cache candidates for a few minutes between page loads. Fallbacks: if the ranker times out, use the light ranker's order; if retrieval fails, trending in region.\n\n## 7. Evaluation and rollout\nOffline: retrieval recall, NDCG with watch-time gains on debiased data, slices for new users and new videos. Online: A/B tests run for at least two weeks with retention as a key metric, and a long-term holdback. Interleaving can screen ranker changes quickly.\n\n## 8. Monitoring and iteration\nScore distributions per head, calibration, coverage, share of new videos, report rate, latency. Retrain the ranker daily and refresh embeddings for new videos hourly.\n\n! Example: a strong deep-dive answer\n! \"Clicks alone would favour thumbnails over substance, so I would rank by expected watch time plus weighted likes and shares, minus weighted 'not interested' signals, with weights tuned on 28-day retention in experiments. Watch time favours long videos, so I'd use completion fraction alongside seconds watched.\"\n\n## Likely follow-up questions\n\nExpect probes on four points. \"How do you handle a brand-new video?\": content embeddings from title, thumbnail and audio place it in the retrieval space, and an exploration slot gives it a small guaranteed audience whose early engagement feeds back within hours. \"How do you handle a new user?\": start from popular and locally trending items, ask for a few interests at sign-up, and lean on session signals, which become informative after a handful of plays. \"Why not optimise clicks?\": clicks reward misleading thumbnails; completion, satisfaction surveys and return visits track what users value. \"How would you know the system is making things worse over months?\": keep a small long-running holdout that gets a simpler policy and compare retention and diversity of consumption against it.\n\n## A numeric sanity check\n\nSuppose 100 million daily users each open the home page three times and each page ranks 500 candidates. That is $1.5 \\times 10^{11}$ ranker scores a day, or about 1.7 million per second on average and several times that at peak. This is why the heavy ranker sees only hundreds of items per request, why features are cached, and why retrieval must be an approximate nearest-neighbour lookup rather than a scan.\n\n> Takeaway: present video recommendation as a multi-stage pipeline with multi-source candidates, a multi-task ranker on a satisfaction-based value score, re-ranking for diversity and freshness, explicit handling of position and exposure bias, and evaluation tied to long-term retention.",
+   "q": "In an interview you are asked to design the home-feed recommender for a video platform. The interviewer wants you to go deep on the ranking objective. What do you propose and how would you justify it?",
+   "s": "Propose a multi-task ranker with heads for click, watch time (or completion fraction), like, share, subscribe and negative feedback (dislike, \"not interested\", report), trained on logged impressions with position as a training-only feature or a separate shallow position tower to absorb position bias. Combine heads into a value score such as expected watch time plus weighted positive actions minus weighted negative ones, for example score = E[watch seconds] + a·P(like) + b·P(share) − c·P(not interested). Justify: clicks alone reward clickbait; watch time aligns better with satisfaction but favours long videos, so normalise by video length or add completion; explicit signals capture quality; negative signals protect trust. Choose weights by online experiments measuring long-term retention and user surveys, and keep guardrails on report rates and creator diversity. Mention calibration of each head, since they are combined linearly.",
+   "rubric": [
+    "Clarifies surfaces, scale, latency and the satisfaction goal",
+    "Uses multi-source candidate generation with high recall and explains why",
+    "Proposes a multi-task ranker and a justified value function, not clicks alone",
+    "Handles position and exposure bias in training and evaluation",
+    "Adds re-ranking for diversity, freshness and policy filtering",
+    "Evaluates with retrieval recall, debiased offline metrics and long A/B tests on retention",
+    "Addresses cold start for users and videos with exploration",
+    "Discusses latency budget, caching and fallbacks"
+   ],
+   "r": [
+    [
+     "Covington, Adams and Sargin, Deep Neural Networks for YouTube Recommendations (2016)",
+     "https://research.google/pubs/deep-neural-networks-for-youtube-recommendations/",
+     "Candidate generation and ranking with watch-time weighting."
+    ],
+    [
+     "Zhao et al., Recommending What Video to Watch Next: A Multitask Ranking System (2019)",
+     "https://research.google/pubs/recommending-what-video-to-watch-next-a-multitask-ranking-system/",
+     "Multi-task ranking and position-bias correction."
+    ],
+    [
+     "Yi et al., Sampling-Bias-Corrected Neural Modeling for Large Corpus Item Recommendations (2019)",
+     "https://research.google/pubs/sampling-bias-corrected-neural-modeling-for-large-corpus-item-recommendations/",
+     "Two-tower retrieval."
+    ]
+   ],
+   "k": [
+    "recommendation",
+    "interview walkthrough"
+   ],
+   "x": [],
+   "p": [
+    "in-batch-softmax-logq",
+    "ndcg-at-k",
+    "mmr-diversity-rerank",
+    "catalog-coverage-and-novelty",
+    "popularity-baseline-leave-last-out"
+   ]
+  },
+  {
+   "id": "08.05",
+   "t": "Common mistakes and what each level shows",
+   "n": [
+    "The most common mistakes are jumping to a model, ignoring labels and their delays, skipping evaluation design, forgetting serving constraints, and never mentioning monitoring.",
+    "Junior candidates are expected to produce a sound end-to-end design; senior candidates add depth on trade-offs, scale and failure modes; staff-level candidates also reason about organisation, platforms, long-term effects and risk.",
+    "Depth means numbers and mechanisms: how a feature is computed, what the latency budget is, which bias affects the metric and how you would correct it.",
+    "Recovering well from a mistake or a hint from the interviewer is a positive signal."
+   ],
+   "a": "## Mistakes that cost the most\n| Mistake | Why it hurts | Fix\n| Jumping to a model in minute two | shows no understanding of the problem | clarify first; state assumptions\n| No label discussion | most real difficulty lives in labels | say where labels come from, their delay and bias\n| Accuracy or AUC as the only metric | ignores operating point and business value | metric at the threshold, business metric, guardrails\n| No baseline | cannot show the model is worth it | baseline first, then improvements\n| Ignoring latency and scale | design cannot run | numbers: QPS, items per request, p99 budget\n| Leakage in features | offline results would be fake | point-in-time features, time splits\n| No serving story | model never reaches users | batch or online, stages, fallbacks\n| No monitoring or retraining | system decays silently | drift, quality, triggers, owners\n| Monologue | interviewer cannot steer | check in every few minutes\n| Name-dropping | sounds shallow | explain mechanisms and trade-offs\n\n## What each level shows\nExpectations scale with level. The same prompt can be passed at junior level and failed at senior level with the same design, if the senior candidate lacks depth.\n\n%%layers What a strong answer adds at each level. Each layer includes everything below it.\n*Staff and above | platform and organisation: shared feature stores, reuse across teams, long-term effects, risk and governance\nSenior | depth on trade-offs: numbers, failure modes, bias corrections, cost, rollout and monitoring designed in\nMid-level | a complete, sensible pipeline with metrics tied to the business and a clear serving plan\nJunior | a correct framing, reasonable features and model, basic offline evaluation\n%%\n\n**Junior or early career.** A correct end-to-end design: clear task framing, sensible features, a baseline and a reasonable model, offline evaluation with the right metric, and an awareness that serving and monitoring exist.\n\n**Mid-level.** Everything above, plus concrete serving design (batch or online, latency budget), A/B testing, label sources and delays, leakage awareness and basic monitoring.\n\n**Senior.** Depth and trade-offs: numbers for scale and cost, multi-stage pipelines, bias and feedback loops with corrections, calibration and thresholds, rollout and fallbacks, and what to build first. They anticipate failure modes before being asked.\n\n**Staff and above.** System and organisational scope: which components should be shared platforms, how multiple teams' models interact (for example several rankers competing for one feed), long-term effects on users and the ecosystem, governance and risk, and a phased roadmap.\n\n## What depth sounds like\nShallow: \"We'd use a feature store for consistency.\"\nDeep: \"The 7-day order count would be computed by a streaming job and written to both the online store and the offline history with availability timestamps, so training uses point-in-time joins and serving reads the same definition. We'd log the served value with each prediction to measure any residual skew.\"\n\nShallow: \"We'd monitor for drift.\"\nDeep: \"We'd alert on PSI above 0.2 sustained for three days on the top 10 features by importance, on approval rate by segment, and on first-payment default as an early proxy, since 90-day default labels arrive too late.\"\n\n! Example: recovering from a hint\n! A candidate proposed random train-test splits for a churn model. The interviewer asked, \"Would that reflect how the model is used?\" The candidate paused, explained that it would leak future information through user overlap and time, switched to a time-based split with point-in-time features, and noted that offline metrics would probably drop. The interviewer later cited this as a strong moment: the candidate listened, reasoned and corrected course.\n\n## A final checklist\nBefore you finish any practice answer, check that you covered: the decision and error costs, the label and its delay, the metric at the operating point, a baseline, leakage, the latency budget, the serving mode, fallbacks, the online test, monitoring and retraining, and one feedback-loop or fairness risk. Eleven items; most candidates miss three or four.\n\n## Using the case studies\nThe 21 case studies in modules 09 to 11 each end with a rubric listing what a strong design covers. Practise by answering a prompt aloud for 35 to 45 minutes before reading the model design, then score yourself against the rubric. Note which items you missed; the same few gaps tend to recur, and the final checklist above will catch them once you know what they are.\n\n> Takeaway: avoid the common gaps (labels, operating point, baseline, leakage, latency, serving, monitoring), match depth to the level you are interviewing for by giving numbers and mechanisms, and treat a hint as a chance to show reasoning and recovery.",
+   "q": "A candidate answering \"design a fraud detection system\" spends 20 minutes comparing neural architectures and finishes without discussing labels, thresholds or monitoring. List the five most important things they missed and how a senior candidate would cover each in one or two sentences.",
+   "s": "(1) Labels: chargebacks arrive weeks late and blocked transactions never get outcomes, so a senior candidate would train on matured labels, use early proxies and keep a small holdout for outcome data. (2) Operating point: the business cares about losses and customer friction, so they would set thresholds for block, step-up and allow from costs and analyst capacity, reporting precision and recall there. (3) Latency and serving: scoring happens during authorisation, so they would give a budget (for example 50 ms), name the real-time velocity features and a fallback when features are missing. (4) Adversaries and drift: fraudsters adapt, so they would monitor recall on new attack types, retrain frequently and keep fast rules for active campaigns. (5) Evaluation: a time-based split with point-in-time features, slices by merchant type and region, and a staged rollout with automatic rollback on block-rate deviations.",
+   "r": [
+    [
+     "Google, Rules of Machine Learning",
+     "https://developers.google.com/machine-learning/guides/rules-of-ml",
+     "Many rules correspond to common interview gaps."
+    ],
+    [
+     "Sculley et al., Hidden Technical Debt in Machine Learning Systems (2015)",
+     "https://papers.nips.cc/paper_files/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html",
+     "The system concerns senior candidates are expected to raise."
+    ]
+   ],
+   "k": [
+    "interview levels",
+    "common mistakes"
+   ],
+   "x": [],
+   "p": [
+    "training-serving-skew",
+    "delayed-label-monitoring",
+    "precision-recall-curve-and-average-precision"
+   ]
+  }
+ ]
+}
