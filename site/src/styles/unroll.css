@@ -1,0 +1,36 @@
+/* Unroll foundations: redesign tokens + motion system, and the global header (mockups/desktop/Learn header).
+   Tokens and motion sit in a cascade layer so pages still on the house/course stylesheets keep their own
+   values for shared names (--bg, --ink, --accent…); unlayered rules always beat layered ones. Pages that drop
+   the house stylesheet get the Unroll tokens as-is. The header carries data-theme="dark", so it always resolves
+   the Unroll dark tokens on itself, whatever the page underneath uses. */
+@import './unroll/tokens.css' layer(unroll);
+@import './unroll/motion.css' layer(unroll);
+
+.u-top{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:12px 28px;
+  border-bottom:1px solid var(--line);background:var(--bg);color:var(--ink);font-family:var(--font-sans)}
+.u-top a{color:var(--ink);text-decoration:none}
+.u-top a:hover{color:#FFFFFF}
+.u-top .mono{font-family:var(--font-mono)}
+.u-brand{display:flex;align-items:center}
+.u-brand svg{display:block;height:24px;width:auto}
+.u-nav{display:flex;gap:4px}
+.u-nav a{padding:7px 12px;border-radius:var(--radius-md);color:var(--muted);font-weight:500;font-size:14px}
+.u-nav a[aria-current]{background:var(--surface-2);color:var(--ink);font-weight:600}
+.u-due{margin-left:4px;padding:1px 6px;border-radius:var(--radius-full);background:var(--accent);color:var(--accent-ink);font-size:11px}
+.u-route{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px;border-radius:var(--radius-full);border:1px solid var(--line-3);font-size:13px}
+.u-route .mono{font-size:11px;color:var(--muted)}
+.u-streak{display:flex;align-items:center;gap:6px;font-weight:700;font-size:14px;color:var(--streak)}
+.u-streak.off{color:var(--faint)}
+.u-xp{font-weight:600;font-size:13px;color:var(--xp)}
+.u-top .u-ibtn,.u-top .ibtn{width:36px;height:36px;border-radius:var(--radius-md);border:1px solid var(--line-3);background:transparent;
+  display:flex;align-items:center;justify-content:center;color:var(--ink);cursor:pointer}
+.u-top .ibtn{display:none}
+.u-top .u-nav a:not([aria-current]):hover,.u-top .u-ibtn:hover,.u-top .ibtn:hover,.u-top .u-route:hover{background:var(--surface-2);color:var(--ink)}
+/* old course pages: the menu button opens their sidebar, the breadcrumb keeps lesson context */
+.u-top #crumbs{margin-left:0;font-size:13.5px;color:var(--muted)}
+.u-top #crumbs a{color:var(--muted)}
+.u-top #crumbs a:hover{color:var(--ink)}
+.u-top #crumbs .sep{color:var(--line-4)}
+@media (max-width:959px){.u-top .ibtn{display:flex}.u-top #crumbs{display:none}}
+/* phones: the header wraps to three rows, so it scrolls away (Phase 4 replaces it with the mobile top bar + bottom tabs) */
+@media (max-width:640px){.u-top{position:static;padding:12px 16px;gap:12px}}
