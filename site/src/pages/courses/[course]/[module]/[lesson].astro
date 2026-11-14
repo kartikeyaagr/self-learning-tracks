@@ -1,5 +1,6 @@
 ---
 import { u } from '../../../../lib/url.mjs';
+import { XP } from '../../../../lib/game.js';
 import Site from '../../../../layouts/Site.astro';
 import CourseSide from '../../../../components/CourseSide.astro';
 import { getCollection, render } from 'astro:content';
@@ -52,9 +53,9 @@ const linkMap = Object.fromEntries([...lessons.map(x => [x.data.id, url(x)]), ..
           <div class="sample"><div class="lab">Model answer</div><p set:html={I(L.answer)} /></div>
           {L.rubric.length > 0 && <div class="sample" style="background:var(--card);border-color:var(--line)"><div class="lab">A strong answer covers</div><ul style="margin:6px 0 0;padding-left:20px">{L.rubric.map(x => <li set:html={I(x)} />)}</ul></div>}
           <div class="grade"><div class="lab">How did your answer compare?</div><div class="gb">
-            <button type="button" class="gbtn" data-g="1" aria-pressed="false">Missed it<small>+3 XP</small></button>
-            <button type="button" class="gbtn" data-g="2" aria-pressed="false">Partly<small>+8 XP</small></button>
-            <button type="button" class="gbtn" data-g="3" aria-pressed="false">Nailed it<small>+15 XP</small></button></div></div>
+            <button type="button" class="gbtn" data-g="1" aria-pressed="false">Missed it</button>
+            <button type="button" class="gbtn" data-g="2" aria-pressed="false">Partly</button>
+            <button type="button" class="gbtn" data-g="3" aria-pressed="false">Nailed it</button></div></div>
         </div>
       </section>}
 
@@ -62,7 +63,7 @@ const linkMap = Object.fromEntries([...lessons.map(x => [x.data.id, url(x)]), ..
         <div class="plinks">{practice.map(([s, t, d]) => <a href={practiceHref(s)}><span>{t}</span><span class={`pd ${d}`}>{d}</span></a>)}</div></section>}
 
       <div class="done-zone" data-pagefind-ignore>
-        <button type="button" class="btn" id="complete">Mark complete <span class="xp">+10 XP</span></button>
+        <button type="button" class="btn" id="complete">Mark complete <span class="xp">+{XP.lesson} XP</span></button>
         <p>Shortcuts: C complete · J next · K previous</p>
       </div>
       <nav class="pn" aria-label="Lesson navigation" data-pagefind-ignore>
@@ -83,6 +84,7 @@ const linkMap = Object.fromEntries([...lessons.map(x => [x.data.id, url(x)]), ..
   </script>
   <script>
     import { load, save, now, bump as bumpOf } from '../../../../lib/progress.js';
+    import { XP } from '../../../../lib/game.js';
     const { courseKey, courseDir, own, k, nextUrl, prevUrl } = window.__lesson, map = window.__lessonUrl;
     const st = load(courseKey);
     const $ = s => document.querySelector(s), prose = $('#prose');
@@ -112,7 +114,7 @@ const linkMap = Object.fromEntries([...lessons.map(x => [x.data.id, url(x)]), ..
       }));
     }
     // completion
-    const paint = () => { const d = !!st.done[k]; $('#donepill').hidden = !d; const c = $('#complete'); c.className = d ? 'btn go' : 'btn'; c.innerHTML = d ? '✓ Completed · undo' : 'Mark complete <span class="xp">+10 XP</span>'; };
+    const paint = () => { const d = !!st.done[k]; $('#donepill').hidden = !d; const c = $('#complete'); c.className = d ? 'btn go' : 'btn'; c.innerHTML = d ? '✓ Completed · undo' : `Mark complete <span class="xp">+${XP.lesson} XP</span>`; };
     $('#complete').addEventListener('click', () => { if (st.done[k]) { delete st.done[k]; delete st.at[k]; } else { st.done[k] = true; st.at[k] = now(); } save(); paint(); });
     paint();
     addEventListener('keydown', e => { if (e.target.closest('textarea, input') || e.metaKey || e.ctrlKey) return;
