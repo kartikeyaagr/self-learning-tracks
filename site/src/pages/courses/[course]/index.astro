@@ -1,5 +1,6 @@
 ---
 import { u } from '../../../lib/url.mjs';
+import { XP } from '../../../lib/game.js';
 import Site from '../../../layouts/Site.astro';
 import CourseSide from '../../../components/CourseSide.astro';
 import { getCollection } from 'astro:content';
@@ -20,7 +21,7 @@ const byN = Object.fromEntries(modules.map(m => [m.n, m]));
       <a class="note" id="cont" href={lessonUrl(courseId, first, firstL)} style="text-decoration:none">
         <div class="lab">Start here · {firstL.data.id} · {mins(firstL)} min</div>
         <h3>{firstL.data.title}</h3>
-        <span class="btn">Start learning <span class="xp">+10 XP</span></span>
+        <span class="btn">Start learning <span class="xp">+{XP.lesson} XP</span></span>
       </a>
       <div><p class="hbody">{course.description}</p></div>
     </div>

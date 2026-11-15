@@ -42,9 +42,10 @@ const hue = m => { const pi = IDX.parts.indexOf(m.part); return `hsl(${Math.roun
   <script>
     // Problem of the day: the same for everyone on a given date
     import { today } from '../../lib/progress.js';
+    import { dailyIndex } from '../../lib/game.js';
     fetch(`${window.__base}/practice/index.json`).then(r => r.json()).then(I => {
-      const all = I.topics.flatMap(m => m.lessons), d = today(); let h = 0; for (const c of d) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-      const l = all[h % all.length], el = document.getElementById('daily');
+      const all = I.topics.flatMap(m => m.lessons);
+      const l = all[dailyIndex(today(), all.length)], el = document.getElementById('daily');
       el.querySelector('.lab').textContent = `Problem of the day · ${l.d} · ${l.mins} min`; el.querySelector('h3').textContent = l.t;
       el.querySelector('p').textContent = l.tags.join(' · '); el.querySelector('a').href = `${window.__base}/practice/p/${l.id}/`;
     });

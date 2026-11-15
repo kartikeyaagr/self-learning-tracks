@@ -37,12 +37,12 @@ const CM = 'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/';
         <div class="lab">Stuck?</div>
         {p.hints.map((h, i) => <div class="hint" hidden><b>Hint {i + 1}</b><span set:html={inl(h)} /></div>)}
         <div class="rbtns" style="margin-top:12px">
-          {p.hints.length > 0 && <button type="button" class="btn ghost" id="hint">Show hint 1 of {p.hints.length}</button>}
+          {p.hints.length > 0 && <button type="button" class="btn ghost" id="hint">Show hint 1 of {p.hints.length} · −5 XP</button>}
           <button type="button" class="btn ghost" id="solb">Show solution</button>
           <button type="button" class="btn ghost" id="exb">Show explanation</button>
         </div>
         <div class="card" id="sol" hidden><div class="lab">Solution</div><pre class="code solcode">{p.sol}</pre>
-          <p id="solnote" style="color:var(--muted);font-size:13.5px;margin:0">You opened the solution, so solving this now earns the base +10 XP without the difficulty bonus.</p></div>
+          <p id="solnote" style="color:var(--muted);font-size:13.5px;margin:0">You opened the solution, so solving this now earns the solve XP but not the no-hints star.</p></div>
         <div class="card prose" id="expl" hidden><Fragment set:html={ex} /></div>
       </section>
       {p.lessons.length > 0 && <section class="card blk"><div class="lab">Learn the idea</div><h3>Course lessons on this</h3><div class="links">{p.lessons.map(x => <a href={x.href}>{x.t}<span>{x.c}</span></a>)}</div></section>}
@@ -72,23 +72,25 @@ const CM = 'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/';
       </>}
     </aside>
   </div>
-  <script is:inline define:vars={{ P: {id: p.id, d: p.d, rt: p.rt, fn: p.fn, pkgs: p.pkgs, tol: p.tol, nex: p.nex, starter: p.starter, colab: !!p.colab, nhints: p.hints.length, topic: m.lessons.map(x => x.id), topicName: m.name} }}>window.__prob = P;</script>
+  <script is:inline define:vars={{ P: {id: p.id, d: p.d, rt: p.rt, fn: p.fn, pkgs: p.pkgs, tol: p.tol, nex: p.nex, starter: p.starter, colab: !!p.colab, nhints: p.hints.length, topic: m.lessons.map(x => x.id), topicName: m.name, gi, n: ALL.length, theory: (p.theory || []).map(t => t.lesson)} }}>window.__prob = P;</script>
   <script>
     import { st, toast } from '../../../lib/practice-client.js';
     import { save, now, today } from '../../../lib/progress.js';
     import { rate } from '../../../lib/review.js';
+    import { all } from '../../../lib/store.js';
+    import { dailyIndex, lessonDone, solveAwards, XP } from '../../../lib/game.js';
     const P = window.__prob, k = P.id, $ = s => document.querySelector(s), esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
-    const DG = {Easy: 1, Medium: 2, Hard: 3}, GB = {1: 3, 2: 8, 3: 15};
+    const T0 = Date.now();                // par timer: page open → first solve (in-browser problems; Colab solves are self-reported)
     const CHECK = '<svg width="16" height="16" viewBox="0 0 20 20"><path d="M4.5 10.5l3.6 3.6 7.6-8.2" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     const paint = () => {
       const d = !!st.done[k]; $('#okpill').hidden = !d; $('#duepill').hidden = !(d && st.rev[k]?.due && st.rev[k].due <= today());
       const hn = st.hints[k] || 0; document.querySelectorAll('.hint').forEach((h, i) => h.hidden = i >= hn);
-      const hb = $('#hint'); if (hb) { hb.hidden = hn >= P.nhints; hb.textContent = `Show hint ${hn + 1} of ${P.nhints}`; }
+      const hb = $('#hint'); if (hb) { hb.hidden = hn >= P.nhints; hb.textContent = `Show hint ${hn + 1} of ${P.nhints} · −${-XP.hint} XP`; }
       $('#sol').hidden = !st.sol[k]; $('#solb').textContent = st.sol[k] ? 'Hide solution' : 'Show solution'; $('#solnote').hidden = d;
       $('#expl').hidden = !st.expl[k]; $('#exb').textContent = st.expl[k] ? 'Hide explanation' : 'Show explanation';
       const mk = $('#mark'); if (mk) mk.hidden = d;
     };
-    $('#hint')?.addEventListener('click', () => { st.hints[k] = (st.hints[k] || 0) + 1; save(); paint(); });
+    $('#hint')?.addEventListener('click', () => { st.hints[k] = (st.hints[k] || 0) + 1; (st.hintAt[k] ||= []).push(now()); save(); paint(); });
     $('#solb').addEventListener('click', () => { st.sol[k] = !st.sol[k]; save(); paint(); });
     $('#exb').addEventListener('click', () => { st.expl[k] = !st.expl[k]; save(); paint(); });
     paint();
@@ -96,13 +98,16 @@ const CM = 'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/';
     function solved() {
       if (!st.done[k]) {
         st.done[k] = true; st.at[k] = now();
-        if (!st.sol[k]) st.grades[k] = {g: DG[P.d], at: now()};
+        // what the first solve earns (game.js): difficulty, theory read first, no hints/solution, under par, problem of the day
+        const r = st.solve[k] = {d: P.d, theory: P.theory.some(ref => lessonDone(all(), ref)), nohints: !(st.hints[k] > 0) && !st.sol[k],
+          ms: P.colab ? null : Date.now() - T0, potd: dailyIndex(today(), P.n) === P.gi};
+        const aw = solveAwards(P.d, r);
         rate('practice', k, 3);                                   // first review in a day; also saves and counts today's activity
         st.rev[k].n = 0;                                          // the first solve is not a review
-        save(); toast(`<b>+${10 + (st.sol[k] ? 0 : GB[DG[P.d]])} XP</b> Problem solved`);
+        save(); toast(`<b>+${aw.reduce((a, x) => a + x.xp, 0)} XP</b> ${aw.map(x => x.label).join(' · ')}`);
         if (P.topic.every(id => st.done[id])) setTimeout(() => toast(`<b>${esc(P.topicName)}</b> topic cleared`, true), 450);
       } else if (st.rev[k]?.due && st.rev[k].due <= today()) {
-        rate('practice', k, 3); toast(`<b>+5 XP</b> Reviewed · back in a while`);
+        rate('practice', k, 3); toast('Reviewed · back in a while');
       } else toast('Solved again');
       paint();
     }
