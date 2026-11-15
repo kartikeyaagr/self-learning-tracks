@@ -1,0 +1,99 @@
+/* Unroll redesign tokens: the values the approved mockups use.
+   Desktop is dark-first. Mobile uses the light "design 5" palette.
+   Fonts: Geist + Geist Mono everywhere (decided 2026-11-15; the mobile mockups used Figtree + JetBrains Mono).
+   A light desktop theme and a dark mobile theme are not designed yet. */
+
+:root,
+[data-theme="dark"] {
+  /* surfaces */
+  --bg: #0B0B0D;            /* page */
+  --surface: #131316;       /* cards, panels */
+  --surface-2: #17171B;     /* active nav item, hover fill */
+  --surface-3: #1A1A1F;     /* chips, code tabs */
+  --inset: #0E0E11;         /* recessed rows, sub-bars */
+  --line: #1E1E23;          /* hairlines, card borders */
+  --line-2: #24242A;        /* tracks, empty segments */
+  --line-3: #2A2A30;        /* control borders */
+  --line-4: #33333B;        /* dashed borders, open nodes */
+
+  /* text */
+  --ink: #EDEDEF;           /* primary text */
+  --ink-2: #C5C5CC;         /* body copy in panels */
+  --ink-3: #B4B4BB;         /* descriptions */
+  --muted: #A0A0A8;         /* labels, meta (7:1 on --bg) */
+  --faint: #74747C;         /* locked/placeholder glyphs only, not text */
+
+  /* route accent (Learn) */
+  --accent: #8AB4FF;
+  --accent-edge: #4A74C0;   /* 3D bottom edge of accent buttons and nodes */
+  --accent-ink: #0A1522;    /* text on accent */
+  --accent-soft: #131B2A;
+  --accent-line: #2A3B5A;
+
+  /* Arena accent */
+  --arena: #4FD1C5;
+  --arena-edge: #2C7D74;
+  --arena-ink: #062421;
+  --arena-soft: #0F1C1D;
+  --arena-line: #23464A;
+
+  /* status and game */
+  --go: #6CC49A;  --go-edge: #3C7A5C;  --go-soft: #10241A;  --go-line: #2B5A43;   /* done, correct, Easy */
+  --medium: #E0BD62;                                                             /* Medium difficulty */
+  --bad: #F07A73; --bad-soft: #2A1414; --bad-soft-2: #1A1111; --bad-line: #5A2B2B; /* wrong, Hard, boss */
+  --xp: #E8C15A;                                                                 /* XP, rank, daily goal */
+  --streak: #F08A4B;                                                             /* streak flame */
+
+  /* course colours (library chips, concept tags) */
+  --course-ml-maths: #B69CFF;
+  --course-ml-toolkit: #F5A35C;
+  --course-machine-learning: #F28B82;
+  --course-deep-learning: #5AB4E8;
+  --course-ai-research: #E8C15A;
+  --course-ai-engineering: #F28DB8;
+  --course-inference-engineering: #4FD1C5;
+  --course-system-design: #C9BCA4;
+  --course-ml-system-design: #8AB4FF;
+  --banner-deep-learning: #1D4F7A;  /* concept banner fill; white text */
+
+  /* brand */
+  --brand-ink: #EDEDEF;
+  --brand-accent: #8AB4FF;
+
+  /* type */
+  --font-sans: "Geist", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+
+  /* shape */
+  --radius-sm: 6px;   --radius-md: 8px;   --radius-lg: 12px;   --radius-xl: 16px;   --radius-full: 999px;
+  --node: 68px;       /* path node, desktop (Arena route: 64px) */
+  --edge-3d: 5px;     /* bottom edge on nodes; buttons use 3px */
+
+  /* layout */
+  --page-max: 1360px;
+  --rail-left: 290px;
+  --rail-right: 320px;
+  --header-h: 60px;
+}
+
+[data-surface="mobile"] {
+  --bg: #FBFAF6;
+  --surface: #FFFFFF;
+  --line: #E6E3DA;
+  --line-2: #E0DCD1;
+  --track: #F1EFE8;
+  --ink: #1A1C1E;
+  --ink-2: #3E434A;
+  --muted: #5E636B;
+
+  --accent: #2F6FDB;  --accent-edge: #1F4FA3;  --accent-soft: #EAF1FD;  --accent-ring: #C9D9F5;  --accent-bar: #9DB8E8;
+  --arena: #0F766E;   --arena-edge: #0A4F4A;   --arena-soft: #E8F6F3;   --arena-line: #9FD8D0;
+  --go: #17784E;      --go-edge: #0E5235;      --go-soft: #E6F3EC;      --go-line: #BFE0CD;
+  --bad: #A3342C;     --bad-soft: #FBEAE8;
+  --xp: #7A5C06;      --xp-soft: #FFF8E6;      --xp-line: #E8D9A8;
+  --streak: #B4501A;
+  --locked: #EDEAE2;  --locked-edge: #DAD6CB;
+
+  --brand-ink: #1A1C1E;
+  --brand-accent: #2F6FDB;
+}

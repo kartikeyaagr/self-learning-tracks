@@ -1,0 +1,84 @@
+/* Unroll motion system. One set of timings for every screen, desktop and mobile.
+   Motion says what changed, where you are and what you earned; it never decorates.
+   Live reference: mockups/motion/Motion.dc.html */
+
+:root {
+  --e-out: cubic-bezier(.2, .8, .2, 1);     /* entrances, fills, sheets */
+  --e-pop: cubic-bezier(.34, 1.56, .64, 1); /* nodes, selection, rewards */
+  --e-in:  cubic-bezier(.4, 0, 1, 1);       /* the rare exit */
+  --t1: 120ms;  /* press, hover */
+  --t2: 200ms;  /* colour and state changes */
+  --t3: 320ms;  /* pops, feedback, small entrances */
+  --t4: 480ms;  /* page sections entering */
+  --stagger: 60ms; /* per item, in reading order (40–80ms) */
+}
+
+@keyframes m-rise    { from { opacity: 0; translate: 0 12px; } }
+@keyframes m-fade    { from { opacity: 0; } }
+@keyframes m-slide   { from { opacity: 0; translate: 24px 0; } }
+@keyframes m-pop     { 0% { opacity: 0; scale: .5; } 60% { opacity: 1; scale: 1.08; } 100% { opacity: 1; scale: 1; } }
+@keyframes m-select  { 0% { scale: .95; } 60% { scale: 1.03; } 100% { scale: 1; } }
+@keyframes m-fillx   { from { scale: 0 1; } }
+@keyframes m-filly   { from { scale: 1 0; } }
+@keyframes m-ring    { from { stroke-dasharray: 0 400; } }
+@keyframes m-pulse   { 0% { opacity: .8; scale: .92; } 100% { opacity: 0; scale: 1.35; } }
+@keyframes m-breathe { 50% { opacity: .45; } }
+@keyframes m-shake   { 0%, 100% { translate: 0 0; } 20% { translate: -6px 0; } 40% { translate: 5px 0; } 60% { translate: -3px 0; } 80% { translate: 2px 0; } }
+@keyframes m-flicker { 0%, 100% { scale: 1; rotate: 0deg; } 50% { scale: 1.12; rotate: -6deg; } }
+@keyframes m-sheet   { from { translate: 0 100%; } }
+@keyframes m-float   { 0% { opacity: 0; translate: 0 4px; } 15% { opacity: 1; } 100% { opacity: 0; translate: 0 -40px; } }
+@keyframes m-turn    { from { opacity: 0; rotate: x -24deg; translate: 0 -6px; } }
+@keyframes m-spin    { to { rotate: 360deg; } }
+
+/* Interactive elements always transition these. Use translate/scale (not transform)
+   so animations compose with layout transforms. */
+a, button, input {
+  transition: translate var(--t2) var(--e-out), scale var(--t1) var(--e-out), filter var(--t2) var(--e-out),
+              color var(--t2) var(--e-out), background-color var(--t2) var(--e-out),
+              border-color var(--t2) var(--e-out), opacity var(--t2) var(--e-out);
+}
+a:active, button:not(:disabled):active { scale: .97; }
+
+/* 1 · Enter and stagger: sections, list rows, test results, lesson steps.
+   Set --i on each item (style="--i: 3") for reading-order delay. */
+.m-rise  { animation: m-rise var(--t4) var(--e-out) both; animation-delay: calc(var(--i, 0) * var(--stagger)); }
+.m-fade  { animation: m-fade var(--t3) var(--e-out) both; }
+.m-slide { animation: m-slide var(--t4) var(--e-out) both; animation-delay: calc(var(--i, 0) * var(--stagger)); }
+
+/* 2 · Press: nodes, Check, Start, Solve, grades. Sinks 2px and loses its bottom edge. */
+.m-3d:active { scale: 1; translate: 0 2px; border-bottom-width: 1px; }
+
+/* 3 · Pop: path and Arena nodes appearing, selected answers, badges, streak +1. */
+.m-pop    { animation: m-pop var(--t3) var(--e-pop) both; animation-delay: calc(var(--i, 0) * 80ms); }
+.m-select { animation: m-select var(--t3) var(--e-pop); }
+
+/* 4 · Fill and draw: progress bars, quests, XP, rings, route lines. */
+.m-fill   { transform-origin: left center; animation: m-fillx 800ms var(--e-out) both; }
+.m-filly  { transform-origin: center bottom; animation: m-filly 600ms var(--e-out) both; }
+.m-ring   { animation: m-ring 1s var(--e-out) both; }  /* on an SVG circle with stroke-dasharray */
+
+/* 5 · Pulse: only "you are here" loops (the current node) and the streak flame. */
+.m-here { position: relative; }
+.m-here::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 2px solid currentColor;
+                 pointer-events: none; animation: m-pulse 1.8s var(--e-out) infinite; }
+.m-flame { transform-origin: 50% 85%; animation: m-flicker 2.6s ease-in-out infinite; }
+
+/* 6 · Shake: wrong answer, failed test, blocked submit, tapping a locked node. Once. */
+.m-shake { animation: m-shake 380ms var(--e-out); }
+
+/* 7 · Sheet: mobile tab bar, Arena problem sheet. */
+.m-sheet { animation: m-sheet 460ms var(--e-out) both; }
+
+/* 8 · Float: "+XP" earned (xp colour) or "−XP" spent (bad colour). Parent needs position: relative. */
+.m-xp { position: absolute; right: 14px; top: -10px; pointer-events: none; animation: m-float 1.2s var(--e-out) both; }
+
+/* Review card answer, spinners */
+.m-turn { transform-origin: 50% 0; animation: m-turn 420ms var(--e-out) both; }
+.m-spin { animation: m-spin 700ms linear infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important; animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important; transition-duration: 1ms !important;
+  }
+}
