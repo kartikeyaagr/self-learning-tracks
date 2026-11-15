@@ -1,0 +1,152 @@
+---
+// Destinations (mockups/desktop/Destinations.dc.html): pick a goal, see its route stage by stage, read one concept.
+// Also the onboarding: Learn (/) sends anyone without a destination here; confirming a goal stores it (setRoute) and
+// goes back to Learn. Rendered in the browser: percentages and the route depend on progress (store.js, game.js).
+// #<concept-id> opens that concept on load and picks a goal that contains it (Learn's "Concept notes" link).
+import '../styles/screens/destinations.css';
+---
+<div class="dz" id="dest">
+  <section class="dz-head">
+    <div class="lab">DESTINATIONS</div>
+    <h1>Where are you headed?</h1>
+    <p>Pick a destination and Unroll lays one route through every course. Switch any time: finished concepts count everywhere.</p>
+  </section>
+  <div role="radiogroup" aria-label="Destination" class="dz-goals" id="dGoals"></div>
+  <div role="status" id="dBanner"></div>
+  <div class="dz-body">
+    <section aria-label="Route" class="dz-route" id="dRoute"></section>
+    <aside aria-label="Selected concept" class="dz-panel" id="dPanel" hidden></aside>
+  </div>
+  <section aria-label="Library" class="dz-lib">
+    <div class="hd"><h2>The library</h2><span>Courses stay whole. Routes borrow from them.</span></div>
+    <div class="chips" id="dLib"></div>
+  </section>
+</div>
+<script>
+  import { routes, getRoute, setRoute, state, lessonHref, conceptHref, problemHref, href, esc, plural, courseVar } from '../lib/unroll.js';
+  import { routeState, lessonDone } from '../lib/game.js';
+
+  const $ = id => document.getElementById(id);
+  const LIB = ['ml-maths-course', 'ml-toolkit', 'machine-learning', 'deep-learning', 'ai-research-track-web',   // mockup order
+    'ai-engineering-course', 'inference-eng-course', 'system-design-101', 'ml-system-design'];
+  const DIFF = {Easy: ['EASY', 'var(--go)'], Medium: ['MED', 'var(--medium)'], Hard: ['HARD', 'var(--bad)']};
+  const hash = () => decodeURIComponent(location.hash.slice(1));
+
+  routes().then(R => { const rounds = Object.entries(R.rounds).map(([id, r]) => ({id, ...r}));
+    const A = state(), C = R.byId, cur = R.dest[getRoute()] ? getRoute() : null;
+    const hours = ids => Math.round(ids.reduce((s, id) => s + (C[id].minutes || 0), 0) / 60);
+    const info = Object.fromEntries(R.destinations.map(d => {         // per goal: route state, what's done, what's left
+      const st = routeState(A, d.concepts, C, d.optional), left = st.filter(s => s.status !== 'done').map(s => s.id);
+      return [d.id, {d, st, left, done: st.length - left.length, pct: st.length ? Math.round((st.length - left.length) / st.length * 100) : 0}];
+    }));
+    const has = (id, cid) => !!id && info[id].d.concepts.includes(cid);
+    let want = C[hash()] ? hash() : null, shown = null, first = true;
+    let sel = want ? [cur, ...R.destinations.map(d => d.id)].find(id => has(id, want)) ?? cur : cur;
+
+    // goal cards: a radio group, arrows move and pick (WAI-ARIA radio pattern)
+    const goals = $('dGoals');
+    goals.innerHTML = R.destinations.map((d, i) => {
+      const g = info[d.id], free = !d.concepts.length, now = d.id === cur;
+      const tag = free ? (now ? 'CURRENT · NO ROUTE' : 'NO ROUTE') : now ? `CURRENT · ${g.pct}%` : `${g.pct}% ALREADY DONE`;
+      const meta = free ? plural(Object.keys(R.courses).length, 'course') : `${plural(d.concepts.length, 'concept')} · ${hours(d.concepts)} h`;
+      return `<button type="button" role="radio" class="dz-goal${free ? ' free' : ''}" data-id="${d.id}" style="--i:${i}">
+        <span class="mono tg">${tag}</span><span class="nm">${esc(d.name)}</span><span class="ds">${esc(d.description)}</span><span class="mono mt">${meta}</span></button>`;
+    }).join('');
+    goals.addEventListener('click', e => { const b = e.target.closest('[role=radio]'); if (b && b.dataset.id !== sel) pick(b.dataset.id); });
+    goals.addEventListener('keydown', e => {
+      const k = {ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1}[e.key], bs = [...goals.children], i = bs.indexOf(document.activeElement);
+      if (!k || i < 0) return;
+      e.preventDefault(); const b = bs[(i + k + bs.length) % bs.length]; pick(b.dataset.id); b.focus();
+    });
+
+    $('dBanner').addEventListener('click', e => {
+      if (e.target.closest('[data-go]')) { setRoute(sel); location.href = href('/'); }
+      else if (e.target.closest('[data-keep]')) { pick(cur); (goals.querySelector('[aria-checked="true"]') || goals.firstElementChild).focus(); }
+    });
+    addEventListener('hashchange', () => { if (C[hash()]) { show(hash()); $('dPanel').scrollIntoView({block: 'nearest'}); } });
+
+    $('dLib').innerHTML = LIB.filter(id => R.courses[id]).map((id, i) => `<a href="${href(`/library/${id}/`)}" style="--i:${i}">
+      <span class="sw" style="background:${courseVar(id)}"></span>${esc(R.courses[id].title)}</a>`).join('');
+
+    pick(sel);
+    first = false;
+
+    function pick(id) {
+      sel = id;
+      for (const b of goals.children) {
+        const on = b.dataset.id === id;
+        b.setAttribute('aria-checked', on);
+        b.tabIndex = on || (!id && b === goals.firstElementChild) ? 0 : -1;
+        b.querySelector('.dz-check')?.remove();
+        if (on) b.insertAdjacentHTML('beforeend', '<span class="dz-check" aria-hidden="true">✓</span>');
+      }
+      banner(); route();
+    }
+
+    function banner() {
+      const box = $('dBanner');
+      if (!sel || sel === cur) return void (box.innerHTML = '');
+      const g = info[sel], free = !g.d.concepts.length;
+      const title = free ? (cur ? 'Pause your route and roam?' : 'Roam freely?') : `${cur ? 'Switch to' : 'Start'} ${esc(g.d.name)}?`;
+      const body = free ? 'Your path, streak and XP stay. Open any course in the library.'
+        : (g.done ? `Your ${plural(g.done, 'finished concept')} ${g.done === 1 ? 'carries' : 'carry'} over. ` : '')
+          + (g.left.length ? `${plural(g.left.length, 'concept')} left, about ${hours(g.left)} h.` : 'Every concept on it is done.');
+      box.innerHTML = `<div class="dz-banner"><span class="tx"><strong>${title}</strong> <span>${body}</span></span>
+        <button type="button" class="go" data-go>${cur ? 'Switch route' : free ? 'Start roaming' : 'Start route'}</button>
+        <button type="button" class="keep" data-keep>${cur ? `Keep ${esc(R.dest[cur].name)}` : 'Not yet'}</button></div>`;
+    }
+
+    // four stage columns of the picked goal; the final round closes the last one
+    function route() {
+      const box = $('dRoute'), g = sel && info[sel];
+      if (!g || !g.d.concepts.length) {
+        box.innerHTML = `<div class="dz-rh"><h2>Your route, stage by stage</h2></div>
+          <p class="dz-empty">${g ? 'Free roam has no route. Open any course in the library, in its own order.' : 'Pick a destination above to see its route.'}</p>`;
+        $('dPanel').hidden = true; shown = null;
+        return;
+      }
+      const probs = new Set(g.d.concepts.flatMap(id => C[id].problems || [])), fr = rounds.find(r => r.id === g.d.finalRound);
+      let html = `<div class="dz-rh"><h2>${sel === cur ? 'Your route' : esc(g.d.name)}, stage by stage</h2>
+        <span class="mono">${g.done} / ${g.st.length} done · ${hours(g.left)} h left · ${plural(probs.size, 'Arena problem')}</span></div>
+        <div class="dz-cols"${first ? '' : ' style="--d0:0ms"'}>`;
+      R.stages.forEach((stage, i) => {
+        const rows = g.st.filter(s => C[s.id].stage === stage), req = rows.filter(s => !s.optional), n = req.filter(s => s.status === 'done').length;
+        html += `<div class="dz-col" style="--i:${i}"><div class="hd"><span class="lab">${i + 1} · ${stage.toUpperCase()}</span>
+          ${rows.length ? `<span class="mono${n === req.length ? ' ok' : ''}">${n}/${req.length}</span>` : ''}</div>`;
+        rows.forEach((s, j) => {
+          const k = s.status === 'done' ? 'done' : s.status === 'current' ? 'cur' : s.optional ? 'opt' : 'up';
+          html += `<a href="#${s.id}" class="cr ${k}" data-c="${s.id}" style="--j:${j}">${k === 'done' ? '<span class="ck">✓</span>' : '<span class="dot"></span>'}
+            <span class="t">${esc(C[s.id].title)}${s.optional ? ' · optional' : ''}</span>${k === 'cur' ? `<span class="mono n">${s.lessons}/${s.of}</span>` : ''}</a>`;
+        });
+        if (i === R.stages.length - 1 && fr) html += `<a href="${href(`/practice/interview/${fr.id}/`)}" class="cr fin" style="--j:${rows.length}">
+          <span class="dm">◆</span><span class="t">Final round · ${esc(fr.title.replace(/\s+round$/i, ''))}</span></a>`;
+        html += '</div>';
+      });
+      box.innerHTML = html + '</div>';
+      const keep = [shown, want].find(x => has(sel, x)); want = null;
+      show(keep ?? (g.st.find(s => s.status === 'current') ?? g.st[0]).id);
+    }
+
+    // the concept panel: any concept, slides in again each time it changes
+    function show(cid) {
+      const c = C[cid], p = $('dPanel'); shown = cid;
+      if (hash() && hash() !== cid) history.replaceState(null, '', location.pathname + location.search);   // drop a stale #concept
+      $('dRoute').querySelectorAll('[data-c]').forEach(a => a.dataset.c === cid ? a.setAttribute('aria-current', 'true') : a.removeAttribute('aria-current'));
+      const link = id => { const x = C[id], n = x.lessons.filter(r => lessonDone(A, r)).length;
+        return `<a href="#${id}">${esc(x.title)}${n && n < x.lessons.length ? ` · ${n}/${x.lessons.length}` : ''}</a>`; };
+      const list = ids => ids.filter(id => C[id]).map(link).join('') || '<span class="none">Nothing</span>';
+      const L = c.lesson_links, mins = L.reduce((s, l) => s + (l.mins || 0), 0);
+      p.innerHTML = `<div><div class="mono k" style="color:${courseVar(c.course)}">FROM ${esc(R.courses[c.course].title.toUpperCase())}</div>
+          <h2>${esc(c.title)}</h2><p>${esc(c.summary)}</p></div>
+        <div class="nu"><div><div class="lab">NEEDS</div>${list(c.needs || [])}</div><div><div class="lab">UNLOCKS</div>${list(c.unlocks || [])}</div></div>
+        <div><div class="lab">LEARN · ${plural(L.length, 'lesson').toUpperCase()}${mins ? ` · ${mins} MIN` : ''}</div>
+          ${L.map(l => `<a class="ls" href="${lessonHref(cid, l.slug)}"><span>${esc(l.t)}</span>${l.mins ? `<span class="mono">${l.mins}m</span>` : ''}</a>`).join('')}</div>
+        ${c.problem_links.length ? `<div><div class="lab">ARENA BUILDS</div>${c.problem_links.map(x => { const [d, col] = DIFF[x.d] || ['', ''];
+          return `<a class="pb" href="${problemHref(x.id)}"><span>${esc(x.t || x.id)}</span><span class="mono" style="color:${col}">${d}</span></a>`; }).join('')}</div>` : ''}
+        <div class="acts"><a class="go" href="${conceptHref(cid)}">Go to concept</a><a class="out" href="${conceptHref(cid)}">Test out</a></div>`;
+      p.hidden = false;
+      p.style.setProperty('--pd', first ? '420ms' : '0ms');
+      p.classList.remove('in'); void p.offsetWidth; p.classList.add('in');
+    }
+  });
+</script>

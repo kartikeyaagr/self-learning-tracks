@@ -5,7 +5,7 @@ import { load } from './progress.js';
 export const st = load('practice');
 ['code', 'hints', 'hintAt', 'solve', 'sol', 'expl', 'quiz', 'rounds', 'live'].forEach(x => st[x] = st[x] || {});
 export const isDone = id => !!st.done[id];
-export const href = id => `${window.__base}/practice/p/${id}/`;
+export const href = id => `${window.__base}/arena/p/${id}/`;
 export function toast(html, big) {
   const t = document.createElement('div'); t.className = 'toast' + (big ? ' big' : ''); t.innerHTML = html;
   document.getElementById('toasts').appendChild(t); setTimeout(() => t.remove(), big ? 3200 : 2200);

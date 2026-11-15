@@ -1,0 +1,106 @@
+/* Destinations (mockups/desktop/Destinations.dc.html): goal cards, switch banner, route by stage, concept panel, library. */
+.dz { max-width: var(--page-max); margin: 0 auto; padding: 32px 28px 48px; display: flex; flex-direction: column; gap: 28px; }
+.dz h2 { font-weight: 700; }
+
+.dz-head { max-width: 640px; animation: m-rise var(--t4) var(--e-out) both; }
+.dz-head h1 { margin: 8px 0; font-size: 44px; line-height: 1.02; font-weight: 700; letter-spacing: -.045em; }
+.dz-head p { margin: 0; font-size: 16px; line-height: 1.5; color: var(--muted); }
+
+/* goal cards: rise in stagger; the picked one pops and gets a check badge */
+.dz-goals { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.dz-goal { position: relative; text-align: left; padding: 18px; border-radius: var(--radius-lg); border: 1px solid var(--line-2); background: var(--surface);
+  color: var(--ink); display: flex; flex-direction: column; gap: 8px;
+  animation: m-rise var(--t4) var(--e-out) both; animation-delay: calc(80ms + var(--i) * var(--stagger)); }
+.dz-goal.free { border: 1px dashed var(--line-4); background: transparent; }
+.dz-goal:hover { translate: 0 -3px; filter: brightness(1.15); }
+.dz-goal[aria-checked="true"] { border: 1.5px solid var(--accent); background: var(--accent-soft);
+  animation: m-rise var(--t4) var(--e-out) both, m-select var(--t3) var(--e-pop); animation-delay: calc(80ms + var(--i) * var(--stagger)), 0ms; }
+.dz-goal .tg { font-size: 11px; color: var(--muted); }
+.dz-goal[aria-checked="true"] .tg { color: var(--accent); }
+.dz-goal .nm { font-size: 18px; font-weight: 700; letter-spacing: -.02em; }
+.dz-goal .ds { font-size: 13.5px; line-height: 1.4; color: var(--ink-3); }
+.dz-goal .mt { font-size: 11.5px; color: var(--muted); }
+.dz-check { position: absolute; top: 14px; right: 14px; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--accent-ink);
+  display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; animation: m-pop var(--t3) var(--e-pop) both; }
+
+.dz-banner { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 16px; border-radius: var(--radius-lg);
+  border: 1px solid var(--accent-line); background: #0F1420; animation: m-rise var(--t3) var(--e-out) both; }
+.dz-banner .tx { flex: 1; min-width: min(260px, 100%); font-size: 14px; line-height: 1.5; }
+.dz-banner .tx > span { color: var(--ink-3); }
+.dz-banner button { height: 38px; padding: 0 14px; border-radius: var(--radius-md); font-size: 13.5px; }
+.dz-banner .go { border: 0; background: var(--ink); color: var(--bg); font-weight: 600; }
+.dz-banner .keep { border: 1px solid var(--line-3); background: transparent; color: var(--ink); font-weight: 500; }
+
+.dz-body { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+.dz-route { flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.dz-rh { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.dz-rh h2 { font-size: 22px; letter-spacing: -.03em; }
+.dz-rh .mono { font-size: 12px; color: var(--muted); }
+.dz-empty { margin: 0; padding: 20px; border: 1px dashed var(--line-3); border-radius: var(--radius-lg); font-size: 14px; color: var(--muted); }
+
+/* route by stage: columns rise, rows fade in by row (first paint only: --d0 is 0 on later picks) */
+.dz-cols { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.dz-col { display: flex; flex-direction: column; gap: 6px; animation: m-rise var(--t4) var(--e-out) both; animation-delay: calc(var(--d0, 360ms) + var(--i) * var(--stagger)); }
+.dz-col .hd { display: flex; justify-content: space-between; }
+.dz-col .hd .mono { font-size: 11px; color: var(--muted); }
+.dz-col .hd .ok { color: var(--go); }
+.cr { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius-md); font-size: 13.5px; border: 1px solid var(--line); background: var(--inset);
+  animation: m-fade var(--t3) var(--e-out) both; animation-delay: calc(var(--d0, 360ms) + 120ms + var(--j) * 40ms); }
+.cr:hover { translate: 2px 0; filter: brightness(1.3); }
+.cr .t { flex: 1; min-width: 0; }
+.cr .ck { color: var(--go); }
+.cr .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; border: 1.5px solid var(--accent); }
+.cr .n { font-size: 11px; color: var(--accent); }
+.cr.done, .cr.opt { color: var(--muted); }
+.cr.cur { border-color: var(--accent-line); background: var(--accent-soft); }
+.cr.cur .t { font-weight: 600; }
+.cr.cur .dot { background: var(--accent); border: 0; }
+.cr.opt { border-style: dashed; }
+.cr.opt .dot { border: 1.5px dashed #4A4A52; }
+.cr.fin { border-color: #4A2A2A; background: var(--bad-soft-2); }
+.cr.fin .dm { color: var(--bad); }
+.cr[aria-current], .cr[aria-current]:hover { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.cr[aria-current] .dot { background: var(--accent-ink); border: 0; }
+.cr[aria-current] :is(.ck, .n) { color: inherit; }
+
+/* concept panel: slides in from the right whenever it changes (--pd: first paint waits for the columns) */
+.dz-panel { flex: 1 1 300px; max-width: 340px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--inset); padding: 20px;
+  display: flex; flex-direction: column; gap: 16px; }
+.dz-panel[hidden] { display: none; }
+.dz-panel.in { animation: m-slide var(--t4) var(--e-out) var(--pd, 0ms) both; }
+.dz-panel .k { font-size: 11px; letter-spacing: .12em; }
+.dz-panel h2 { margin: 8px 0 6px; font-size: 28px; letter-spacing: -.035em; }
+.dz-panel p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--ink-3); }
+.dz-panel a:hover { translate: 2px 0; }
+.dz-panel .nu { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.dz-panel .nu .lab { margin-bottom: 6px; }
+.dz-panel .nu a, .dz-panel .nu .none { display: block; font-size: 13px; }
+.dz-panel .nu .none { color: var(--muted); }
+.dz-panel > div > .lab { margin-bottom: 8px; }
+.dz-panel .ls { display: flex; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
+.dz-panel .ls:last-child { border-bottom: 1px solid var(--line); }
+.dz-panel .ls .mono { color: var(--muted); }
+.dz-panel .pb { display: flex; justify-content: space-between; gap: 8px; padding: 9px 10px; border-radius: var(--radius-md); background: var(--surface); font-size: 13px; }
+.dz-panel .pb + .pb { margin-top: 6px; }
+.dz-panel .pb .mono { font-size: 11px; }
+.dz-panel .acts { display: flex; gap: 8px; }
+.dz-panel .acts a { flex: 1; display: flex; justify-content: center; align-items: center; height: 42px; border-radius: var(--radius-md); font-size: 14px; }
+.dz-panel .go, .dz-panel .go:hover { background: var(--ink); color: var(--bg); font-weight: 600; }
+.dz-panel .out { border: 1px solid var(--line-3); }
+
+/* library: chips pop in turn */
+.dz-lib { display: flex; flex-direction: column; gap: 12px; border-top: 1px solid var(--line); padding-top: 22px; animation: m-fade var(--t4) var(--e-out) 600ms both; }
+.dz-lib .hd { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.dz-lib h2 { font-size: 18px; }
+.dz-lib .hd span { font-size: 13px; color: var(--muted); }
+.dz-lib .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.dz-lib .chips a { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: var(--radius-full); border: 1px solid var(--line-2); font-size: 13.5px;
+  animation: m-pop var(--t3) var(--e-pop) both; animation-delay: calc(680ms + var(--i) * 30ms); }
+.dz-lib .chips a:hover { background: var(--surface); translate: 0 -2px; }
+.dz-lib .sw { width: 8px; height: 8px; border-radius: 2px; }
+
+
+@media (max-width: 1016px) { .dz-panel { max-width: none; } }   /* the panel wraps under the route here: use the full width */
+@media (max-width: 900px) { .dz-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .dz { padding: 24px 16px 40px; } .dz-head h1 { font-size: 34px; } }
+@media (max-width: 480px) { .dz-cols { grid-template-columns: minmax(0, 1fr); } }

@@ -1,0 +1,20 @@
+---
+// /courses/… moved: the list became Destinations (the entry point), each course moved to /library/… unchanged.
+import { getCollection } from 'astro:content';
+import Redirect from '../../components/Redirect.astro';
+import { courseData } from '../../lib/course.mjs';
+import { u } from '../../lib/url.mjs';
+export async function getStaticPaths() {
+  const out = [{params: {path: undefined}, props: {to: u('/destinations/')}}, {params: {path: 'ml-maths-course/diagnostic'}, props: {to: u('/library/ml-maths-course/diagnostic/')}}];
+  for (const c of await getCollection('courses')) {
+    const { modules } = await courseData(c.id);
+    out.push({params: {path: c.id}, props: {to: u(`/library/${c.id}/`)}});
+    for (const m of modules) {
+      out.push({params: {path: `${c.id}/${m.slug}`}, props: {to: u(`/library/${c.id}/${m.slug}/`)}});
+      for (const l of m.lessons) out.push({params: {path: `${c.id}/${m.slug}/${l.data.slug}`}, props: {to: u(`/library/${c.id}/${m.slug}/${l.data.slug}/`)}});
+    }
+  }
+  return out;
+}
+---
+<Redirect to={Astro.props.to} />

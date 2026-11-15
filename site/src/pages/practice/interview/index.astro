@@ -6,9 +6,9 @@ import { u } from '../../../lib/url.mjs';
 const roles = [...new Set(IDX.rounds.map(r => r.role))];
 ---
 <Practice title="Interview prep" cur="interview">
-  <h1 style="font-size:40px;letter-spacing:-.045em;margin:4px 0 6px">Interview prep</h1>
-  <p style="color:var(--muted);margin:0 0 8px;max-width:660px">Timed rounds by role. Coding problems are graded by tests; theory questions come from the course lessons and you grade yourself against the model answer. Each round ends with a readiness report.</p>
-  <a class="card" id="live" hidden style="display:block;padding:16px 20px;margin:16px 0;border-color:var(--accent);text-decoration:none"></a>
+  <header class="pagehead"><div class="lab">Arena · Interview rounds · {IDX.rounds.length}</div><h1>Interview prep</h1>
+  <p>Timed rounds by role. Coding problems are graded by tests; theory questions come from the course lessons and you grade yourself against the model answer. Each round ends with a readiness report.</p></header>
+  <a class="card" id="live" hidden style="display:block;padding:14px 16px;margin:0 0 16px;border:1px solid var(--arena-line);background:var(--arena-soft);text-decoration:none"></a>
   {roles.map(role => <><div class="parth"><h3>{role}</h3></div><div class="mods">{IDX.rounds.filter(r => r.role === role).map(r =>
     <PCard href={u(`/practice/interview/${r.id}/`)} lab={`${r.minutes} min`} title={r.title} blurb={r.blurb} right={`${(r.coding || []).length} coding · ${(r.theory || []).length} theory`}>
       <span slot="badge" class="pill" data-round={r.id} hidden></span></PCard>)}</div></>)}

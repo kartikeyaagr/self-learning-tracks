@@ -80,7 +80,7 @@ def site_lessons():
         for f in sorted((cj.parent / 'lessons').glob('*.md')):
             head = f.read_text(encoding='utf-8').split('\n---\n', 1)[0]
             fm = {k: json.loads(v) for k, v in re.findall(r'^(\w+): (.*)$', head, re.M)}
-            yield cfg['key'], cfg['title'], fm, f"{BASE}/courses/{cj.parent.name}/{mods[fm['module']]}/{fm['slug']}/"
+            yield cfg['key'], cfg['title'], fm, f"{BASE}/library/{cj.parent.name}/{mods[fm['module']]}/{fm['slug']}/"
 
 
 def lesson_index():
@@ -257,7 +257,8 @@ def main():
     data = [m for m in data if m['lessons']]               # topics appear as soon as they have a problem
     plans = [load_plan(f, ids) for f in sorted((SRC / 'plans').glob('*.json'))]
     builds, quizzes, rounds = extras(ids, lessons)
-    rt = routes(lessons, ids, {r['id'] for r in rounds}, {pl['id']: pl for pl in plans})
+    rt = routes(lessons, ids, {r['id']: {'title': r['title'], 'minutes': r['minutes'], 'role': r['role']} for r in rounds},
+                {pl['id']: pl for pl in plans}, probs)
     (WEB / 'routes.json').write_text(json.dumps(rt, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
     qdir = WEB / 'quiz'; qdir.mkdir(exist_ok=True)
     for f in qdir.glob('*.json'):
@@ -413,12 +414,14 @@ STAGES = ['foundations', 'core', 'systems', 'serving']
 CONTENT = SITE / 'src' / 'content'
 
 
-def routes(lessons, ids, round_ids, plans):
+def routes(lessons, ids, round_ids, plans, probs=None):
     """Unroll route data, validated: concepts (site/src/content/concepts.json), destinations (destinations.json) and
     Arena sets (one per study-plan section, optional "boss" round). Concepts get derived minutes, unlocks and lessons."""
-    courses = {cj.parent.name: json.loads(cj.read_text(encoding='utf-8'))['key']
-               for cj in (CONTENT / 'courses').glob('*/course.json')}
+    cfgs = {cj.parent.name: json.loads(cj.read_text(encoding='utf-8')) for cj in sorted((CONTENT / 'courses').glob('*/course.json'))}
+    courses = {k: c['key'] for k, c in cfgs.items()}
     mins = lesson_minutes()
+    slugs = {f"{k}:{fm['id']}": fm['slug'] for k, _, fm, _ in site_lessons()}
+    meta = {p['id']: {'id': p['id'], 't': p['t'], 'd': p['d'], 'rt': p['rt']} for p in probs or []}
     concepts = json.loads((CONTENT / 'concepts.json').read_text(encoding='utf-8'))['concepts']
     by, owner = {}, {}
     for c in concepts:
@@ -454,7 +457,8 @@ def routes(lessons, ids, round_ids, plans):
     out_c = [{**c, 'needs': c.get('needs', []), 'problems': c.get('problems', []),
               'unlocks': [d['id'] for d in concepts if c['id'] in d.get('needs', [])],
               'minutes': sum(mins[r] for r in c['lessons']),
-              'lesson_links': [{'lesson': r, 'href': lessons[r]['href'], 't': lessons[r]['t'], 'mins': mins[r]} for r in c['lessons']]}
+              'lesson_links': [{'lesson': r, 'slug': slugs[r], 'href': lessons[r]['href'], 't': lessons[r]['t'], 'mins': mins[r]} for r in c['lessons']],
+              'problem_links': [meta.get(x, {'id': x}) for x in c.get('problems', [])]}
              for c in concepts]
 
     dests = json.loads((CONTENT / 'destinations.json').read_text(encoding='utf-8'))['destinations']
@@ -488,7 +492,9 @@ def routes(lessons, ids, round_ids, plans):
             assert boss is None or boss in round_ids, f"plans/{pid}.json: {sec['name']!r}: unknown boss round {boss}"
             sets.append({'id': f"{pid}/{slugify(sec['name'])}", 'plan': pid, 'title': sec['name'],
                          'problems': sec['problems'], 'boss': boss})
-    return {'stages': STAGES, 'concepts': out_c, 'destinations': dests, 'sets': sets}
+    info = {k: {'key': c['key'], 'title': c['title'], 'layer': c.get('layer')} for k, c in cfgs.items()}
+    rounds = {k: v for k, v in round_ids.items()} if isinstance(round_ids, dict) else {}   # titles for final rounds and bosses
+    return {'stages': STAGES, 'courses': info, 'rounds': rounds, 'concepts': out_c, 'destinations': dests, 'sets': sets}
 
 
 def check(paths):

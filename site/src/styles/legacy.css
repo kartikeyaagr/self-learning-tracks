@@ -1,0 +1,200 @@
+/* Unroll look for pages without a mockup (library, Practice pages, search…): restyles the house components they use.
+   Loaded unlayered on every non-Unroll page (layouts/Site.astro), after the house stylesheet in layer "house", so these
+   rules win over the house/course stylesheets without !important.
+   Scoped to the older page shells (.shell = pages with a sidebar, #view[style] = the 1100px main of the rest) so the
+   redesigned Unroll screens, which reuse short class names (.ck, .t, .n…), are untouched. Lesson prose, figures and
+   course-rendered blocks are the lower boundary: they keep their course styling (the token bridge recolours them). */
+@scope (.shell, #view[style]) to (.prose, #air-blocks, .dg, figure) {
+
+  /* ---------- page shell + sidebar (rows like the Learn left rail, .crow) ---------- */
+  main { padding: 28px 28px 90px; }
+  .side { background: var(--bg); border-right: 1px solid var(--line); padding: 20px 14px 40px; }
+  .side :is(.nv, .mr, .li) { border: 1px solid transparent; border-radius: var(--radius-md); box-shadow: none; transition: translate var(--t2) var(--e-out), background-color var(--t2) var(--e-out); }
+  .side .nv { gap: 10px; padding: 7px 8px; font-size: 13.5px; font-weight: 500; color: var(--muted); }
+  .side .mr { grid-template-columns: 24px minmax(0, 1fr) auto; padding: 7px 8px; font-size: 13.5px; color: var(--ink); }
+  .side .li { padding: 6px 8px; font-size: 13px; color: var(--muted); }
+  .side :is(.nv, .mr, .li):not([aria-current]):hover { background: var(--surface); color: var(--ink); translate: 2px 0; }
+  .side :is(.nv, .mr, .li)[aria-current] { background: var(--accent-soft); border-color: var(--accent-line); color: var(--ink); font-weight: 600; box-shadow: none; }
+  .side .mr .n, .side .mr .c { font: 500 11px var(--font-mono); color: var(--muted); }
+  .side .mr[aria-current] .n { color: var(--accent); }
+  .side .part { margin: 22px 8px 6px; }
+  .side .ls { margin: 2px 0 8px 19px; padding-left: 10px; border-left: 1px solid var(--line-2); }
+  /* status dots: open = accent ring, done = go fill (Site layout adds .on) */
+  .sd { width: 9px; height: 9px; margin-top: 4.5px; border: 1.5px solid var(--accent); }
+  .sd.on { background: var(--go); border-color: var(--go); }
+  /* Arena (Practice sidebar): teal current row */
+  .side [data-ns="practice"] :is(.nv, .mr)[aria-current] { background: var(--arena-soft); border-color: var(--arena-line); }
+  .side [data-ns="practice"] .mr[aria-current] .n { color: var(--arena); }
+
+  /* ---------- type ---------- */
+  .lab { font: 500 11px/1.4 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  /* page header (mockups' "DESTINATIONS / Where are you headed?"): also used for module, topic, plan and build heads */
+  .pagehead, .mhead { display: block; padding: 4px 0 0; margin: 0 0 26px; background: none; border-radius: 0; max-width: 760px; }
+  .pagehead h1, .mhead h1 { margin: 8px 0 8px; font-size: clamp(32px, 4vw, 44px); line-height: 1.04; font-weight: 700; letter-spacing: -.045em; }
+  .pagehead > p, .mhead p, .mdesc { margin: 0 0 14px; font-size: 16px; line-height: 1.5; color: var(--muted); max-width: 640px; }
+  .mhead .meta, .lhead .meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  .mhead .big { display: none; }           /* decorative giant number; the label already says it */
+  .sh { margin: 36px 0 12px; align-items: baseline; }
+  .sh h2 { font-size: 22px; font-weight: 700; letter-spacing: -.03em; }
+  .parth { margin: 30px 0 12px; align-items: baseline; gap: 4px 12px; flex-wrap: wrap; }
+  .parth h3 { font-size: 18px; font-weight: 700; letter-spacing: -.02em; }
+  .foot-note { color: var(--muted); }
+
+  /* ---------- surfaces ---------- */
+  .card { background: var(--surface); border: 0; border-radius: var(--radius-lg); box-shadow: none; }
+  :where(.panel) { background: var(--surface); border-radius: var(--radius-lg); }   /* :where so page heads (.mhead.panel) can drop it */
+  .blk { margin-top: 28px; padding: 20px; border-radius: var(--radius-lg); }
+  .blk h3 { font-size: 18px; font-weight: 700; letter-spacing: -.02em; margin: 0 0 6px; }
+  .blk ol, .blk ul { color: var(--ink-2); padding-left: 20px; }
+  .blk li { margin: 6px 0; }
+
+  /* cards in a grid (modules, courses, papers, rounds) */
+  .mods { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+  .mcard { padding: 16px; gap: 8px; border-radius: var(--radius-lg); box-shadow: none; transition: translate var(--t2) var(--e-out), filter var(--t2) var(--e-out); }
+  .mcard:hover { transform: none; translate: 0 -2px; filter: brightness(1.2); box-shadow: none; }
+  .mcard > :is(h4, .seg, .ft) { margin-left: 0; margin-right: 0; }
+  .mcard h4 { margin: 2px 0 0; font-size: 16px; font-weight: 600; letter-spacing: -.01em; line-height: 1.3; }
+  .mcard .ft { font: 500 11.5px var(--font-mono); color: var(--muted); }
+  .mcard .tag { width: 10px; height: 10px; border-radius: 3px; background: var(--c, var(--accent)); }
+
+  /* progress: segmented (one per lesson/problem) and a plain 6px bar */
+  .seg { gap: 3px; }
+  .seg i { height: 6px; border-radius: 2px; background: var(--line-2); }
+  .seg i.on { background: var(--go); }
+  .bar { height: 6px; border-radius: 3px; background: var(--line-2); }
+  .bar i { border-radius: 3px; background: var(--go); }
+
+  /* ---------- buttons: 3D bottom edge (ui.css .u-btn) ---------- */
+  .btn { min-height: 44px; padding: 0 16px; gap: 8px; border: 0; border-bottom: 3px solid var(--accent-edge); border-radius: 10px;
+    background: var(--accent); color: var(--accent-ink); font: 700 15px var(--font-sans); box-shadow: none; text-decoration: none;
+    transition: translate var(--t2) var(--e-out), filter var(--t2) var(--e-out); }
+  .btn:hover { filter: brightness(1.08); opacity: 1; color: var(--accent-ink); }
+  .btn:active { transform: none; translate: 0 2px; border-bottom-width: 1px; box-shadow: none; }
+  .btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line-3); font-weight: 600; }
+  .btn.ghost:hover { background: var(--surface-2); color: var(--ink); filter: none; }
+  .btn.ghost:active { translate: 0 1px; border-bottom-width: 1px; }
+  .btn.go { background: var(--go); color: var(--bg); border: 0; border-bottom: 3px solid var(--go-edge); }
+  .btn.go:hover { color: var(--bg); }
+  .btn .xp { font: 600 11.5px var(--font-mono); padding: 2px 7px; border-radius: var(--radius-full); background: rgba(0, 0, 0, .16); }
+  [data-ns="practice"] .btn:not(.ghost, .go) { background: var(--arena); border-bottom-color: var(--arena-edge); color: var(--arena-ink); }
+
+  /* ---------- pills / chips ---------- */
+  .pill { height: 24px; padding: 0 10px; border-radius: var(--radius-full); border: 1px solid var(--line-3); background: transparent;
+    font: 500 11.5px var(--font-mono); color: var(--muted); }
+  .pill.k { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+  .pill.ok { background: var(--go-soft); border-color: var(--go-line); color: var(--go); }
+  .pill.ip { background: transparent; border-color: color-mix(in srgb, var(--streak) 40%, transparent); color: var(--streak); }
+  .pill.a { background: transparent; border-color: color-mix(in srgb, var(--xp) 40%, transparent); color: var(--xp); }
+  .pill:is(.Easy, .Medium, .Hard) { background: transparent; text-transform: uppercase; letter-spacing: .06em; }
+  .pill.Easy { color: var(--go); border-color: var(--go-line); }
+  .pill.Medium { color: var(--medium); border-color: color-mix(in srgb, var(--medium) 35%, transparent); }
+  .pill.Hard { color: var(--bad); border-color: var(--bad-line); }
+
+  /* ---------- link lists (practice this, lesson links, plan sections) ---------- */
+  :is(.plinks, .links) a { padding: 11px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--inset); font-size: 14.5px;
+    transition: translate var(--t2) var(--e-out), border-color var(--t2) var(--e-out); }
+  :is(.plinks, .links) a:hover { border-color: var(--accent-line); translate: 2px 0; }
+  :is(.plinks .pd, .links a span) { font: 500 11px var(--font-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .plinks .pd.Easy { color: var(--go); } .plinks .pd.Medium { color: var(--medium); } .plinks .pd.Hard { color: var(--bad); }
+
+  /* ---------- tables (outside lesson prose) ---------- */
+  .tbl { border: 0; border-radius: var(--radius-lg); background: var(--surface); }
+  .tbl th { padding: 10px 14px; text-align: left; font: 500 11px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); background: var(--inset); }
+  .tbl td { border-top: 1px solid var(--line); }
+  .tbl thead + tbody tr:first-child td { font: inherit; letter-spacing: normal; text-transform: none; color: inherit; background: none; }   /* real <thead>: undo the house first-row header */
+  .tbl a { color: var(--accent); }
+
+  /* ---------- course page ---------- */
+  .startcard { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; max-width: 420px; padding: 16px; margin: 0 0 8px;
+    border-radius: 14px; background: var(--accent-soft); border: 1px solid var(--accent-line); text-decoration: none;
+    transition: translate var(--t2) var(--e-out), filter var(--t2) var(--e-out); }
+  .startcard:hover { translate: 0 -2px; filter: brightness(1.15); }
+  .startcard .lab { color: var(--accent); }
+  .startcard h3 { margin: 0; font-size: 19px; font-weight: 700; letter-spacing: -.02em; line-height: 1.25; }
+
+  /* ---------- module page: lesson path (ui.css .node) ---------- */
+  .path { max-width: 760px; margin: 20px 0 0; padding: 8px 0 8px 76px; }
+  .pnode { gap: 16px; margin: 0 0 22px; }
+  .pnode .o { width: 60px; height: 60px; border: 2px solid var(--line-4); border-bottom-width: var(--edge-3d); box-shadow: none;
+    background: var(--surface); color: var(--ink-3); font: 500 17px var(--font-mono); transition: translate var(--t2) var(--e-out), scale var(--t1) var(--e-out); }
+  .pnode:hover .o { transform: none; scale: 1.07; }
+  .pnode:active .o { scale: 1; translate: 0 2px; border-bottom-width: 1px; }
+  .pnode.done .o { background: var(--go); border: 0; border-bottom: var(--edge-3d) solid var(--go-edge); color: var(--bg); font-weight: 700; box-shadow: none; }
+  .pnode.cur .o { background: var(--accent); border: 0; border-bottom: var(--edge-3d) solid var(--accent-edge); color: var(--accent-ink); font-weight: 700; box-shadow: none; }
+  .pnode.cur .o::after { inset: -6px; opacity: .6; }
+  .pnode .t { padding: 0; background: none; border: 0; border-radius: 0; box-shadow: none; display: flex; flex-direction: column-reverse; gap: 2px; }
+  .pnode.cur .t { box-shadow: none; }
+  .pnode .t b { font-size: 15px; font-weight: 600; }
+  .pnode .t span { font: 500 11px var(--font-mono); letter-spacing: .06em; color: var(--muted); }
+  .pnode.cur .t span { color: var(--accent); }
+  .mnav { max-width: 760px; margin: 30px 0 0; }
+
+  /* ---------- lesson page chrome ---------- */
+  .lgrid { gap: 40px; }
+  .lhead { padding: 0; margin: 0 0 28px; background: none; border-radius: 0; }
+  .lhead .back { font-size: 13.5px; color: var(--muted); }
+  .lhead .back:hover { color: var(--ink); }
+  .lhead .idrow { margin: 16px 0 8px; gap: 10px; }
+  .lhead .lid { font: 600 12px var(--font-mono); letter-spacing: .08em; color: var(--accent); }
+  .lhead .lid + .lab::before { content: "·"; margin-right: 10px; color: var(--faint); }
+  .lhead h1 { margin: 0 0 14px; font-size: clamp(30px, 3.6vw, 40px); line-height: 1.08; font-weight: 700; letter-spacing: -.04em; }
+  .q { font-size: 17px; font-weight: 600; letter-spacing: -.01em; line-height: 1.45; }
+  textarea { border-radius: var(--radius-lg); border: 1px solid var(--line-3); background: var(--inset); color: var(--ink); font: 15.5px/1.55 var(--font-sans); }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+  .saved { font: 500 11.5px var(--font-mono); color: var(--muted); }
+  .sample { border-radius: var(--radius-lg); background: var(--go-soft); border: 1px solid var(--go-line); padding: 14px 16px; }
+  .sample .lab { color: var(--go); }
+  .sample p { font-size: 15px; line-height: 1.55; color: var(--ink-2); }
+  .grade .gb { gap: 10px; }
+  .gbtn { height: auto; min-height: 50px; border-radius: var(--radius-lg); border: 1.5px solid var(--line-3); border-bottom-width: 4px; background: var(--surface);
+    color: var(--ink); font: 600 15px var(--font-sans); box-shadow: none; transition: translate var(--t2) var(--e-out), background-color var(--t2) var(--e-out); }
+  .gbtn:hover { background: var(--surface-2); }
+  .gbtn:active { transform: none; translate: 0 2px; border-bottom-width: 1.5px; box-shadow: none; }
+  .gbtn[data-g="1"][aria-pressed="true"] { background: var(--bad-soft); border-color: var(--bad-line); color: var(--bad); box-shadow: none; }
+  .gbtn[data-g="2"][aria-pressed="true"] { background: color-mix(in srgb, var(--medium) 10%, var(--bg)); border-color: color-mix(in srgb, var(--medium) 40%, transparent); color: var(--medium); box-shadow: none; }
+  .gbtn[data-g="3"][aria-pressed="true"] { background: var(--go-soft); border-color: var(--go-line); color: var(--go); box-shadow: none; }
+  .done-zone { margin-top: 32px; padding: 22px 20px; border-radius: 14px; background: none; border: 1px dashed var(--line-3); }
+  .done-zone p { font: 500 11.5px var(--font-mono); color: var(--muted); }
+  .pn { gap: 12px; }
+  .pn a { padding: 14px 16px; gap: 4px; box-shadow: none; transition: translate var(--t2) var(--e-out), filter var(--t2) var(--e-out); }
+  .pn a:hover { transform: none; translate: 0 -2px; filter: brightness(1.2); box-shadow: none; }
+  .pn a b { font-size: 15px; font-weight: 600; }
+  .srcs li { border: 0; border-radius: 10px; background: var(--inset); padding: 12px 14px; }
+  .srcs .fav { border: 0; border-radius: var(--radius-md); background: var(--surface-3); color: var(--accent); font: 600 13px var(--font-mono); }
+  .srcs a:hover { color: var(--accent); }
+  .srcs .h { font: 500 11px var(--font-mono); color: var(--muted); }
+  .rail { top: 84px; gap: 12px; }
+  .rail .card { padding: 16px; }
+  .toc a { padding: 5px 0 5px 12px; border-left: 2px solid var(--line-2); font-size: 13px; color: var(--muted); }
+  .toc a:hover { color: var(--ink); }
+  .toc a.on { border-color: var(--accent); color: var(--ink); font-weight: 600; }
+  .keyideas { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.5; color: var(--ink-3); }
+  .keyideas li { margin: 6px 0; }
+  .keyideas li::marker { color: var(--accent); }
+
+  /* ---------- quizzes ---------- */
+  .qq { border: 0; }
+  .qq legend { float: left; width: 100%; padding: 0; margin-bottom: 8px; }   /* float keeps it inside the card */
+  .qq legend + * { clear: both; }
+  .qq label { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; margin: 6px 0; border-radius: 10px; border: 1.5px solid var(--line-3); cursor: pointer; font-size: 15px;
+    transition: background-color var(--t2) var(--e-out), border-color var(--t2) var(--e-out); }
+  .qq label:hover { background: var(--surface-2); }
+  .qq label:has(input:checked) { border-color: var(--arena); background: var(--arena-soft); }
+  .qq input { accent-color: var(--arena); margin-top: 4px; }
+}
+
+@media (max-width: 959px) {
+  @scope (.shell, #view[style]) to (.prose, #air-blocks, .dg, figure) {
+    main { padding: 22px 24px 80px; }
+    .path { padding-left: 0; }
+  }
+}
+@media (max-width: 640px) {
+  @scope (.shell, #view[style]) to (.prose, #air-blocks, .dg, figure) {
+    main { padding: 16px 16px 80px; }
+    .mods { grid-template-columns: minmax(0, 1fr); }
+    .pagehead h1, .mhead h1 { font-size: 30px; }
+    .pnode .o { width: 50px; height: 50px; font-size: 15px; }
+    .startcard { max-width: none; }
+  }
+}

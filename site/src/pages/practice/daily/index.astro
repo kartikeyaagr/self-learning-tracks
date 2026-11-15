@@ -7,7 +7,7 @@ import Practice from '../../../layouts/Practice.astro';
     import { dailyIndex } from '../../../lib/game.js';
     fetch(`${window.__base}/practice/index.json`).then(r => r.json()).then(I => {
       const all = I.topics.flatMap(m => m.lessons);
-      location.replace(`${window.__base}/practice/p/${all[dailyIndex(today(), all.length)].id}/`);
+      location.replace(`${window.__base}/arena/p/${all[dailyIndex(today(), all.length)].id}/`);
     });
   </script>
 </Practice>

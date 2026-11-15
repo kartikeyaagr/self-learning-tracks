@@ -8,7 +8,7 @@ const ids = items.map(l => l.id);
   <div class="lab">{lab}</div>
   <h1>{title}</h1>
   <slot />
-  <div class="meta"><span class="pill">{items.length} problem{items.length === 1 ? '' : 's'}</span>{counts(items).map(([k, v]) => <span class={`pill ${k}`}>{v} {k}</span>)}<span class="pill"><span class="dn">0</span>/{items.length} {unit}</span></div>
+  <div class="meta"><span class="pill">{items.length} problem{items.length === 1 ? '' : 's'}</span>{counts(items).map(([k, v]) => <span class={`pill ${k}`}>{v} {k}</span>)}<span class="pill"><span><span class="dn">0</span>/{items.length} {unit}</span></span></div>
   <div style="margin-top:20px;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
     <a class="btn" data-next={verbs}>{verbs.split('|')[0]} → </a>
     <div style="flex:1;min-width:180px"><div class="seg">{ids.map(id => <i data-lk={id}></i>)}</div></div>

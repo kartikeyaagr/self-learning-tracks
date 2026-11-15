@@ -9,7 +9,7 @@ const { pl } = Astro.props;
 const q = quiz(pl.id), hasQuiz = s => !!q?.sections.find(x => x.section === s.name)?.questions?.length;
 let i = 0;
 ---
-<Practice title={pl.title} cur="plans" description={pl.blurb} crumbs={[['Study plans', u('/practice/plans/')], [pl.title, Astro.url.pathname]]}>
+<Practice title={pl.title} cur="plans" description={pl.blurb} crumbs={[['Study plans', u('/arena/')], [pl.title, Astro.url.pathname]]}>
   <PHead lab={`Study plan · ${pl.group}`} title={pl.title} items={planItems(pl)} big={pl.sections.length} verbs="Start plan|Continue|Practise again">
     <p style="margin:0 0 16px;color:var(--muted);max-width:620px;font-size:16.5px">{pl.blurb}</p>
   </PHead>
