@@ -1,4 +1,4 @@
-/* Learn (mockups/desktop/Learn.dc.html): route rail, concept path, today rail. */
+/* Learn (mockups/desktop/Learn.dc.html): route rail, concept path, today rail. Phones: the block at the end. */
 .lr-route { display: flex; flex-direction: column; gap: 8px; }
 .lr-route .nm { font-size: 20px; font-weight: 700; letter-spacing: -.02em; }
 .lr-route .ft { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted); }
@@ -31,7 +31,7 @@
 .lc-banner > div { flex: 1; min-width: 240px; }
 
 .lc-path { list-style: none; margin: 0; padding: 36px 0 8px; width: 100%; max-width: 620px; display: flex; flex-direction: column; align-items: center; gap: 20px; }
-.lc-path > li { display: flex; align-items: center; gap: 14px; }
+.lc-path > li { display: flex; align-items: center; gap: 14px; transform: translateX(var(--x, 0)); }
 .lc-path > li.col { flex-direction: column; gap: 12px; }
 .lc-path .lb { font-size: 14px; color: var(--muted); }
 .lc-path .lb.ink { color: var(--ink); }
@@ -72,3 +72,55 @@
 .lt-review { padding: 16px; border-radius: var(--radius-lg); border: 1px solid var(--accent-line); background: #0F1420; display: flex; flex-direction: column; gap: 6px; }
 .lt-review:hover { translate: 0 -2px; filter: brightness(1.2); }
 .lt-review .go { font-size: 14px; font-weight: 600; color: var(--accent); }
+
+/* Phones (mockups/mobile/MobileHome.dc.html): banner, path and a one-line "today"; the rails hide (the route is in
+   the top bar chip). Colours come from the light tokens ([data-surface="mobile"]). */
+#learn .only-m, .lm-today { display: none; }
+@media (max-width: 640px) {
+  #learn { padding-top: 4px; gap: 16px; }
+  #learn .u-rail-l, #learn .u-rail-r, #learn .only-d { display: none; }
+  #learn .only-m { display: revert; }
+
+  #learn .lc-banner { --banner: var(--accent); border-radius: 18px; padding: 16px 18px; gap: 12px; flex-wrap: nowrap; }
+  .lc-banner > div { min-width: 0; }
+  .lc-banner .k { font-size: 10.5px; letter-spacing: .08em; }
+  .lc-banner :is(.k, .s) { color: color-mix(in srgb, #FFFFFF 86%, var(--accent)); }
+  .lc-banner h1 { margin: 0; font-size: 24px; letter-spacing: -.02em; }
+  .lc-banner .s { font-size: 13px; font-weight: 600; }
+  .lc-banner .notes { flex: none; width: 44px; height: 44px; padding: 0; justify-content: center; border-radius: 12px; border: 2px solid var(--accent-bar); }
+  .lc-banner .notes:hover { background: rgba(255, 255, 255, .15); }
+
+  .lc-path { --node: 64px; padding-top: 22px; gap: 16px; }
+  .lc-path > li { transform: translateX(var(--xm, 0)); }
+  .lc-path > li > :is(.lb, .lb2):not(.ck) { display: none; }     /* nodes carry their names in aria-label, as in the mockup */
+  .lc-path .node.sq { border-radius: 18px; }
+  .lc-path .node.lock, .lc-check { background: var(--locked); border-bottom-color: var(--locked-edge); }
+  .lc-path .node.done > svg { width: 26px; height: 26px; }
+  :is(.lc-path .node.done, .lc-check.done) > svg { stroke: var(--accent-ink); }
+  .lc-ref .node { background: var(--xp-soft); border: 2px solid var(--xp-line); border-bottom-width: 4px; }
+  .lc-ref .node > svg { width: 22px; height: 22px; stroke: var(--xp); }
+  .lc-check { width: 64px; height: 64px; border-radius: 18px; }
+  .lc-path .lb.ck { max-width: 260px; font-size: 13px; text-align: center; text-wrap: balance; }
+
+  .lc-ring { width: 86px; height: 86px; border-color: var(--accent-ring); translate: var(--xr, 0) 0; }
+  .lc-start { position: relative; width: min(300px, calc(100vw - 48px)); padding: 14px 16px; gap: 4px; border-radius: 16px; background: var(--surface); border: 2px solid var(--accent-ring); }
+  .lc-start strong { font-size: 16px; font-weight: 800; }
+  .lc-start p { font-size: 13px; color: var(--ink-2); }
+  .lc-start .u-btn { margin-top: 6px; border-radius: 12px; border-bottom-width: 4px; font-weight: 800; }
+  /* the whole card is the tap target: the button's ::after covers it. filter/scale/translate on the button would make it
+     the ::after's containing block and shrink the target mid-tap, so the press sinks via margin instead. */
+  .lc-start .u-btn::after { content: ""; position: absolute; inset: 0; border-radius: 16px; }
+  .lc-start .u-btn, .lc-start .u-btn:is(:hover, :active) { filter: none; scale: none; translate: none; }
+  .lc-start:hover .u-btn { background: color-mix(in srgb, var(--accent) 90%, #FFFFFF); }
+  .lc-start .u-btn:active { margin-top: 9px; border-bottom-width: 1px; }
+
+  .lc-next { margin-top: 18px; padding: 14px 16px; border-color: var(--line-2); }
+  .lc-next .nt { font-size: 17px; }
+
+  .lm-today { width: 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 14px; padding: 12px 14px;
+    border-radius: 14px; background: var(--surface); border: 1.5px solid var(--line); font-size: 13px; color: var(--ink-2);
+    animation: m-rise var(--t4) var(--e-out) 600ms both; }
+  .lm-today b { font-weight: 500; color: var(--ink); }
+  .lm-today .g b { color: var(--xp); }
+  .lm-today .st { font-weight: 700; color: var(--streak); }
+}

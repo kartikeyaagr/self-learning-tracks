@@ -100,7 +100,7 @@ import '../../styles/screens/review.css';
         for (const st of Object.values(A)) for (const r of Object.values(st?.rev || {})) { const j = D.indexOf(r?.due); if (j > 0) cnt[j]++; }
         cnt[0] = total - i + probs.length;
         const mx = Math.max(1, ...cnt), names = D.map(d => new Date(d + 'T12:00:00').toLocaleDateString('en', {weekday: 'short'}));
-        const bars = cnt.map((n, j) => { const h = Math.max(3, Math.round(n / mx * 70)); return `<rect x="${4 + j * 34}" y="${80 - h}" width="26" height="${h}" rx="3" fill="${j ? '#34507A' : 'var(--accent)'}" style="animation-delay:${j ? 420 + j * 60 : 360}ms"/>`
+        const bars = cnt.map((n, j) => { const h = Math.max(3, Math.round(n / mx * 70)); return `<rect x="${4 + j * 34}" y="${80 - h}" width="26" height="${h}" rx="3" fill="${j ? 'var(--accent-bar, #34507A)' : 'var(--accent)'}" style="animation-delay:${j ? 420 + j * 60 : 360}ms"/>`
           + `<text x="${17 + j * 34}" y="98" font-family="Geist Mono, monospace" font-size="10" fill="var(--muted)" text-anchor="middle">${names[j]}</text>`; }).join('');
         const refs = []; for (const [n, st] of Object.entries(A)) for (const [k, r] of Object.entries(st?.rev || {}))
           if ((r?.miss || 0) >= REFRESHER.misses) refs.push(n === 'practice' ? P[k]?.t : plain(Rv[n]?.[k]?.t || Rv[n]?.[k]?.q));

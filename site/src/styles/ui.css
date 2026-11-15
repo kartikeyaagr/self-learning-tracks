@@ -4,6 +4,7 @@
 body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-sans); -webkit-font-smoothing: antialiased; }
 a { color: var(--ink); text-decoration: none; }
 a:hover { color: #FFFFFF; }
+[data-surface="mobile"] a:hover { color: #000000; }   /* mobile mockups: links darken on hover */
 button { font: inherit; color: inherit; cursor: pointer; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
 .mono { font-family: var(--font-mono); }
@@ -31,7 +32,7 @@ h1, h2, h3 { margin: 0; }
 .node { width: var(--node); height: var(--node); border-radius: 50%; display: flex; align-items: center; justify-content: center; flex: none; }
 .node.done { background: var(--go); border-bottom: var(--edge-3d) solid var(--go-edge); }
 .node.cur { background: var(--accent); border-bottom: var(--edge-3d) solid var(--accent-edge); }
-.node.lock { background: var(--surface-2); border-bottom: var(--edge-3d) solid #101013; cursor: not-allowed; }
+.node.lock { background: var(--locked, var(--surface-2)); border-bottom: var(--edge-3d) solid var(--locked-edge, #101013); cursor: not-allowed; }   /* --locked*: mobile tokens */
 .node.sq { border-radius: 20px; }
 .node.open-arena { background: var(--arena-soft); border: 2px solid var(--arena); border-bottom-width: var(--edge-3d); }
 a.node:hover { scale: 1.07; }

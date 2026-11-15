@@ -198,3 +198,36 @@
     .startcard { max-width: none; }
   }
 }
+
+/* ---------- phones: light mobile surface (data-surface="mobile"), pages without a mockup ---------- */
+.u-contents { display: none; }
+@media (max-width: 640px) {
+  .u-contents { display: inline-flex; align-items: center; height: 36px; padding: 0 14px; margin: 0 0 14px; border-radius: var(--radius-full);
+    border: 1.5px solid var(--line-2); border-bottom-width: 3px; background: var(--surface); color: var(--ink); font: 700 13px var(--font-sans); cursor: pointer; }
+  .u-contents::before { content: ""; width: 14px; height: 2px; margin-right: 8px; background: currentColor; box-shadow: 0 -5px currentColor, 0 5px currentColor; }
+  .u-contents:active { translate: 0 2px; border-bottom-width: 1.5px; }
+  /* long content scrolls inside its own box, never the page */
+  #view { min-width: 0; overflow-wrap: anywhere; }
+  #view .prose :is(pre, .astro-code, .katex-display, .tbl) { max-width: 100%; overflow-x: auto; }
+  #view .prose :is(img, svg, video) { max-width: 100%; height: auto; }
+  #view .prose table { display: block; max-width: 100%; overflow-x: auto; }
+  #view .dg-scroll, #view .fig { max-width: 100%; overflow-x: auto; }
+  .side { z-index: 80; }
+  @scope (.shell, #view[style]) to (.prose, #air-blocks, .dg, figure) {
+    /* white cards need the 1px line on the off-white page (mobile mockups) */
+    :is(.card, .mcard, .panel:not(.mhead, .lhead), .blk, .tbl, .pn a, .startcard) { border: 1px solid var(--line); }
+    .startcard { border-color: var(--accent-line); }
+    .mcard:hover, .pn a:hover, .startcard:hover { filter: none; }
+    .btn { border-radius: 12px; }
+    .btn .xp { background: rgba(0, 0, 0, .12); }
+    .sh { margin-top: 28px; }
+    .sh h2 { font-size: 20px; }
+    .blk { padding: 16px; }
+    .lgrid { gap: 24px; }
+    .lhead h1 { font-size: 28px; }
+    .tbl th, .tbl td { padding: 9px 12px; }
+    .done-zone { padding: 18px 16px; }
+    .pn { grid-template-columns: minmax(0, 1fr); }
+    .pnode .t { min-width: 0; }
+  }
+}

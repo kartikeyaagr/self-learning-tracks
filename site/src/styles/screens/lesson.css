@@ -40,7 +40,6 @@ body:has(#lp) #view { padding: 0; }
 .lp-step > :nth-child(1) { animation-delay: 60ms; }
 .lp-step > :nth-child(2) { animation-delay: 140ms; }
 .lp-step > :nth-child(n+3) { animation-delay: 220ms; }
-.lp-step > .lp-fb { animation: m-rise var(--t3) var(--e-out) both; }
 .lab.acc { color: var(--accent); }
 .lp-head h1 { margin: 8px 0; font-size: 32px; line-height: 1.1; font-weight: 700; letter-spacing: -.035em; }
 .lp-body { font-size: 16px; line-height: 1.55; color: var(--ink-3); }
@@ -79,7 +78,8 @@ body:has(#lp) #view { padding: 0; }
 .lp-opt[data-state="right"] { border-color: var(--go); background: var(--go-soft); animation: m-select 420ms var(--e-pop); }
 .lp-opt[data-state="wrong"] { border-color: var(--bad); background: var(--bad-soft); animation: m-shake 380ms var(--e-out); }
 
-.lp-fb { border-radius: var(--radius-lg); padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+.lp-foot { display: flex; flex-direction: column; gap: 18px; }
+.lp-fb { border-radius: var(--radius-lg); padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; animation: m-rise var(--t3) var(--e-out) both; }
 .lp-fb strong { font-size: 16px; }
 .lp-fb span { font-size: 14.5px; line-height: 1.45; }
 .lp-fb.right { background: var(--go-soft); border: 1px solid var(--go-line); }
@@ -130,16 +130,6 @@ body:has(#lp) #view { padding: 0; }
 .lp-adds { padding: 16px; border-radius: var(--radius-lg); background: var(--surface); display: flex; flex-direction: column; gap: 8px; }
 .lp-adds .tx { font-size: 13.5px; line-height: 1.5; color: var(--ink-3); }
 
-@media (max-width: 640px) {
-  .lp-top { padding: 12px 16px; gap: 12px; }
-  .lp-page { padding: 20px 16px 32px; gap: 24px; }
-  .lp-nav, .lp-side { max-width: none; }
-  .lp-nav { order: 2; }
-  .lp-side { order: 3; }
-  .lp-opts { flex-direction: column; }
-  .lp-btn { min-width: 0; flex: 1; }
-}
-
 /* completion */
 .lp-done { max-width: 520px; margin: 0 auto; padding: 40px 28px; display: flex; flex-direction: column; gap: 18px; min-height: calc(100vh - 66px); }
 .lp-done .hero { display: flex; flex-direction: column; align-items: center; gap: 12px; padding-top: 20px; text-align: center; }
@@ -171,3 +161,64 @@ body:has(#lp) #view { padding: 0; }
 .lp-done .cta { height: 54px; display: flex; align-items: center; justify-content: center; padding: 0 16px; border-radius: var(--radius-xl); background: var(--ink); color: var(--bg);
   font-weight: 800; font-size: 17px; text-align: center; animation: m-rise var(--t4) var(--e-out) 1450ms both; }
 .lp-done .cta:hover { color: var(--bg); filter: brightness(.92); }
+
+/* Phones (mockups/mobile/MobileLesson, MobileComplete), on the light surface (tokens.css [data-surface="mobile"]).
+   Full screen: no site top bar or tabs, no step list or right rail (the completion screen carries the Arena card).
+   Feedback and the action button share .lp-foot, which sticks to the bottom; feedback slides up from behind the button.
+   Literals only where the mockup has no token (feedback body text). */
+@media (max-width: 640px) {
+  body:has(#lp) { padding-bottom: 0; }
+  body:has(#lp) :is(.u-mtop, .u-tabs) { display: none; }
+  .lp { min-height: 100dvh; display: flex; flex-direction: column; }
+
+  .lp-top { padding: calc(14px + env(safe-area-inset-top)) 20px 0; gap: 12px; border-bottom: 0; }
+  .lp-x { width: 44px; height: 44px; border: 0; }
+  .lp-x:hover { background: none; color: var(--ink); }
+  .lp-x svg { width: 20px; height: 20px; }
+  .lp-prog { gap: 4px; }
+  .lp-prog > span { background: var(--line); }
+  .lp-xp, .lp-streak { font-size: 12px; white-space: nowrap; }
+
+  .lp-page { flex: 1; flex-direction: column; flex-wrap: nowrap; align-items: stretch; width: 100%; padding: 14px 20px 0; gap: 0; }
+  .lp-nav, .lp-side { display: none; }
+  .lp-main { flex: 1 1 auto; max-width: none; gap: 14px; }
+  .lp-step { gap: 14px; }
+  .lp-head .lab { letter-spacing: .1em; color: var(--muted); }
+  .lp-head h1 { margin: 6px 0; font-size: 22px; line-height: 1.2; font-weight: 800; letter-spacing: -.02em; }
+  .lp-body { font-size: 15px; line-height: 1.45; color: var(--ink-2); }
+
+  .sw { padding: 14px 14px 12px; border-radius: var(--radius-xl); gap: 5px; }
+  .sw-row { height: 19px; gap: 10px; }
+  .sw-row .w { width: 62px; font-size: 13.5px; }
+  .sw-row .tr { height: 12px; border-radius: 6px; background: var(--track); }
+  .sw-row .b { border-radius: 6px; background: var(--accent-bar); }
+  .sw-row .p { width: 34px; font-size: 11.5px; }
+  .sw-t { gap: 10px; margin-top: 8px; padding-top: 10px; border-top-color: var(--track); font-size: 13px; }
+  .sw-t .v { width: 34px; font-size: 12.5px; }
+
+  .qq { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+  .lp-opts { gap: 8px; }   /* short answers side by side (as the mockup), long ones stacked full width (.long) */
+  .lp-opt { min-height: 48px; padding: 8px 10px; border-radius: 14px; border-width: 2px; border-bottom-width: 4px; border-color: var(--line-2); font-weight: 700; font-size: 15px; }
+
+  .lp-foot { position: sticky; bottom: 0; z-index: 2; margin-top: auto; padding: 12px 0 0; gap: 12px; background: var(--bg); }
+  .lp-foot:not(:has(> .lp-fb:not([hidden]), > .lp-act > :is(button, .lp-contw):not([hidden]))) { display: none; }
+  .lp-foot > .lp-fb { border: 0; border-radius: var(--radius-xl); animation: m-sheet var(--t3) var(--e-out) both; }
+  .lp-fb span { font-size: 14px; line-height: 1.4; }
+  .lp-fb.right span { color: #1F3B2D; }
+  .lp-fb.wrong span { color: #4A1F1B; }
+  .lp-act { position: relative; z-index: 1; padding-bottom: calc(16px + env(safe-area-inset-bottom)); background: var(--bg); }
+  .lp-act .sp { display: none; }
+  .lp-skip { height: 54px; padding: 0 4px; }
+  .lp-contw { flex: 1; }
+  .lp-btn { min-width: 0; flex: 1; height: 54px; border-radius: var(--radius-xl); font-weight: 800; font-size: 17px; }
+  .lp-btn.check { border-bottom: 0; }
+  .lp-btn.check:disabled { background: var(--line-4); }
+  .lp-btn.go { border-bottom-width: 4px; }
+
+  .lp:has(> .lp-done:not([hidden])) .lp-top { display: none; }
+  .lp-done { flex: 1; width: 100%; min-height: 0; padding: calc(28px + env(safe-area-inset-top)) 20px calc(20px + env(safe-area-inset-bottom)); }
+  .lp-done .t.xp { border-color: var(--xp-line); background: var(--xp-soft); }
+  .lp-done .t.ok { border-color: var(--go-line); background: var(--go-soft); }
+  .lp-done .t.tm { border-color: var(--accent-ring); background: var(--accent-soft); color: var(--accent-edge); }
+  .lp-done .practise { border: 0; }   /* data-theme="dark" on the card: dark tokens, as the mockup's dark teal card */
+}

@@ -58,3 +58,23 @@
 .rv-probs a { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius-md); background: var(--surface); font-size: 13.5px; }
 .rv-probs a:hover { background: var(--surface-2); }
 .rv-probs .mono { font-size: 11px; color: var(--muted); }
+
+/* phones: card flow first, deck + forecast below; light palette (hard-coded dark values above get light counterparts) */
+@media (max-width: 640px) {
+  .u-page:has(#rvMain) { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 20px; }
+  .u-page:has(#rvMain) > * { flex: none; max-width: none; min-width: 0; }
+  #rvMain { order: -1; gap: 14px; }
+  .rv-card { min-height: 280px; padding: 20px; border-radius: var(--radius-lg); }
+  .rv-card h1 { font-size: 22px; }
+  .rv-ans { font-size: 15.5px; }
+  .rv-card .hd { flex-wrap: wrap; }
+  .rv-show { border-bottom-color: #000; }
+  .rv-show .mono { display: none; }          /* "space" hint means nothing on a phone */
+  .rv-grades { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rv-grades button:hover { filter: none; }
+  .rv-grades .hard { border-color: var(--xp-line); background: var(--xp-soft); }
+  .rv-clear { padding: 24px 20px; border-radius: var(--radius-lg); }
+  .rv-clear span { color: var(--go); }
+  .rv-miss { background: var(--accent-soft); }
+  .rv-miss p { color: var(--ink-2); }
+}

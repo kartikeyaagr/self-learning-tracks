@@ -68,3 +68,15 @@
 .katex-display{overflow-x:auto;overflow-y:hidden;padding:4px 0}
 @media (max-width:1100px){.pgrid{grid-template-columns:minmax(0,1fr)}.ide{position:static}}
 @media (max-width:640px){.prow{grid-template-columns:12px minmax(0,1fr)}.prow .rt{grid-column:2}.prow.num{grid-template-columns:22px 12px minmax(0,1fr)}.prow.num .rt{grid-column:3}.CodeMirror{height:340px}}
+@media (max-width:640px){
+  .prow{border:1px solid var(--line);background:var(--surface)}
+  .prow:hover{translate:0 0}
+  .filters{padding:14px;border:1px solid var(--line)}
+  .filters input[type=search]{flex:1 1 100%}
+  .filters select{flex:1 1 40%}
+  .res{max-height:none;padding:12px 14px}
+  .exs .e,.reveal .card,.colab{border-color:var(--line)}
+  .reveal .card{padding:16px}
+  .colab{padding:16px}
+  .CodeMirror{max-width:100%}
+}
