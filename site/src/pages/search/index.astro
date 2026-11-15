@@ -9,7 +9,8 @@ import { u } from '../../lib/url.mjs';
   <div id="search"></div>
   <script is:inline define:vars={{ src: u('/pagefind/pagefind-ui.js') }}>
     const s = document.createElement('script'); s.src = src;
-    s.onload = () => new PagefindUI({element: '#search', showSubResults: true, showImages: false, autofocus: true});
+    s.onload = () => { new PagefindUI({element: '#search', showSubResults: true, showImages: false, autofocus: true});
+      document.querySelector('#search input')?.setAttribute('aria-label', 'Search lessons and problems'); };   // Pagefind UI's input has only a placeholder
     s.onerror = () => document.getElementById('search').textContent = 'The search index is built with the production build (npm run build).';
     document.head.appendChild(s);
   </script>

@@ -15,7 +15,9 @@
     --shadow: none; --lift: none; --dot: transparent;   /* no decorative shadows or dotted grounds */
     --paper: var(--surface-2); --paper-line: var(--line-3); --kraft: var(--ink-3);   /* lesson callouts (worked examples, notes) */
     color-scheme: dark;
+    --accent-text: var(--accent);   /* accent used as text */
   }
+  [data-surface="mobile"] { --accent-text: var(--accent-edge); }   /* the mockup blue is 4.2:1 on accent-soft */
 }
 
 .u-top{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:12px 28px;

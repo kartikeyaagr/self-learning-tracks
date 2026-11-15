@@ -311,7 +311,7 @@ const diff = {Easy: 'easy', Medium: 'med', Hard: 'hard'}[p.d as string];
         say(`Running in your browser with ${P.rtName}`); arm(10000);
         RUN.w.postMessage({id: k, code, fn: P.fn, tests: tj, runtime: P.rt, pkgs: P.pkgs, tol: P.tol});
       });
-      const ed = window.__ed = window.CodeMirror.fromTextArea($('#code'), {mode: P.rt === 'sql' ? 'text/x-sqlite' : 'python', lineNumbers: true, indentUnit: 4, matchBrackets: true,
+      const ed = window.__ed = window.CodeMirror.fromTextArea($('#code'), {mode: P.rt === 'sql' ? 'text/x-sqlite' : 'python', screenReaderLabel: 'Code editor', lineNumbers: true, indentUnit: 4, matchBrackets: true,
         extraKeys: {Tab: c => c.somethingSelected() ? c.indentSelection('add') : c.replaceSelection('    '), 'Cmd-Enter': () => go(false), 'Ctrl-Enter': () => go(false),
           'Shift-Cmd-Enter': () => go(true), 'Shift-Ctrl-Enter': () => go(true)}});
       if (st.code[k] != null) ed.setValue(st.code[k]);
