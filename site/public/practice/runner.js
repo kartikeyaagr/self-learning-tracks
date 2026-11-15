@@ -12,6 +12,7 @@ const ready = (async () => {
   py.setStderr({batched: s => out.push(s)});
   await py.loadPackage('numpy');
   py.FS.writeFile('harness.py', await (await fetch('harness.py')).text());
+  py.FS.writeFile('shapetrace.py', await (await fetch('shapetrace.py')).text());   // the problem page's shape trace
   py.runPython('import sys; sys.path.insert(0, ".")');
   postMessage({type: 'ready'});
 })();
@@ -24,7 +25,7 @@ onmessage = async ({data: m}) => {
     out = [];
     const g = py.globals.get('dict')();
     g.set('_code', m.code); g.set('_fn', m.fn); g.set('_tests', typeof m.tests === 'string' ? m.tests : JSON.stringify(m.tests)); g.set('_rt', m.runtime);
-    g.set('_tol', py.toPy(m.tol || [1e-6, 1e-8]));
+    g.set('_tol', py.toPy(m.tol || [1e-6, 1e-8])); g.set('_trace', !!m.trace);
     const res = py.runPython(`
 import json, harness
 _ns = {}
@@ -35,9 +36,18 @@ else:
     if _fn not in _ns:
         raise NameError(f"define a function named {_fn}()")
     _target = _ns[_fn]
-json.dumps(harness.grade(_target, json.loads(_tests), _rt, *_tol))`, {globals: g});
+_res = harness.grade(_target, json.loads(_tests), _rt, *_tol)
+_tr = None
+_bad = next((i for i, r in enumerate(_res) if not r['ok']), None)
+if _trace and _rt != 'sql' and _bad is not None:   # replay the first failing test, line by line
+    import shapetrace
+    _t = json.loads(_tests)[_bad]
+    _tr = shapetrace.run(_target, harness._copy(harness.prep(harness.dec(_t['a']), _rt)))
+    _tr['test'], _tr['want'] = _bad, shapetrace.desc(harness.dec(_t['e']))
+json.dumps({'results': _res, 'trace': _tr})`, {globals: g});
     g.destroy();
-    postMessage({type: 'done', id: m.id, results: JSON.parse(res), stdout: out.join('\n')});
+    const r = JSON.parse(res);
+    postMessage({type: 'done', id: m.id, results: r.results, trace: r.trace, stdout: out.join('\n')});
   } catch (e) {
     // Python tracebacks carry Pyodide's own frames first; keep the learner's part.
     const msg = String(e.message || e), i = msg.indexOf('File "solution.py"');
