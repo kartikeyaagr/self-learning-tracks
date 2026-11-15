@@ -309,7 +309,7 @@ const diff = {Easy: 'easy', Medium: 'med', Hard: 'hard'}[p.d as string];
         const arm = ms => { clearTimeout(timer); timer = setTimeout(() => { RUN.w.terminate(); RUN.w = null; RUN.cb = null; res({error: `Time limit: still running after ${ms / 1000} s. Look for an infinite loop or a very slow step.`}); }, ms); };
         RUN.cb = {status: s => { say(s); arm(90000); }, done: m => { clearTimeout(timer); RUN.cb = null; res(m); }};
         say(`Running in your browser with ${P.rtName}`); arm(10000);
-        RUN.w.postMessage({id: k, code, fn: P.fn, tests: tj, runtime: P.rt, pkgs: P.pkgs, tol: P.tol});
+        RUN.w.postMessage({id: k, code, fn: P.fn, tests: tj, runtime: P.rt, pkgs: P.pkgs, tol: P.tol, trace: true});
       });
       const ed = window.__ed = window.CodeMirror.fromTextArea($('#code'), {mode: P.rt === 'sql' ? 'text/x-sqlite' : 'python', screenReaderLabel: 'Code editor', lineNumbers: true, indentUnit: 4, matchBrackets: true,
         extraKeys: {Tab: c => c.somethingSelected() ? c.indentSelection('add') : c.replaceSelection('    '), 'Cmd-Enter': () => go(false), 'Ctrl-Enter': () => go(false),
@@ -324,8 +324,9 @@ const diff = {Easy: 'easy', Medium: 'med', Hard: 'hard'}[p.d as string];
         if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.target.closest?.('.CodeMirror')) { e.preventDefault(); go(e.shiftKey); }
       });
 
-      // ---- shape trace: what the runner can honestly tell. Inputs and expected output come from the test data
-      // (their encoded shapes and dtypes); what came back is only what harness.py's `why` says about it.
+      // ---- shape trace. The runner replays the first failing test under practice/shapetrace.py and reports, line by line,
+      // every array whose shape or dtype a line changed, the line that raised, and the returned vs expected shape.
+      // Without that (SQL, or code that fails before the function runs) it falls back to the test data's input shapes.
       const params = (P.starter.match(new RegExp(`def\\s+${P.fn}\\s*\\(([^)]*)\\)`)) || [, ''])[1]
         .split(',').map(s => s.split(/[:=]/)[0].trim()).filter(s => s && s !== 'self');
       const shp = v => {
@@ -347,6 +348,21 @@ const diff = {Easy: 'easy', Medium: 'med', Hard: 'hard'}[p.d as string];
         const name = `${i < P.nex ? 'Example' : 'Hidden test'} ${i + 1}`;
         let html = row('test', x.ok ? `${name} · all ${r.results.length} passed` : `${name} · failed`);
         if (P.rt !== 'sql' && c) c.a.forEach((a, j) => html += row(params[j] || `arg ${j + 1}`, shp(a)));
+        const tr = r.trace;
+        if (tr) {
+          const src = n => (ed.getLine(n - 1) || '').trim();
+          tr.rows.forEach(t => html += `<span class="k">L${t.line} ${esc(t.name)}</span><span title="${esc(src(t.line))}">${esc(t.shape)}</span>`);
+          if (tr.cut) html += row('…', 'first 200 changes shown');
+          if (tr.error) {
+            html += row(`L${tr.error.line}`, tr.error.msg, true);
+            if (tr.error.line <= ed.lineCount()) { if (errMark) ed.removeLineClass(errMark, 'background', 'pb-errline'); errMark = ed.addLineClass(tr.error.line - 1, 'background', 'pb-errline'); }
+          } else {
+            const off = tr.want && tr.ret !== tr.want;
+            html += row('returned', tr.ret || 'not an array', off) + row('expected', tr.want || shp(c.e));
+            if (!off) html += row('got', x.why, true);        // right shape, wrong values
+          }
+          box.innerHTML = html; return;
+        }
         if (P.rt !== 'sql' && c) html += row('expected', shp(c.e));
         if (!x.ok) { const m = x.why.match(/^(\S+): shape (\(.*?\)) != expected (\(.*?\))$/);
           html += m ? row(m[1], `${m[2]} · want ${m[3]}`, true) : row('got', x.why, true); }

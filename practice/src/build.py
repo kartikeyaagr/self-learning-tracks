@@ -270,7 +270,7 @@ def main():
     # index.json: everything the Practice pages list (problem bodies stay in data/<slug>.json)
     (WEB / 'index.json').write_text(json.dumps({'topics': data, 'parts': [pn for pn, _ in PARTS], 'plans': plans, 'builds': builds,
                                                 'rounds': rounds}, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
-    for f in ('runner.js', 'harness.py'):                   # the in-browser runner and the grader it shares with this build
+    for f in ('runner.js', 'harness.py', 'shapetrace.py'):                   # the in-browser runner and the grader it shares with this build
         (WEB / f).write_text((OUT / f).read_text(encoding='utf-8'), encoding='utf-8')
 
     # links.json: "trackkey:lessonid" -> [[slug, title, difficulty]], for "Practice this" on lesson pages
