@@ -1,5 +1,5 @@
 META = dict(title='Plan KV-cache capacity in blocks', tags=['Inference'], diff='Medium', runtime='python',
-            lessons=['ieng:03.06', 'aieng:06.04'],
+            lessons=['ieng:03.06'],
             related=['decode-attention-with-kv-cache', 'simulate-continuous-decode-batching', 'training-compute-budget'])
 
 STATEMENT = r"""

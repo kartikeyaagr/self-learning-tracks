@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Gated delta-rule state updates', tags=['Language Models', 'Attention'], diff='Hard', runtime='numpy',
-            lessons=['aieng:07.02', 'air-fanout-v1:08.04'],
+            lessons=['aieng:04.04', 'air-fanout-v1:08.04'],
             related=['parallel-and-recurrent-linear-attention', 'mamba-2-gated-state-scan', 'scaled-dot-product-attention'])
 
 STATEMENT = r"""

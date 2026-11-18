@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='W8A8 matmul with per-channel and per-token scales', tags=['Quantization', 'JAX', 'Inference'],
-            diff='Medium', runtime='jax', lessons=['ieng:11.04', 'aieng:07.01'],
+            diff='Medium', runtime='jax', lessons=['ieng:11.04', 'ieng:11.02'],
             related=['int8-symmetric-quantize', 'straight-through-estimator-with-custom-vjp', 'mixed-precision-with-loss-scaling'],
             tol=[1e-5, 1e-6])
 

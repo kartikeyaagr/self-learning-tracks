@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Exact speculative sampling with residual resampling', tags=['Inference', 'Sampling'], diff='Hard',
-            runtime='numpy', lessons=['ieng:16.03', 'aieng:07.04'],
+            runtime='numpy', lessons=['ieng:16.03'],
             related=['text-generation-sampling', 'decode-attention-with-kv-cache'])
 
 STATEMENT = r"""

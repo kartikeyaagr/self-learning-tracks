@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Causal linear attention: parallel and recurrent forms', tags=['Attention', 'Language Models'],
-            diff='Medium', runtime='numpy', lessons=['aieng:07.02', 'aieng:04.05'],
+            diff='Medium', runtime='numpy', lessons=['aieng:04.04', 'aieng:04.05'],
             related=['scaled-dot-product-attention', 'mamba-2-gated-state-scan', 'gated-deltanet-state-update'])
 
 STATEMENT = r"""

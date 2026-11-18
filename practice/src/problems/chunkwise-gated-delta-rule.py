@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Chunkwise gated delta rule with the WY/UT transform', tags=['Language Models', 'Attention'], diff='Hard',
-            runtime='numpy', lessons=['aieng:07.02'],
+            runtime='numpy', lessons=['aieng:04.04'],
             related=['gated-deltanet-state-update', 'parallel-and-recurrent-linear-attention', 'mamba-2-gated-state-scan'])
 
 STATEMENT = r"""

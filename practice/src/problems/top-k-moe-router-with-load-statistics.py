@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Capacity-limited top-k MoE routing with balance and z-losses', tags=['Transformers', 'Language Models'],
-            diff='Hard', runtime='numpy', lessons=['aieng:06.02', 'ieng:19.04'],
+            diff='Hard', runtime='numpy', lessons=['aieng:06.06', 'ieng:19.04'],
             related=['sparse-moe-top-k-expert-routing', 'moe-token-dispatch-and-expert-aggregation', 'softmax-rows'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Top-k MoE router with load statistics and balance loss', tags=['Inference', 'Transformers'], diff='Medium',
-            runtime='torch', lessons=['ieng:19.02', 'aieng:06.02'],
+            runtime='torch', lessons=['ieng:19.02', 'aieng:06.06'],
             related=['moe-token-dispatch-and-expert-aggregation', 'expert-parallel-routing-across-gpus', 'softmax-rows'])
 
 STATEMENT = r"""

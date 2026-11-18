@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Symmetric int8 quantization', tags=['Quantization', 'Inference'], diff='Easy', runtime='numpy',
-            lessons=['aieng:07.01', 'ieng:11.01'], related=['layer-norm'])
+            lessons=['ieng:11.02', 'ieng:11.01'], related=['layer-norm'])
 
 STATEMENT = r"""
 Per-tensor symmetric quantization maps floats to int8 with a single scale:

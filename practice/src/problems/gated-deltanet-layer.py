@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='A full Gated DeltaNet token-mixing layer', tags=['Language Models', 'Attention'], diff='Hard',
-            runtime='numpy', lessons=['aieng:07.02'],
+            runtime='numpy', lessons=['aieng:04.04'],
             related=['gated-deltanet-state-update', 'chunkwise-gated-delta-rule', 'mamba-2-gated-state-scan'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='FlashAttention backward: recompute tiles from the logsumexp', tags=['Attention', 'GPU Programming'],
-            diff='Hard', runtime='numpy', lessons=['ieng:14.03', 'aieng:06.03'],
+            diff='Hard', runtime='numpy', lessons=['ieng:14.03'],
             related=['flashattention-with-online-softmax', 'blockwise-online-softmax', 'online-softmax', 'scaled-dot-product-attention'])
 
 STATEMENT = r"""

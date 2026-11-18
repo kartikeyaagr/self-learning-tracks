@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Speculative decoding end to end with a draft and a target bigram model', tags=['Inference', 'Sampling'],
-            diff='Hard', runtime='numpy', lessons=['aieng:07.04', 'ieng:16.02', 'ieng:16.03'],
+            diff='Hard', runtime='numpy', lessons=['ieng:16.03', 'ieng:16.02'],
             related=['perform-exact-speculative-sampling', 'speculative-decoding-and-token-verification', 'speculative-decoding-acceptance'])
 
 STATEMENT = r"""

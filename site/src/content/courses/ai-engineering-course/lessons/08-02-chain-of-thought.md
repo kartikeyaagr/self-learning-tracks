@@ -4,79 +4,92 @@ course: "ai-engineering-course"
 module: "08"
 slug: "chain-of-thought"
 title: "Chain of thought"
-keyIdeas: ["Chain of thought (CoT): have the model write intermediate reasoning before the final answer.", "Few-shot CoT (Wei et al.): include worked examples with reasoning in the prompt. Zero-shot CoT (Kojima et al.): add 'Let's think step by step'.", "Mechanism: each generated token gets a full forward pass, so more tokens means more computation, and intermediate results are written to the context where later tokens can attend to them.", "Gains are large for multi-step maths and logic, small for simple lookup tasks, and appeared mainly in larger models.", "Self-consistency: sample several reasoning paths at temperature > 0 and take the majority answer. Often a big accuracy boost.", "Caveats: the written reasoning isn't always faithful to how the model reached its answer, and CoT costs tokens and latency. Reasoning models do CoT internally by default."]
+keyIdeas: ["Chain of thought (CoT): have the model write intermediate reasoning before the final answer.", "Few-shot CoT (Wei et al.) puts worked examples with reasoning in the prompt; zero-shot CoT (Kojima et al.) adds 'Let's think step by step'.", "Mechanism: each generated token is another full forward pass, and intermediate results written to the context can be attended to by later tokens. The text is working memory.", "Self-consistency: sample several chains at temperature above 0 and take the majority answer. It helps when errors scatter and hurts when they agree.", "Reasoning models do CoT internally by default; for them, budgets and clear goals matter more than 'think step by step'. Written reasoning is not a faithful explanation."]
 question: "Why does writing out intermediate steps improve accuracy for a next-token predictor? Give a mechanical explanation, not 'it thinks harder'."
-answer: "A transformer does a fixed amount of computation per output token. Writing intermediate steps gives the model more forward passes (more total compute) before the answer, and stores partial results in the context where later tokens can attend to them instead of having to compute everything implicitly in one pass. So multi-step problems get decomposed into steps that each fit in one pass."
+answer: "A transformer does a fixed amount of computation per output token: one forward pass through every layer. If it must emit the answer immediately, the whole multi-step computation has to fit in that one pass. Writing intermediate steps gives it more forward passes before the answer, so more total compute, and stores partial results in the context, where later tokens can attend to them directly instead of recomputing them implicitly. A multi-step problem is decomposed into steps that each fit in one pass. That is why the gain is large for multi-step maths and logic, near zero for single-fact recall, and why each written step can also introduce an error that later steps build on."
+rubric: ["States that compute per generated token is fixed (one forward pass), so a direct answer must fit the reasoning in one pass.", "Explains that each extra token adds another forward pass, increasing total computation before the answer.", "Explains that intermediate results become context that later tokens attend to (external working memory).", "Connects the mechanism to where CoT helps (multi-step problems) and where it does not (single-fact lookup)."]
 sources: [{"title": "Wei et al.: Chain-of-Thought Prompting Elicits Reasoning (2022)", "url": "https://arxiv.org/abs/2201.11903", "note": "Few-shot examples with worked reasoning."}, {"title": "Kojima et al.: Large Language Models are Zero-Shot Reasoners (2022)", "url": "https://arxiv.org/abs/2205.11916", "note": "'Let's think step by step' alone."}, {"title": "Wang et al.: Self-Consistency (2022)", "url": "https://arxiv.org/abs/2203.11171", "note": "Sample many reasoning paths and take the majority answer."}]
+practice: ["binomial-distribution", "pass-at-k-estimator"]
 ---
 
 ## The technique
 
-Wei et al. (2022) showed that adding a few examples with worked reasoning to a prompt sharply improved large models on maths word problems. Kojima et al. found an even simpler trigger: append "Let's think step by step." to the question.
+Wei et al. (2022) put a few examples with worked reasoning into the prompt and asked the model to answer in the same style:
 
-```
+```text
 Q: A cafe had 23 apples. They used 20 for lunch and bought 6 more. How many now?
 A: They started with 23. After lunch: 23 - 20 = 3. After buying: 3 + 6 = 9. The answer is 9.
 ```
 
-## Why it works mechanically
+PaLM 540B on the GSM8K grade-school maths benchmark went from 17.9% with standard prompting to 56.9% with eight chain-of-thought examples. The gain appeared only in large models; small models wrote fluent but wrong chains. Kojima et al. (2022) found a trigger that needs no examples at all: append "Let's think step by step." It raised one model's accuracy on the MultiArith benchmark from 17.7% to 78.7%.
 
-A transformer does a fixed amount of computation per generated token: one forward pass through all layers. If it must output the answer immediately, all the reasoning has to fit inside that one pass. Writing steps out helps in two ways:
+How to write the rest of the prompt (structure, examples, delimiters) is covered in [Prompting that holds up](lesson:aieng:03.06). This lesson is about why the reasoning text helps and how to spend more of it.
+
+## Why it works, mechanically
+
+A transformer does a fixed amount of computation per generated token: one forward pass through all its layers. If it must output the answer immediately, all the reasoning has to fit inside that one pass. Writing steps out helps in two ways:
 
 - **More computation**: every intermediate token is another full forward pass.
-- **External working memory**: intermediate results ("3") are written into the context, where later tokens can attend to them directly instead of recomputing.
+- **External working memory**: intermediate results ("3") are written into the context, where later tokens can attend to them directly instead of recomputing them.
 
 ~~~dg-flow Direct answer vs chain of thought.
 [Direct] Question -(1 forward pass)-> Answer token
 [Chain of thought] Question -(pass)-> Step 1 -(pass, reads step 1)-> Step 2 -(pass, reads both)-> *Answer
 ~~~
 
-That's also why CoT helps most on multi-step problems and barely at all on single-fact recall.
-
-## Self-consistency
-
-A single reasoning chain can go wrong at one step. Wang et al. sampled many chains at temperature > 0 and took a majority vote on the final answer. On GSM8K maths this added large gains over a single greedy chain. It's an early example of spending more inference compute to get better answers.
-
-## Where it falls short
-
-- **Cost**: reasoning tokens are output tokens; they add latency and price.
-- **Faithfulness**: research has found the written reasoning can be a rationalisation: models sometimes change the answer because of a hint in the prompt without mentioning the hint. Don't treat CoT as a reliable explanation.
-- **Errors compound**: one wrong step early poisons everything after it, which motivates verification (lesson 08.05) and tree search (08.04).
-
-## CoT in reasoning models
-
-Models like o1, o3, DeepSeek-R1 and Claude with extended thinking produce long chains of thought by default, trained with RL (lesson 08.01). For these, adding "think step by step" adds little; the useful controls are the reasoning budget and a clear statement of the goal and constraints.
-
-## Why writing steps helps, mechanically
-
-A transformer does a fixed amount of computation per token. A hard multi-step problem may need more computation than one forward pass provides. Writing intermediate steps gives the model more tokens, and so more passes, and each step's result becomes part of the context the next step can read. The reasoning text is working memory.
-
-Measured effect, from Wei et al. (2022): PaLM 540B on the GSM8K grade-school maths benchmark went from 17.9% with standard prompting to 56.9% with eight chain-of-thought examples. The gain only appeared in large models; small models produced fluent but wrong chains.
-
-Zero-shot chain of thought (Kojima et al., 2022) needs no examples, just "Let's think step by step." It raised one model's accuracy on the MultiArith benchmark from 17.7% to 78.7%.
+This is also why CoT helps most on multi-step problems and barely at all on single-fact recall: a lookup already fits in one pass.
 
 ## Self-consistency: vote over paths
 
-Sample several reasoning chains at a temperature around 0.7, take each one's final answer, and return the most common one. On GSM8K, Wang et al. (2023) raised PaLM 540B from 56.5% (one greedy chain) to 74.4% with 40 samples.
+A single chain can go wrong at one step. Wang et al. sampled many chains at a temperature around 0.7, took each one's final answer and returned the most common. On GSM8K this raised PaLM 540B from 56.5% (one greedy chain) to 74.4% with 40 samples. It is an early example of spending more inference compute to get a better answer, the idea that reasoning models later built in ([Reasoning models and human feedback](lesson:aieng:08.01)).
 
-The figure simulates voting. Set how often one sample is right and how scattered the wrong answers are.
+Voting works because correct paths tend to converge on the same answer while errors scatter across many different wrong answers. When errors agree (a common misconception, an ambiguous question), voting locks in the wrong answer.
 
 ~~~dg-raw
 %%widget selfconsistency Majority-vote accuracy as you add samples.
 ~~~
 
-Voting works because correct reasoning paths tend to converge on the same answer, while errors scatter across many different wrong answers. When errors agree (a common misconception, an ambiguous question), voting can lock in the wrong answer. Try p = 30% with a single wrong option in the figure.
+<div class="ex">
+<div class="lab">Worked example</div>
 
-## Practical notes
+**when five votes help and when they hurt**
 
-- Ask for the answer in a fixed, parseable form at the end ("Final answer: 42"), so votes can be counted.
-- Voting needs answers that can be compared: numbers, labels, short strings. For open-ended writing, use a judge model to pick the best candidate instead.
+Take the worst case for voting: every wrong chain gives the same wrong answer, so it is a two-way race. With five samples, the vote is right when at least three chains are right. The count of right chains is binomial.
+
+If one chain is right with $p = 0.6$:
+
+$$
+P(\ge 3 \text{ of } 5) = 10(0.6)^3(0.4)^2 + 5(0.6)^4(0.4) + (0.6)^5 = 0.346 + 0.259 + 0.078 = 0.683
+$$
+
+Voting lifts accuracy from 60% to 68%. If wrong answers scatter across several values, the right answer only needs a plurality and the gain is larger.
+
+If one chain is right with $p = 0.4$ and the wrong chains agree, the same sum gives 0.230 + 0.077 + 0.010 = 0.317. Voting drops accuracy from 40% to 32%: the shared wrong answer now wins most votes.
+
+The price is five chains of output. At 300 tokens a chain that is 1,500 output tokens instead of 300. Latency stays roughly the same if the five calls run in parallel.
+
+</div>
+
+Practical notes:
+
+- Ask for the answer in a fixed, parseable form at the end ("Final answer: 42") so votes can be counted.
+- Voting needs answers that compare cleanly: numbers, labels, short strings. For open-ended writing, use a verifier or judge to pick the best candidate instead ([Tree of thought](lesson:aieng:08.04) covers best-of-n).
 - Cost is linear in samples. Five to ten samples get most of the benefit on many tasks.
-- With reasoning models (o1, R1 and successors), the model already produces long internal chains. Adding "think step by step" helps less, and per-call reasoning budgets replace manual prompting.
+
+## Chain of thought in reasoning models
+
+Reasoning models (OpenAI's o-series and GPT-5 thinking modes, DeepSeek-R1, Claude with extended thinking, Gemini thinking models, Qwen3 in thinking mode) produce long chains by default, learned through RL. Adding "think step by step" to their prompts adds little. The useful controls are the reasoning effort or thinking budget, and a clear statement of the goal, constraints and output format. Several providers return only a summary of the reasoning or keep it hidden, so you cannot always read or reuse it. Budgets, cost of thinking tokens and when to switch thinking off are in [Using reasoning models in apps](lesson:aieng:08.06).
+
+## Common mistakes
+
+- **Treating the chain as an explanation.** The written steps can be a rationalisation. Models change their answer because of a hint in the prompt and often do not mention the hint ([Diagnose four reasoning failures](lesson:aieng:08.05)). Judge outputs, not the story told about them.
+- **Ignoring compounding errors.** One wrong step early poisons everything after it. Search over steps and external checks address this ([Tree of thought](lesson:aieng:08.04)).
+- **Paying for reasoning nobody needs.** Reasoning tokens are output tokens: they add latency and cost. For lookups, extraction and classification, ask for the answer directly.
+- **Parsing the answer out of free text.** Without a fixed final-answer format, a vote or an eval silently miscounts.
 
 <div class="take">
 <div class="lab">Key takeaway</div>
 
-chain of thought gives the model more forward passes and a scratchpad in its own context. It's strongest on multi-step problems, gets better with self-consistency voting, and isn't a faithful explanation.
+Chain of thought gives the model more forward passes and a scratchpad in its own context. It is strongest on multi-step problems, gets better with self-consistency voting when errors scatter, and is not a faithful explanation of how the model reached its answer.
 
 </div>
