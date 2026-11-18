@@ -16,7 +16,7 @@ const { concept = null } = Astro.props;
 </div>
 <script>
   import { routes, dueCards, getRoute, state, lessonHref, conceptHref, problemHref, href, esc, plural, courseVar, shakeLocked } from '../lib/unroll.js';
-  import { events, summary, quests, routeState, refreshers, checkpointPassed, lessonDone, XP, GOAL, CHECKPOINT } from '../lib/game.js';
+  import { events, summary, quests, routeState, refreshers, checkpointPassed, lessonDone, placed, XP, GOAL, CHECKPOINT } from '../lib/game.js';
   import { today } from '../lib/progress.js';
   import { ns, save } from '../lib/store.js';
 
@@ -93,13 +93,18 @@ const { concept = null } = Astro.props;
     const allDone = L.every(l => lessonDone(A, l.lesson));
     const doneL = L.filter(l => lessonDone(A, l.lesson)).length, openB = P.filter(p => !solved(p.id)).length;
     const refs = route.length ? refreshers(A, route, R.byId, D.optional).filter(r => r.at === cid) : [];
+    // ML Maths concepts offer the placement until it is taken or dismissed (pages/library/ml-maths-course/diagnostic/)
+    const offer = c.course === 'ml-maths-course' && !locked && !A.mlmaths?.place && !A.mlmaths?.placeSkip ? `<section class="lc-next lc-place m-rise" style="animation-delay:120ms">
+      <div><div class="lab">ML MATHS PLACEMENT</div><div class="nt">Know some of this already?</div>
+        <span class="s">Eight coding tasks and some quick questions, graded in your browser. Modules you pass count as done on every route (no XP).</span></div>
+      <div class="acts"><a class="u-btn" href="${href('/library/ml-maths-course/diagnostic/')}">Take the placement</a><button type="button" class="u-btn ghost" data-place-skip>Not now</button></div></section>` : '';
 
     let n = 0, html = `<section class="lc-banner m-rise" data-course="${c.course}" style="--course:${courseVar(c.course)};animation-delay:80ms">
       <div><div class="mono k">${idx >= 0 ? `CONCEPT ${idx + 1} OF ${route.length}<span class="only-d"> · FROM ${esc(course.title.toUpperCase())}</span>` : `FROM ${esc(course.title.toUpperCase())}`}</div>
       <h1>${esc(c.title)}</h1>
       <div class="s"><span class="only-d">${plural(L.length, 'lesson')} · ${plural(P.length, 'Arena build')} · 1 checkpoint</span><span class="only-m">${doneL} of ${L.length} done${openB ? ` · ${plural(openB, 'Arena build')} open` : ''}</span></div></div>
       <a class="notes" href="${href('/destinations/')}#${cid}" aria-label="Concept notes"><span class="only-d">Concept notes</span><span class="only-m">${ICON.book}</span></a></section>
-      <ol class="lc-path" aria-label="${esc(c.title)} path">`;
+      ${offer}<ol class="lc-path" aria-label="${esc(c.title)} path">`;
     const li = (x, inner, cls = '') => `<li class="m-pop ${cls}" style="--i:${3 + n};--x:${x}px;--xm:${MZIG[n % 6]}px">${inner}</li>`;
     for (const r of refs) {                                             // refreshers come first: they're what this concept needs
       const what = R.byId[r.concept]?.lesson_links.find(x => x.lesson === r.ref)?.t || R.byId[r.concept]?.problem_links.find(x => 'practice:' + x.id === r.ref)?.t || 'a review card';
@@ -116,7 +121,9 @@ const { concept = null } = Astro.props;
              <span class="lb2"><span class="lb ink">Arena · ${t}</span><span class="mono">OPEN ANYTIME${p.d ? ' · ' + p.d.toUpperCase() : ''}</span></span>`);
       } else {
         const l = it.l, t = esc(l.t), done = lessonDone(A, l.lesson), url = lessonHref(cid, l.slug);
-        if (done) html += li(x, `<a href="${url}" class="node done" aria-label="Lesson: ${t}, done">${ICON.check}</a><span class="lb">${t}</span>`);
+        const out = done && !A[l.lesson.split(':')[0]]?.done?.[l.lesson.split(':')[1].replace('.', '-')] && placed(A, ...l.lesson.split(':')) === 'skip';
+        if (out) html += li(x, `<a href="${url}" class="node done" aria-label="Lesson: ${t}, placed out">${ICON.check}</a><span class="lb2"><span class="lb">${t}</span><span class="mono">PLACED OUT</span></span>`);
+        else if (done) html += li(x, `<a href="${url}" class="node done" aria-label="Lesson: ${t}, done">${ICON.check}</a><span class="lb">${t}</span>`);
         else if (it.i === curL) html += `<li class="m-pop col" style="--i:${3 + n};--x:${Math.max(-60, Math.min(60, x + 90))}px;--xm:8px">
           <div class="lc-ring u-here" style="--xr:${MZIG[n % 6] - 8}px"><a href="${url}" class="node cur" aria-label="Start lesson: ${t}">${ICON.play}</a></div>
           <div class="lc-start m-pop" style="--i:${5 + n}"><div class="hd"><strong>${t}</strong><span class="mono only-d">${it.i + 1} OF ${L.length}</span>${l.mins ? `<span class="mono only-m">${l.mins} min</span>` : ''}</div>
@@ -135,6 +142,7 @@ const { concept = null } = Astro.props;
     else if (D?.finalRound && idx === route.length - 1) html += `<section class="lc-next m-rise"><div><div class="lab">FINAL ROUND</div><div class="nt">Your destination's boss round</div></div>
       <a class="s" href="${href(`/practice/interview/${D.finalRound}/`)}" style="color:var(--accent)">Open it →</a></section>`;
     $('lMain').innerHTML = html;
+    $('lMain').querySelector('[data-place-skip]')?.addEventListener('click', () => { ns('mlmaths').placeSkip = true; save(); $('lMain').querySelector('.lc-place')?.remove(); });
     $('lMain').querySelectorAll('[data-refresh]').forEach(b => b.addEventListener('click', () => {   // doing a refresher clears its misses
       const [nsName, k] = b.dataset.refresh.split('|'), r = ns(nsName).rev?.[k]; if (r) { r.miss = 0; save(); }
       const ref = refs.find(x => x.k === k), c0 = R.byId[ref?.concept], l = c0?.lesson_links.find(x => x.lesson === ref.ref);

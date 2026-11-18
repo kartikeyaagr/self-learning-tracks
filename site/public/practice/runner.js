@@ -13,6 +13,7 @@ const ready = (async () => {
   await py.loadPackage('numpy');
   py.FS.writeFile('harness.py', await (await fetch('harness.py')).text());
   py.FS.writeFile('shapetrace.py', await (await fetch('shapetrace.py')).text());   // the problem page's shape trace
+  py.FS.writeFile('placement.py', await (await fetch('placement.py')).text());     // the ML Maths placement checks
   py.runPython('import sys; sys.path.insert(0, ".")');
   postMessage({type: 'ready'});
 })();
@@ -23,6 +24,12 @@ onmessage = async ({data: m}) => {
     const need = (m.pkgs || []).filter(p => !loaded.has(p));
     if (need.length) { postMessage({type: 'status', text: `Loading ${need.join(', ')}…`}); await py.loadPackage(need); need.forEach(p => loaded.add(p)); }
     out = [];
+    if (m.check != null) {                               // placement task: {code, check} → {ok, msg} (placement.py)
+      const g = py.globals.get('dict')(); g.set('_code', m.code); g.set('_check', m.check);
+      const r = JSON.parse(py.runPython('import json, placement\njson.dumps(placement.grade(_code, _check))', {globals: g}));
+      g.destroy();
+      return postMessage({type: 'done', id: m.id, ...r, stdout: out.join('\n')});
+    }
     const g = py.globals.get('dict')();
     g.set('_code', m.code); g.set('_fn', m.fn); g.set('_tests', typeof m.tests === 'string' ? m.tests : JSON.stringify(m.tests)); g.set('_rt', m.runtime);
     g.set('_tol', py.toPy(m.tol || [1e-6, 1e-8])); g.set('_trace', !!m.trace);

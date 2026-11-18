@@ -1,40 +1,185 @@
 ---
-// ML Maths step 1: a self-graded diagnostic notebook that decides which modules to skip, review or learn in full.
+// ML Maths placement: the step 1 diagnostic, graded in the browser. Eight coding tasks (practice/src/placement/mlmaths/,
+// verified by build.py, graded by practice/placement.py in the Pyodide worker), two questions after each, and three
+// questions each for the modules the code doesn't reach. The result sets mlmaths.place.modules (game.js placed()).
+import fs from 'node:fs';
+import path from 'node:path';
 import Site from '../../../../layouts/Site.astro';
 import CourseSide from '../../../../components/CourseSide.astro';
 import { courseData } from '../../../../lib/course.mjs';
+import { md } from '../../../../lib/md.mjs';
+import { inl } from '../../../../lib/inline.mjs';
 import { u } from '../../../../lib/url.mjs';
+import '../../../../styles/screens/problem.css';
+import '../../../../styles/screens/lesson.css';
 const { course, modules } = await courseData('ml-maths-course');
-const mod = n => modules.find(m => m.n === n);
-const TASKS = [['T1', 'Masked argmax for a decoder', ['01', '02']], ['T2', 'Gaussian elimination with partial pivoting', ['03']], ['T3', 'Rank and null space by row reduction', ['04']],
-  ['T4', 'PCA from scratch, checked against SVD', ['05', '06', '07', '08']], ['T5', 'Softmax cross-entropy forward and backward', ['09']], ['T6', 'Find and fix 8 bugs in a logistic-regression script', ['08', '09']],
-  ['T7', 'Memory, FLOP and probability estimates', ['09', '10']], ['T8', 'Multivariate Gaussian log-density at d = 300', ['10', '11', '12']]];
+const P = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'public/practice/placement-mlmaths.json'), 'utf8'));
+const q = x => ({q: inl(x.q), options: x.options.map(inl), answer: x.answer, why: inl(x.why), long: x.options.some(o => o.length > 24)});
+const tasks = await Promise.all(P.tasks.map(async t => ({...t, html: await md(t.statement), qs: t.mcq.map(q)})));
+const groups = P.groups.map(g => ({...g, qs: g.questions.map(q)}));
+const name = Object.fromEntries(modules.map(m => [m.n, m.name]));
+const nq = tasks.length * 2 + groups.reduce((a, g) => a + g.qs.length, 0);
 const nb = u('/courses/ml-maths-course/step1_diagnostic.ipynb');
+const CM = 'https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/';
+const quiz = (id, qs) => qs.map((x, j) => ({...x, id: `${id}.${j}`}));
 ---
-<Site title={`Diagnostic · ${course.title}`} course={course} courseId="ml-maths-course" side crumbs={[['Diagnostic', Astro.url.pathname]]}>
+<Site title={`Placement · ${course.title}`} course={course} courseId="ml-maths-course" side crumbs={[['Placement', Astro.url.pathname]]}>
+  <Fragment slot="head">
+    <link rel="stylesheet" href={`${CM}codemirror.min.css`}>
+    <script is:inline src={`${CM}codemirror.min.js`}></script>
+    <script is:inline src={`${CM}mode/python/python.min.js`}></script>
+    <script is:inline src={`${CM}addon/edit/matchbrackets.min.js`}></script>
+  </Fragment>
   <CourseSide slot="side" course={course} courseId="ml-maths-course" modules={modules} />
   <section class="panel mhead"><div>
     <div class="lab">Step 1 · before module 01</div>
-    <h1>Diagnostic</h1>
-    <p class="mdesc">Eight work-style tasks in one notebook, each with a self-grading check cell. Your results decide, module by module, whether you skip it, review it or learn it in full.</p>
-    <div class="meta"><span class="pill">8 tasks</span><span class="pill">Python · NumPy</span><span class="pill">Colab or laptop</span><span class="pill ip" id="state">Not submitted yet</span></div>
-    <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap"><a class="btn" href={nb} download>Download notebook</a><button type="button" class="btn ghost" id="sub">Mark as submitted</button></div>
-  </div><div class="big" aria-hidden="true">T</div></section>
-  <div class="sh"><h2>Tasks</h2><span class="lab">8 tasks · 14 modules</span></div>
-  <div class="tbl"><table><thead><tr><th>Task</th><th>What you build</th><th>Modules it tests</th></tr></thead><tbody>{TASKS.map(([t, w, ms]) =>
-    <tr><td><b>{t}</b></td><td>{w}</td><td>{ms.map((n, i) => <>{i > 0 && ', '}<a href={u(`/library/ml-maths-course/${mod(n).slug}/`)}>{n}</a></>)}</td></tr>)}</tbody></table></div>
+    <h1>Placement</h1>
+    <p class="mdesc">{tasks.length} coding tasks graded in your browser, each followed by two questions, plus questions on the modules the code doesn't reach. The result decides, module by module, whether you skip it, review it or learn it in full.</p>
+    <div class="meta"><span class="pill">{tasks.length} tasks</span><span class="pill">{nq} questions</span><span class="pill">Python · NumPy · SciPy</span><span class="pill">Runs in your browser</span><span class="pill ip" id="state">Not taken yet</span></div>
+    <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap"><a class="btn" href="#results">See my placement</a><a class="btn ghost" href={nb} download>Download as a notebook</a></div>
+  </div><div class="big" aria-hidden="true">P</div></section>
   <section class="card blk"><div class="lab">How it works</div><ol>
-    <li>Download the notebook and open it in Colab (File &gt; Upload notebook) or Jupyter.</li>
-    <li>Fill in each function where it says TODO, then run the CHECK cell under it. Checks print pass or fail with a reason.</li>
-    <li>Do it without looking anything up first. A blank is more useful to the plan than a copied answer.</li>
-    <li>Upload the finished notebook in the project chat. It gets graded per task, and the study plan is built from the result.</li>
+    <li>Do the tasks in any order, without looking anything up first. A blank is more useful than a copied answer.</li>
+    <li>Write the function, then <b>Run check</b>. Python starts in your browser the first time, which downloads about 30 MB.</li>
+    <li>Answer the two questions under each task. Each question takes one answer.</li>
+    <li>Apply the result. <b>Skip</b> modules count as done on every route but earn no XP. <b>Review</b> modules stay on your route and their cards join the review deck, 10 a day. <b>Learn</b> modules are yours to work through.</li>
   </ol></section>
+
+  {tasks.map((t, i) => <section class="card pl-task" id={t.id} data-task={t.id}>
+    <div class="lab">Task {i + 1} · {t.modules.length > 1 ? 'modules' : 'module'} {t.modules.join(', ')}</div>
+    <h2>{t.title}</h2>
+    <div class="prose" set:html={t.html} />
+    <div class="pb-ed">
+      <div class="pb-bar"><span class="mono pl-file">{t.id.toLowerCase()}.py</span><span style="flex:1"></span>
+        <button type="button" class="pb-reset" data-reset>Reset</button>
+        <button type="button" class="pb-run" data-run><span class="lbl">Run check</span></button></div>
+      <textarea aria-label={`Code for task ${i + 1}`}>{t.starter}</textarea>
+    </div>
+    <p class="pl-res mono" aria-live="polite" data-res>Not run yet.</p>
+    <div class="pl-qs"><div class="lab">Two questions</div>{quiz(t.id, t.qs).map(x => <div class="pl-q" data-q={x.id} data-answer={x.answer}>
+      <p class="pl-qq" set:html={x.q} />
+      <div class={`lp-opts${x.long ? ' long' : ''}`} role="radiogroup">{x.options.map((o, k) =>
+        <button type="button" class="lp-opt" role="radio" aria-checked="false" data-state="idle" data-k={k} set:html={o} />)}</div>
+      <p class="pl-why" hidden set:html={x.why} /></div>)}</div>
+  </section>)}
+
+  <div class="sh"><h2>Modules the code doesn't reach</h2><span class="lab">{groups.length} modules · 3 questions each</span></div>
+  {groups.map(g => <section class="card pl-task" data-group={g.module}>
+    <div class="lab">Module {g.module}</div><h2>{g.title}</h2>
+    <div class="pl-qs">{quiz('M' + g.module, g.qs).map(x => <div class="pl-q" data-q={x.id} data-answer={x.answer}>
+      <p class="pl-qq" set:html={x.q} />
+      <div class={`lp-opts${x.long ? ' long' : ''}`} role="radiogroup">{x.options.map((o, k) =>
+        <button type="button" class="lp-opt" role="radio" aria-checked="false" data-state="idle" data-k={k} set:html={o} />)}</div>
+      <p class="pl-why" hidden set:html={x.why} /></div>)}</div>
+  </section>)}
+
+  <div class="sh" id="results"><h2>Your placement</h2><span class="lab" id="rsum"></span></div>
+  <div class="tbl"><table><thead><tr><th>Module</th><th>Tested by</th><th>Result</th></tr></thead><tbody>{modules.map(m =>
+    <tr><td><b>{m.n}</b> <a href={u(`/library/ml-maths-course/${m.slug}/`)}>{m.name}</a></td>
+      <td class="mono">{[...tasks.filter(t => t.modules.includes(m.n)).map(t => `Task ${tasks.indexOf(t) + 1}`), ...groups.filter(g => g.module === m.n).map(() => '3 questions')].join(' · ')}</td>
+      <td><span class="pill" data-mod={m.n}>Learn</span></td></tr>)}</tbody></table></div>
+  <div style="margin:18px 0 40px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+    <button type="button" class="btn" id="apply">Apply placement</button><button type="button" class="btn ghost" id="retake">Retake</button>
+    <span class="mu" id="applied"></span></div>
+
+  <script define:vars={{ T: tasks.map(t => ({id: t.id, modules: t.modules, check: t.check, starter: t.starter})), G: groups.map(g => g.module), M: modules.map(m => m.n) }}>
+    window.__PL = {T, G, M};
+  </script>
   <script>
-    import { load, save, bump } from '../../../../lib/progress.js';
-    const st = load('mlmaths'); st.meta = st.meta || {};
-    const b = document.getElementById('sub'), s = document.getElementById('state');
-    const paint = () => { const on = !!st.meta.diag; b.textContent = on ? 'Mark as not submitted' : 'Mark as submitted'; s.textContent = on ? 'Submitted' : 'Not submitted yet'; s.className = 'pill ' + (on ? 'ok' : 'ip'); };
-    b.onclick = () => { st.meta.diag = !st.meta.diag; if (st.meta.diag) bump(st); save(); paint(); };
+    import { load, save, bump, now } from '../../../../lib/progress.js';
+    const {T, G, M} = (window as any).__PL, $ = (s, el = document) => el.querySelector(s), $$ = (s, el = document) => [...el.querySelectorAll(s)];
+    const st: any = load('mlmaths');
+    const fresh = () => ({code: {}, pass: {}, mcq: {}});
+    let D = st.placeDraft ||= fresh();
+    const LV = ['learn', 'review', 'skip'], LABEL = {learn: 'Learn', review: 'Review', skip: 'Skip'}, PILL = {learn: 'ip', review: '', skip: 'ok'};
+
+    // Level per item (2 skip, 1 review, 0 learn); a module takes the lowest level of the items that test it.
+    function result() {
+      const right = id => +D.mcq[id] === +$(`.pl-q[data-q="${id}"]`).dataset.answer;
+      const lv = {};
+      const add = (mods, v) => mods.forEach(n => lv[n] = Math.min(lv[n] ?? 2, v));
+      for (const t of T) add(t.modules, !D.pass[t.id] ? 0 : right(`${t.id}.0`) && right(`${t.id}.1`) ? 2 : 1);
+      for (const g of G) { const n = [0, 1, 2].filter(j => right(`M${g}.${j}`)).length; add([g], n === 3 ? 2 : n === 2 ? 1 : 0); }
+      return Object.fromEntries(M.map(n => [n, LV[lv[n] ?? 0]]));
+    }
+    function paint() {
+      const r = result(), c = {skip: 0, review: 0, learn: 0};
+      for (const [n, v] of Object.entries(r)) { const el = $(`[data-mod="${n}"]`); el.textContent = LABEL[v]; el.className = 'pill ' + PILL[v]; c[v]++; }
+      $('#rsum').textContent = `${c.skip} skip · ${c.review} review · ${c.learn} learn`;
+      const s = $('#state'), on = !!st.place;
+      s.textContent = on ? 'Placement applied' : Object.keys(D.pass).length || Object.keys(D.mcq).length ? 'In progress' : 'Not taken yet';
+      s.className = 'pill ' + (on ? 'ok' : 'ip');
+      $('#applied').textContent = on ? `Applied ${new Date(st.place.at).toLocaleDateString()}. Apply again to update it.` : '';
+    }
+
+    // questions: one answer each, then the explanation
+    function showQ(el) {
+      const id = el.dataset.q, pick = D.mcq[id], ans = +el.dataset.answer;
+      if (pick == null) return;
+      $$('.lp-opt', el).forEach(b => { const k = +b.dataset.k; b.disabled = true; b.setAttribute('aria-checked', String(k === +pick));
+        b.dataset.state = k === ans ? 'right' : k === +pick ? 'wrong' : 'idle'; });
+      $('.pl-why', el).hidden = false;
+    }
+    $$('.pl-q').forEach(el => { showQ(el); el.addEventListener('click', e => {
+      const o = e.target.closest('.lp-opt'); if (!o || D.mcq[el.dataset.q] != null) return;
+      D.mcq[el.dataset.q] = +o.dataset.k; bump(st); save(); showQ(el); paint();
+    }); });
+
+    // runner: one Pyodide worker for every task, respawned on timeout (practice/runner.js, check mode)
+    const RUN = {w: null, ready: null, cb: null};
+    const boot = () => RUN.w ? RUN.ready : (RUN.w = new Worker(`${(window as any).__base}/practice/runner.js`), RUN.ready = new Promise((res, rej) => {
+      RUN.w.onmessage = e => { const m = e.data; if (m.type === 'ready') res(); else if (m.type === 'status') RUN.cb?.status(m.text); else RUN.cb?.done(m); };
+      RUN.w.onerror = e => { RUN.w = null; rej(new Error(e.message || 'Python failed to start')); };
+    }));
+    const exec = (id, code, check, say) => new Promise(async res => {
+      say(RUN.w ? 'Running…' : 'Starting Python (the first run downloads about 30 MB)…');
+      try { await boot(); } catch (e) { return res({ok: false, msg: String(e.message)}); }
+      let timer; const arm = ms => { clearTimeout(timer); timer = setTimeout(() => { RUN.w.terminate(); RUN.w = null; RUN.cb = null; res({ok: false, msg: `Time limit: still running after ${ms / 1000} s.`}); }, ms); };
+      RUN.cb = {status: s => { say(s); arm(120000); }, done: m => { clearTimeout(timer); RUN.cb = null; res(m.error ? {ok: false, msg: m.error} : m); }};
+      say('Running…'); arm(30000);
+      RUN.w.postMessage({id, code, check, pkgs: ['scipy']});
+    });
+
+    for (const t of T) {
+      const sec = $(`[data-task="${t.id}"]`), out = $('[data-res]', sec), run = $('[data-run]', sec);
+      const ed = (window as any).CodeMirror.fromTextArea($('textarea', sec), {mode: 'python', lineNumbers: true, indentUnit: 4, matchBrackets: true,
+        screenReaderLabel: `Code for ${t.id}`, extraKeys: {Tab: c => c.somethingSelected() ? c.indentSelection('add') : c.replaceSelection('    ')}});
+      if (D.code[t.id] != null) ed.setValue(D.code[t.id]);
+      const show = r => { out.textContent = r ? (r.ok ? 'PASS · ' : 'FAIL · ') + r.msg : 'Not run yet.'; out.dataset.ok = r ? String(r.ok) : ''; };
+      show(D.pass[t.id] ? {ok: true, msg: 'passed earlier'} : null);
+      let tm; ed.on('change', () => { clearTimeout(tm); tm = setTimeout(() => { D.code[t.id] = ed.getValue(); save(); }, 400); });
+      $('[data-reset]', sec).addEventListener('click', () => { ed.setValue(t.starter); delete D.code[t.id]; save(); });
+      run.addEventListener('click', async () => {
+        run.disabled = true; D.code[t.id] = ed.getValue();
+        const r: any = await exec(t.id, ed.getValue(), t.check, s => out.textContent = s);
+        run.disabled = false; show(r);
+        if (r.ok) D.pass[t.id] = true; else delete D.pass[t.id];
+        bump(st); save(); paint();
+      });
+    }
+
+    $('#apply').addEventListener('click', () => { st.place = {at: now(), modules: result()}; bump(st); save(); paint(); });
+    $('#retake').addEventListener('click', () => {
+      if (!confirm('Clear your answers and placement and start again?')) return;
+      delete st.place; delete st.placeSkip; D = st.placeDraft = fresh(); save(); location.reload();
+    });
     paint();
   </script>
 </Site>
+
+<style>
+  .pl-task { margin: 18px 0; padding: 22px 24px; }
+  .pl-task h2 { margin: 6px 0 12px; font-size: 20px; }
+  .pl-task .pb-ed { margin-top: 16px; }
+  .pl-task .pb-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  .pl-file { font-size: 12.5px; color: var(--muted); }
+  .pl-res { margin: 10px 2px 0; font-size: 13px; color: var(--muted); white-space: pre-wrap; }
+  .pl-res[data-ok="true"] { color: var(--go); }
+  .pl-res[data-ok="false"] { color: var(--bad); }
+  .pl-qs { margin-top: 22px; display: grid; gap: 18px; }
+  .pl-qq { margin: 0 0 10px; }
+  .pl-why { margin: 10px 2px 0; color: var(--muted); font-size: 14px; }
+  .lp-opt:disabled { cursor: default; }
+  .lp-opt:disabled:hover { translate: none; }
+  @media (max-width: 700px) { .pl-task { padding: 18px 16px; } .lp-opts { flex-direction: column; } }
+</style>

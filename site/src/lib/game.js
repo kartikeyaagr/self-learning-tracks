@@ -9,6 +9,7 @@
 //                 rev[k] = {box, due, n, at, miss}
 //   practice      done[slug], at[slug], hints[slug] (count), hintAt[slug] = [iso, …], sol[slug], grades[slug]
 //                 solve[slug] = {d, theory, nohints, ms, potd}   recorded at the first solve
+//                 place = {at, modules: {MM: 'skip'|'review'|'learn'}}   placement result (ML Maths)
 //   game          clear[day] = iso (review deck cleared), checkpoints[concept] = {best, n, at}
 
 export const XP = {step: 5, lesson: 15, solve: {Easy: 20, Medium: 30, Hard: 40}, theory: 5, nohints: 10, par: 10,
@@ -91,7 +92,13 @@ export function quests(A, evs, day, due) {
 
 // Route state. ref = "<course key>:<lesson id>" (concepts.json). A concept is done when every lesson is done or its
 // checkpoint was passed (testing out); current = first unfinished required concept; locked = some need unfinished.
-export const lessonDone = (A, ref) => { const [ns, id] = ref.split(':'); return !!obj(obj(A[ns]).done)[id.replace('.', '-')]; };
+// Placement: <ns>.place.modules[MM] = 'skip' | 'review' | 'learn'. A lesson in a skipped module counts as done for routes
+// and needs, but earns no XP (events() reads only done keys).
+export const placed = (A, ns, id) => obj(obj(obj(A[ns]).place).modules)[id.slice(0, 2)] || null;
+export const lessonDone = (A, ref) => {
+  const [ns, id] = ref.split(':'), k = id.replace('.', '-');
+  return !!obj(obj(A[ns]).done)[k] || placed(A, ns, k) === 'skip';
+};
 export const checkpointPassed = (A, cid) => (obj(obj(A.game).checkpoints)[cid]?.best || 0) >= CHECKPOINT.pass;
 export function routeState(A, route, byId, optional = []) {
   const done = {};

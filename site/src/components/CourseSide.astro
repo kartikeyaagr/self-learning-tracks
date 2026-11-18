@@ -7,7 +7,7 @@ const byN = Object.fromEntries(modules.map(m => [m.n, m]));
 ---
 <div data-ns={course.key}>
 <a class="nv" href={u(`/library/${courseId}/`)} aria-current={!curMod && !Astro.url.pathname.endsWith('/diagnostic/') ? 'page' : undefined}><svg width="16" height="16" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1.5" fill="currentColor"/><rect x="9" y="2" width="5" height="5" rx="1.5" fill="currentColor" opacity=".45"/><rect x="2" y="9" width="5" height="5" rx="1.5" fill="currentColor" opacity=".45"/><rect x="9" y="9" width="5" height="5" rx="1.5" fill="currentColor"/></svg>Overview</a>
-{courseId === 'ml-maths-course' && <a class="nv" href={u('/library/ml-maths-course/diagnostic/')} aria-current={Astro.url.pathname.endsWith('/diagnostic/') ? 'page' : undefined}><svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 2h7l3 3v9H3z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>Diagnostic</a>}
+{courseId === 'ml-maths-course' && <a class="nv" href={u('/library/ml-maths-course/diagnostic/')} aria-current={Astro.url.pathname.endsWith('/diagnostic/') ? 'page' : undefined}><svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 2h7l3 3v9H3z" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>Placement</a>}
 {course.parts.map((P, pi) => <>
   <div class="part lab"><span>{course.parts.length > 1 ? `Part ${pi + 1} · ${P.t}` : P.t}</span></div>
   {P.m.map(n => byN[n]).filter(Boolean).map(m => <>

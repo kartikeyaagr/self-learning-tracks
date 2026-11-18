@@ -105,3 +105,15 @@ test('boss opens at all but one solved; daily index is stable', () => {
   let h = 0; for (const c of '2026-11-15') h = (h * 31 + c.charCodeAt(0)) >>> 0;   // the hash the daily page used
   assert.equal(G.dailyIndex('2026-11-15', 911), h % 911);
 });
+
+test('placement: skipped modules count as done for routes but earn no XP', () => {
+  const C = {la: {id: 'la', lessons: ['mlmaths:03.01', 'mlmaths:04.02'], needs: []}, calc: {id: 'calc', lessons: ['mlmaths:09.12'], needs: ['la']}};
+  const A = {mlmaths: {place: {at: T('2026-11-15'), modules: {'03': 'skip', '04': 'skip', '09': 'review'}}}};
+  assert.equal(G.lessonDone(A, 'mlmaths:03.01'), true);
+  assert.equal(G.lessonDone(A, 'mlmaths:09.12'), false);                  // review is not done
+  assert.equal(G.placed(A, 'mlmaths', '09-12'), 'review'); assert.equal(G.placed(A, 'mlmaths', '10-01'), null);
+  assert.deepEqual(G.routeState(A, ['la', 'calc'], C).map(s => s.status), ['done', 'current']);
+  assert.equal(xpOf(A).xp, 0);
+  A.mlmaths.place.modules['04'] = 'learn';                                // a retake can put a module back
+  assert.deepEqual(G.routeState(A, ['la', 'calc'], C).map(s => s.status), ['current', 'locked']);
+});
