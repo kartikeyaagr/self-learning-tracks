@@ -1,0 +1,29 @@
+{
+  "id": "interviews",
+  "title": "Take one ML project end to end",
+  "summary": "A model trained on real data, evaluated honestly, served behind an API and documented with a model card: the project you talk through in every interview.",
+  "brief": "Interviewers ask about the project you know best. Build one you can defend in depth: a real dataset, a problem framed from a goal, a baseline, an evaluation you trust, a model served behind an API, and a model card that says where it fails.\n\nPick a public tabular, text or recommendation dataset with a clear prediction target and a time dimension if you can (churn, fraud, demand, click-through, ratings). Then work through it the way the ML system design framework does:\n\n1. **Frame it.** The business goal, the ML task, the metric that stands in for the goal, and the latency and scale it would need.\n2. **Baseline first.** A rule or a simple model, so every later number has something to beat.\n3. **Features and model.** Leakage-free features (split by time where it matters), one stronger model, tuned with a validation set you never peek at.\n4. **Evaluate honestly.** The offline metric with a confidence interval, a slice analysis (where does it fail?), and calibration if the scores feed a decision.\n5. **Serve it.** A small HTTP API that loads the model artefact and validates input, with a test and a latency number.\n6. **Document it.** A model card: intended use, data, metrics by slice, limitations, and what you would monitor after launch.\n\nThen prepare the story: a five-minute walkthrough and answers to the follow-ups (why this metric, what leaks, what would you do with ten times the data).",
+  "milestones": [
+    {"title": "Frame the problem and estimate scale", "lessons": ["mlsd:01.04", "mlsd:01.05", "mlsd:01.06"]},
+    {"title": "Evaluate a model honestly", "build": "recommender-evaluation-from-scratch", "note": "If your project is not a recommender, take the method: time-based splits, full ranking, coverage and bias checks."},
+    {"title": "From notebook to service", "lessons": ["mlcore:09.01", "mlcore:09.02", "mlcore:09.03"]},
+    {"title": "APIs and service calls", "lessons": ["sdsd:02.01", "sdsd:02.09"]},
+    {"title": "Monitoring, drift and retraining", "lessons": ["mlsd:07.01", "mlsd:07.02"]},
+    {"title": "Tell it as a design interview", "lessons": ["mlsd:08.02", "mlsd:08.05"]}
+  ],
+  "deliverables": [
+    "A public repository with data loading, training, evaluation and the API, runnable from the README",
+    "A README that opens with the results table: baseline against final model, with confidence intervals and the main slices",
+    "A model card: intended use, data, metrics by slice, limitations and what you would monitor",
+    "A served API with an input-validation test and a measured p50 and p95 latency",
+    "A one-page design doc or a five-minute recorded walkthrough of the project as you would present it in an interview"
+  ],
+  "rubric": [
+    {"area": "Framing", "meets": "The goal, the ML task and the metric are stated, and the metric is justified.", "strong": "The doc names the proxy gap (what the metric misses) and sizes latency and throughput needs."},
+    {"area": "Evaluation", "meets": "A baseline, a held-out test set and a leakage-free split.", "strong": "Confidence intervals, slice analysis and calibration, with a clear statement of what the offline number does not tell you."},
+    {"area": "Engineering", "meets": "The API serves the saved model and validates its input.", "strong": "Tests cover training, features and the API; the training run is reproducible from a pinned config."},
+    {"area": "Documentation", "meets": "A model card with limitations.", "strong": "The card includes failure examples and a monitoring plan with the signal, threshold and response for each risk."},
+    {"area": "Story", "meets": "You can walk through the project in five minutes.", "strong": "You can answer the hard follow-ups: leakage, scale, what you would do next and why."}
+  ],
+  "resume": "Built an end-to-end [task] model on [dataset]: [metric] [x] (vs [y] baseline, 95% CI [a, b]), served via a validated API at [z] ms p95, with a model card and slice analysis."
+}

@@ -1,0 +1,30 @@
+{
+  "id": "applied",
+  "title": "Ship a RAG app with an eval report",
+  "summary": "A retrieval-augmented assistant over a real document set, with an eval set, retrieval and answer metrics, a regression check in CI and a cost and latency table.",
+  "brief": "Pick a document set you can publish or link to: a library's documentation, a public policy archive, a set of papers, your own notes. Build an assistant that answers questions about it with citations, and then do the part most demos skip: show how good it is, and keep it that way.\n\nThe app is the smaller half. It needs chunking, hybrid retrieval (lexical plus dense, fused), a reranker or a reason you didn't need one, an answer prompt that cites sources, and a refusal when the evidence isn't there. Structured output for the citations makes them checkable.\n\nThe eval is the larger half:\n\n- **An eval set** of at least 50 questions with reference answers and the passages that support them. Include questions the documents cannot answer, and a few adversarial ones (prompt injection inside a document, a question that invites a confident wrong answer).\n- **Retrieval metrics**: recall@k and MRR (or nDCG) against the labelled passages.\n- **Answer metrics**: faithfulness to the retrieved evidence, correctness against the reference, and refusal accuracy. If you use an LLM judge, measure its agreement with your own labels on a sample and report it.\n- **A regression check in CI** that runs a fixed slice of the eval on every change and fails when a metric drops beyond a threshold you justify.\n- **A cost and latency table**: tokens and price per query, p50 and p95 latency, per configuration you tried.\n\nCompare at least two configurations (for example dense-only versus hybrid, or with and without the reranker) and say which one you would ship and why.",
+  "milestones": [
+    {"title": "RAG from scratch", "build": "rag-from-scratch"},
+    {"title": "Hybrid search and reranking", "lessons": ["aieng:11.01", "aieng:11.02", "aieng:11.03"]},
+    {"title": "Build the eval set and graders", "lessons": ["aieng:10.01", "aieng:10.02", "aieng:10.03", "aieng:10.04"]},
+    {"title": "Regression tests in CI", "lessons": ["aieng:10.06"]},
+    {"title": "Structured outputs, guardrails and prompt injection", "lessons": ["aieng:12.01", "aieng:12.02", "aieng:12.03"]},
+    {"title": "Cost, latency and observability", "lessons": ["aieng:12.04", "aieng:12.05", "aieng:12.07"]}
+  ],
+  "deliverables": [
+    "A public repository with the app, the eval set (or a script that builds it) and the eval harness",
+    "A README that opens with the eval table: retrieval and answer metrics for each configuration you compared",
+    "A CI workflow that runs the regression slice and fails on a drop, with a link to a passing run",
+    "A cost and latency table per configuration (tokens, price per query, p50 and p95 latency), with the model and prices dated",
+    "A short demo: a hosted link or a two-minute screen recording",
+    "A write-up of 800 to 1,500 words: what you tried, what the numbers showed, which failure modes remain"
+  ],
+  "rubric": [
+    {"area": "Eval set", "meets": "At least 50 labelled questions, including unanswerable ones, with supporting passages.", "strong": "Questions are sampled from realistic use, stratified by type, and include adversarial cases; the labelling process is described."},
+    {"area": "Metrics", "meets": "Retrieval and answer quality are measured separately, so a failure can be traced to one or the other.", "strong": "An LLM judge's agreement with human labels is measured and reported, and confidence intervals or a paired comparison back the headline claim."},
+    {"area": "Regression", "meets": "CI runs a fixed eval slice and fails on a metric drop.", "strong": "The threshold is justified by run-to-run variance, and the CI output says which questions regressed."},
+    {"area": "Safety", "meets": "The app refuses when evidence is missing and cites sources.", "strong": "Injected instructions inside documents are tested and contained, and citations are checked against the evidence automatically."},
+    {"area": "Production sense", "meets": "Cost and latency are reported per configuration.", "strong": "The write-up picks a configuration on quality, cost and latency together, and names what it would monitor in production."}
+  ],
+  "resume": "Shipped a RAG assistant over [corpus] with a [N]-question eval set: hybrid retrieval raised recall@[k] from [a] to [b] and faithfulness to [c]%, guarded by an eval regression check in CI at [x] cents and [y] ms p95 per query."
+}

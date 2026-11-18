@@ -17,6 +17,7 @@ import '../styles/screens/destinations.css';
     <section aria-label="Route" class="dz-route" id="dRoute"></section>
     <aside aria-label="Selected concept" class="dz-panel" id="dPanel" hidden></aside>
   </div>
+  <section aria-label="Portfolio" class="dz-port" id="dPort"></section>
   <section aria-label="Library" class="dz-lib">
     <div class="hd"><h2>The library</h2><span>Courses stay whole. Routes borrow from them.</span></div>
     <div class="chips" id="dLib"></div>
@@ -33,7 +34,7 @@ import '../styles/screens/destinations.css';
   const hash = () => decodeURIComponent(location.hash.slice(1));
 
   routes().then(R => { const rounds = Object.entries(R.rounds).map(([id, r]) => ({id, ...r}));
-    const A = state(), C = R.byId, cur = R.dest[getRoute()] ? getRoute() : null;
+    const A = state(), C = R.byId, cur = R.dest[getRoute()] ? getRoute() : null, caps = A.game?.capstones || {};
     const hours = ids => Math.round(ids.reduce((s, id) => s + (C[id].minutes || 0), 0) / 60);
     const info = Object.fromEntries(R.destinations.map(d => {         // per goal: route state, what's done, what's left
       const st = routeState(A, d.concepts, C, d.optional), left = st.filter(s => s.status !== 'done').map(s => s.id);
@@ -70,6 +71,27 @@ import '../styles/screens/destinations.css';
 
     pick(sel);
     first = false;
+    portfolio();
+
+    // Portfolio: finished capstones with their CV line and links (pages/capstones/[id].astro, game.capstones)
+    function portfolio() {
+      const okUrl = v => { try { return ['https:', 'http:'].includes(new URL(v).protocol); } catch { return false; } };
+      const list = R.destinations.filter(d => d.capstone), fin = list.filter(d => caps[d.id]?.done);
+      const LINKS = [['repo', 'Repository'], ['writeup', 'Write-up'], ['demo', 'Demo']];
+      $('dPort').innerHTML = `<div class="hd"><h2>Portfolio</h2><span>Every route ends in a public project. Finished ones collect here, ready for a CV.</span></div>`
+        + fin.map((d, i) => { const c = caps[d.id];
+          return `<article class="dz-pc" style="--i:${i}"><div class="lab">${esc(d.name.toUpperCase())} · FINISHED ${esc(new Date(c.done).toLocaleDateString())}</div>
+            <h3><a href="${href(`/capstones/${d.id}/`)}">${esc(d.capstone.title)}</a></h3><p class="ln">${esc(c.line || d.capstone.summary)}</p>
+            <div class="lk">${LINKS.filter(([k]) => okUrl(c.urls?.[k] || '')).map(([k, t]) => `<a href="${esc(c.urls[k])}" rel="noopener" target="_blank">${t} ↗</a>`).join('')}
+              <button type="button" class="cp" data-copy="${d.id}">Copy line</button></div></article>`; }).join('')
+        + `<div class="dz-caps">${list.map(d => { const c = caps[d.id], s = c?.done ? 'finished' : c && (c.urls?.repo || Object.values(c.check || {}).some(Boolean)) ? 'in progress' : 'not started';
+          return `<a href="${href(`/capstones/${d.id}/`)}"><span class="mono">${esc(d.name)} · ${s}</span>${esc(d.capstone.title)}</a>`; }).join('')}</div>`;
+      $('dPort').addEventListener('click', e => {
+        const b = e.target.closest('[data-copy]'); if (!b) return;
+        const c = caps[b.dataset.copy], txt = [c.line, okUrl(c.urls?.repo || '') && c.urls.repo].filter(Boolean).join(' ');
+        navigator.clipboard?.writeText(txt).then(() => { b.textContent = 'Copied'; setTimeout(() => b.textContent = 'Copy line', 1500); });
+      });
+    }
 
     function pick(id) {
       sel = id;
@@ -120,6 +142,8 @@ import '../styles/screens/destinations.css';
         });
         if (i === R.stages.length - 1 && fr) html += `<a href="${href(`/practice/interview/${fr.id}/`)}" class="cr fin" style="--j:${rows.length}">
           <span class="dm">◆</span><span class="t">Final round · ${esc(fr.title.replace(/\s+round$/i, ''))}</span></a>`;
+        if (i === R.stages.length - 1 && g.d.capstone) html += `<a href="${href(`/capstones/${g.d.id}/`)}" class="cr fin cap${caps[g.d.id]?.done ? ' done' : ''}" style="--j:${rows.length + 1}">
+          <span class="dm">${caps[g.d.id]?.done ? '✓' : '★'}</span><span class="t">Capstone · ${esc(g.d.capstone.title)}</span></a>`;
         html += '</div>';
       });
       box.innerHTML = html + '</div>';

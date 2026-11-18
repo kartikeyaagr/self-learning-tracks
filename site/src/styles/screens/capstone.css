@@ -1,0 +1,65 @@
+/* Capstone (pages/capstones/[id].astro): brief, milestones with progress, deliverables, self-graded rubric, links. */
+.cp { max-width: 860px; margin: 0 auto; padding: 32px 28px 64px; display: flex; flex-direction: column; gap: 36px; }
+.cp h2 { margin: 0 0 6px; font-size: 22px; font-weight: 700; letter-spacing: -.03em; }
+.cp-head { animation: m-rise var(--t4) var(--e-out) both; }
+.cp-head h1 { margin: 8px 0; font-size: clamp(32px, 5vw, 44px); line-height: 1.04; font-weight: 700; letter-spacing: -.045em; }
+.cp-head p { margin: 0; font-size: 16px; line-height: 1.5; color: var(--ink-3); max-width: 680px; }
+.cp-meta { margin-top: 14px; display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.cp-meta a { color: var(--muted); }
+.cp-meta a:hover { color: var(--ink); }
+.cp-sub { margin: 0 0 14px; font-size: 14px; color: var(--muted); }
+.cp-sec { animation: m-rise var(--t4) var(--e-out) 80ms both; }
+
+.cp-brief { font-size: 15.5px; line-height: 1.65; color: var(--ink-2, var(--ink)); }
+.cp-brief p { margin: 0 0 12px; }
+.cp-brief ol, .cp-brief ul { margin: 0 0 12px; padding-left: 22px; }
+.cp-brief li { margin: 4px 0; }
+.cp-brief strong { color: var(--ink); }
+
+.cp-ms { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.cp-ms > li { border: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.cp-ms .hd { display: flex; gap: 10px; align-items: baseline; }
+.cp-ms .hd strong { flex: 1; font-size: 15px; }
+.cp-ms .n, .cp-ms .cnt { font-size: 12px; color: var(--muted); }
+.cp-ms .bar { height: 4px; border-radius: 2px; background: var(--line-2); overflow: hidden; }
+.cp-ms .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width var(--t4) var(--e-out); }
+.cp-ms li.done .bar i { background: var(--go); }
+.cp-ms li.done .cnt { color: var(--go); }
+.cp-ms .lk { font-size: 14px; color: var(--accent-text, var(--accent)); }
+.cp-ms .ls { margin: 0; padding-left: 18px; font-size: 14px; display: grid; gap: 3px; }
+.cp-ms .ls a { color: var(--ink-3); }
+.cp-ms .ls a:hover, .cp-ms .lk:hover { color: var(--ink); }
+.cp-ms .note { margin: 0; font-size: 13px; color: var(--muted); }
+
+.cp-check { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.cp-check label { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-lg);
+  background: var(--surface); font-size: 14.5px; line-height: 1.45; cursor: pointer; }
+.cp-check input { margin-top: 3px; width: 18px; height: 18px; accent-color: var(--go); flex: none; }
+.cp-check input:checked + span { color: var(--muted); }
+
+.cp-rub { display: grid; gap: 10px; }
+.cp-rub .row { border: 1px solid var(--line); display: grid; gap: 10px; }
+.cp-rub .area { font-weight: 700; font-size: 15px; }
+.cp-rub .lv { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.cp-rub .lv p { margin: 4px 0 0; font-size: 13.5px; line-height: 1.45; color: var(--ink-3); }
+.cp-rub .pick { display: flex; gap: 8px; flex-wrap: wrap; }
+.cp-rub .pick button { height: 34px; padding: 0 14px; border-radius: var(--radius-md); border: 1px solid var(--line-3); background: transparent; color: var(--ink-3); font: 500 13px var(--font-sans); }
+.cp-rub .pick button[aria-checked="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+.cp-rub .pick button[data-v="2"][aria-checked="true"] { border-color: var(--go); background: var(--go-soft); }
+
+.cp-form { display: grid; gap: 14px; }
+.cp-form label { display: grid; gap: 6px; font-size: 13px; font-weight: 600; }
+.cp-form input, .cp-form textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: var(--radius-md); border: 1px solid var(--line-3);
+  background: var(--inset, var(--surface)); color: var(--ink); font: 15px/1.5 var(--font-sans); }
+.cp-form input:focus, .cp-form textarea:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+.cp-form .hint { font-weight: 400; color: var(--muted); font-size: 12.5px; }
+.cp-err { min-height: 1em; margin: 10px 0 0; font-size: 12.5px; color: var(--bad); }
+.cp-acts { margin-top: 8px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.cp-acts .u-btn:disabled { opacity: .45; cursor: not-allowed; }
+.cp-acts .mu { font-size: 13.5px; color: var(--muted); }
+
+@media (max-width: 700px) {
+  .cp { padding: 22px 16px 48px; gap: 30px; }
+  .cp-rub .lv { grid-template-columns: 1fr; }
+  .cp-form input, .cp-form textarea { font-size: 16px; }   /* iOS zooms into smaller editable text */
+}

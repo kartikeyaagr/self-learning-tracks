@@ -1,0 +1,114 @@
+---
+// A destination's capstone: the public project that closes the route (content/capstones/<id>.json, validated by
+// practice/src/build.py). Progress, the checklist, the self-graded rubric and the links live in game.capstones[id];
+// a finished capstone shows in the Portfolio on Destinations. No XP.
+import fs from 'node:fs';
+import path from 'node:path';
+import { getCollection } from 'astro:content';
+import Unroll from '../../layouts/Unroll.astro';
+import { md } from '../../lib/md.mjs';
+import { lessonHref } from '../../plugins/remark-lesson-links.mjs';
+import { u } from '../../lib/url.mjs';
+import D from '../../content/destinations.json';
+import '../../styles/screens/capstone.css';
+
+export async function getStaticPaths() {
+  const dir = path.resolve(process.cwd(), 'src/content/capstones');
+  return fs.readdirSync(dir).map(f => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'))).map(c => ({params: {id: c.id}, props: {c}}));
+}
+const { c } = Astro.props;
+const dest = D.destinations.find(d => d.id === c.id);
+const keyOf = Object.fromEntries((await getCollection('courses')).map(x => [x.id, x.data.key]));
+const titles = Object.fromEntries((await getCollection('lessons')).map(l => [`${keyOf[l.data.course]}:${l.data.id}`, l.data.title]));
+const IDX = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'public/practice/index.json'), 'utf8'));
+const BUILDS = Object.fromEntries(IDX.builds.map(b => [b.id, b]));
+const brief = await md(c.brief);
+// each milestone: what to open, and what counts toward its progress bar (problem slugs or lesson refs)
+const ms = c.milestones.map(m => m.build
+  ? {title: m.title, note: m.note, href: u(`/practice/builds/${m.build}/`), what: BUILDS[m.build].title,
+     kind: BUILDS[m.build].kind === 'paper' ? 'Paper build' : 'Project build', problems: [...BUILDS[m.build].steps.map(s => s.problem), BUILDS[m.build].capstone]}
+  : {title: m.title, note: m.note, lessons: m.lessons.map(r => ({ref: r, t: titles[r], href: lessonHref(r)}))});
+---
+<Unroll title={`Capstone · ${c.title}`} description={c.summary}>
+  <div class="cp" id="cp" data-id={c.id}>
+    <header class="cp-head">
+      <div class="lab">CAPSTONE · {dest.name.toUpperCase()}</div>
+      <h1>{c.title}</h1>
+      <p>{c.summary}</p>
+      <div class="cp-meta"><span class="mono" id="cpState">Not started</span>
+        <a class="mono" href={u('/destinations/')}>Best after the final round · back to Destinations</a></div>
+    </header>
+
+    <section class="cp-sec"><h2>The brief</h2><div class="prose cp-brief" set:html={brief} /></section>
+
+    <section class="cp-sec"><h2>Milestones</h2><p class="cp-sub">Each one is something you build or read on the site first. Bars fill as you finish them.</p>
+      <ol class="cp-ms">{ms.map((m, i) => <li class="u-card" data-items={JSON.stringify(m.problems ? m.problems.map(p => 'p:' + p) : m.lessons.map(l => 'l:' + l.ref))}>
+        <div class="hd"><span class="mono n">{String(i + 1).padStart(2, '0')}</span><strong>{m.title}</strong><span class="mono cnt"></span></div>
+        <div class="bar" aria-hidden="true"><i></i></div>
+        {m.href ? <a class="lk" href={m.href}>{m.kind} · {m.what} →</a>
+          : <ul class="ls">{m.lessons.map(l => <li><a href={l.href}>{l.t}</a></li>)}</ul>}
+        {m.note && <p class="note">{m.note}</p>}
+      </li>)}</ol></section>
+
+    <section class="cp-sec"><h2>Deliverables</h2><p class="cp-sub">Make all of these public. Tick them off as you go.</p>
+      <ul class="cp-check">{c.deliverables.map((d, i) => <li><label><input type="checkbox" data-check={i}><span>{d}</span></label></li>)}</ul></section>
+
+    <section class="cp-sec"><h2>Grade yourself</h2><p class="cp-sub">Be strict: this is the bar a reviewer or interviewer will hold it to.</p>
+      <div class="cp-rub">{c.rubric.map((r, i) => <div class="row u-card">
+        <div class="area">{r.area}</div>
+        <div class="lv"><div><span class="lab">MEETS</span><p>{r.meets}</p></div><div><span class="lab">STRONG</span><p>{r.strong}</p></div></div>
+        <div class="pick" role="radiogroup" aria-label={`${r.area}: your grade`}>{['Not yet', 'Meets', 'Strong'].map((t, v) =>
+          <button type="button" role="radio" aria-checked="false" data-rub={i} data-v={v}>{t}</button>)}</div>
+      </div>)}</div></section>
+
+    <section class="cp-sec"><h2>Links and your CV line</h2>
+      <div class="cp-form">
+        <label>Repository <input type="url" data-url="repo" placeholder="https://github.com/you/project" inputmode="url"></label>
+        <label>Write-up <input type="url" data-url="writeup" placeholder="https://…" inputmode="url"></label>
+        <label>Demo (optional) <input type="url" data-url="demo" placeholder="https://…" inputmode="url"></label>
+        <label>CV line <textarea rows="3" data-line placeholder={c.resume}></textarea><span class="hint">Fill in the brackets with your numbers.</span></label>
+      </div>
+      <p class="cp-err mono" id="cpErr" aria-live="polite"></p>
+      <div class="cp-acts"><button type="button" class="u-btn go" id="cpDone">Mark finished</button><span class="mu" id="cpWhy"></span></div>
+    </section>
+  </div>
+
+  <script define:vars={{ RESUME: c.resume, N: c.deliverables.length, NR: c.rubric.length }}>window.__CP = {RESUME, N, NR};</script>
+  <script>
+    import { ns, save, all } from '../../lib/store.js';
+    import { lessonDone } from '../../lib/game.js';
+    const {RESUME, N, NR} = (window as any).__CP, root = document.getElementById('cp'), id = root.dataset.id;
+    const $ = (s, el: any = document) => el.querySelector(s), $$ = (s, el: any = document) => [...el.querySelectorAll(s)];
+    const G: any = ns('game'), cs = (G.capstones ||= {}), C = cs[id] ||= {check: {}, rubric: {}, urls: {}, line: ''};
+    const A = all(), solved = p => !!A.practice?.done?.[p];
+    const okUrl = v => { try { return ['https:', 'http:'].includes(new URL(v).protocol); } catch { return false; } };
+
+    // milestones: share of steps solved / lessons done
+    $$('.cp-ms > li').forEach(li => {
+      const items = JSON.parse(li.dataset.items), n = items.filter(x => x[0] === 'p' ? solved(x.slice(2)) : lessonDone(A, x.slice(2))).length;
+      $('.cnt', li).textContent = `${n} / ${items.length}`; $('.bar i', li).style.width = `${Math.round(n / items.length * 100)}%`;
+      if (n === items.length) li.classList.add('done');
+    });
+
+    $$('[data-check]').forEach(b => { b.checked = !!C.check[b.dataset.check]; b.addEventListener('change', () => { C.check[b.dataset.check] = b.checked; save(); paint(); }); });
+    $$('[data-rub]').forEach(b => b.addEventListener('click', () => { C.rubric[b.dataset.rub] = +b.dataset.v; save(); paint(); }));
+    $$('[data-url]').forEach(i => { i.value = C.urls[i.dataset.url] || ''; i.addEventListener('input', () => { C.urls[i.dataset.url] = i.value.trim(); save(); paint(); }); });
+    const line = $('[data-line]'); line.value = C.line || RESUME; line.addEventListener('input', () => { C.line = line.value; save(); });
+
+    $('#cpDone').addEventListener('click', () => { C.done = C.done ? undefined : new Date().toISOString(); if (!C.line) C.line = line.value; save(); paint(); });
+
+    function paint() {
+      $$('[data-rub]').forEach(b => b.setAttribute('aria-checked', String(C.rubric[b.dataset.rub] === +b.dataset.v)));
+      const bad = Object.entries(C.urls).filter(([, v]) => v && !okUrl(v)).map(([k]) => k);
+      $('#cpErr').textContent = bad.length ? `Not a web link: ${bad.join(', ')} (start with https://).` : '';
+      const ticked = Object.values(C.check).filter(Boolean).length, graded = Object.keys(C.rubric).length;
+      const missing = [ticked < N && `${N - ticked} deliverable${N - ticked === 1 ? '' : 's'} to tick`, !okUrl(C.urls.repo || '') && 'a repository link'].filter(Boolean);
+      const btn = $('#cpDone');
+      btn.disabled = !C.done && missing.length > 0;
+      btn.textContent = C.done ? 'Finished · undo' : 'Mark finished';
+      $('#cpWhy').textContent = C.done ? `Finished ${new Date(C.done).toLocaleDateString()}. It's in your Portfolio on Destinations.` : missing.length ? `Still needed: ${missing.join(' and ')}.` : 'Ready when you are.';
+      $('#cpState').textContent = C.done ? 'FINISHED' : ticked || graded || C.urls.repo ? `IN PROGRESS · ${ticked}/${N} DELIVERABLES · ${graded}/${NR} GRADED` : 'NOT STARTED';
+    }
+    paint();
+  </script>
+</Unroll>
