@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='One ICP step with Kabsch alignment', tags=['3D Geometry', 'Linear Algebra'], diff='Hard', runtime='numpy',
-            lessons=['air-fanout-v1:01.13'], related=['svd-components', 'euclidean-distance', 'chain-rigid-poses'])
+            lessons=['mlmaths:07.08'], related=['svd-components', 'euclidean-distance', 'chain-rigid-poses'])
 
 STATEMENT = r"""
 Iterative Closest Point aligns a source point cloud to a target cloud by repeating two steps: match each source point to its nearest target point, then solve for the rigid transform that best aligns the matched pairs. Implement **one** step.

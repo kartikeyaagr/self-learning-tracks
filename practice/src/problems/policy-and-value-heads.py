@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Policy and value heads with a legal-move mask', tags=['Convolutional Networks', 'Reinforcement Learning'],
-            diff='Medium', runtime='numpy', lessons=['air-fanout-v1:02.02'],
+            diff='Medium', runtime='numpy', lessons=['mlmaths:10.32'],
             related=['apply-alphago-residual-block', 'assemble-compact-dual-head-network', 'build-legal-go-action-mask',
                      'softmax-rows'])
 

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Local backward rules for scalar ops', tags=['Neural Networks', 'Calculus'], diff='Easy',
-            runtime='python', lessons=['air-fanout-v1:01.07', 'air-fanout-v1:01.06'],
+            runtime='python', lessons=['mlmaths:09.18', 'air-fanout-v1:01.06'],
             related=['differentiate-tanh-activation', 'run-reverse-mode-autodiff', 'derivatives-of-common-activation-functions'])
 
 STATEMENT = r"""

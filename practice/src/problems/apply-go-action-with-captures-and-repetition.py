@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Play a Go move: captures, ko and superko', tags=['Reinforcement Learning'], diff='Hard',
-            runtime='numpy', lessons=['air-fanout-v1:07.01'],
+            runtime='numpy', lessons=['dlcore:08.01'],
             related=['build-legal-go-action-mask', 'find-go-group-and-its-liberties',
                      'encode-alphago-zero-board-history'])
 

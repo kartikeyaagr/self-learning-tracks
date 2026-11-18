@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='RMSNorm in half precision, the way LLMs do it', tags=['Transformers', 'Neural Networks'], diff='Easy',
-            runtime='torch', tol=[2e-3, 1e-5], lessons=['air-fanout-v1:05.04', 'ieng:02.03'],
+            runtime='torch', tol=[2e-3, 1e-5], lessons=['dlcore:02.02', 'ieng:02.03'],
             related=['norm-gated-linear-transform', 'layer-norm', 'parameter-matched-swiglu-block'])
 
 STATEMENT = r"""

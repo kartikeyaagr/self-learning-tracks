@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='SGD by hand with weight decay', tags=['Training', 'Optimization'], diff='Medium', runtime='torch',
-            lessons=['air-fanout-v1:05.07', 'air-fanout-v1:01.08'],
+            lessons=['air-fanout-v1:05.07', 'dlcore:01.04'],
             related=['basic-autograd', 'mini-training-loop', 'apply-one-full-sgd-training-step'])
 
 STATEMENT = r"""

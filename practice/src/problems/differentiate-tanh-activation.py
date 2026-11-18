@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='A tanh node with its backward rule', tags=['Activation Functions', 'Neural Networks'], diff='Easy',
-            runtime='python', lessons=['air-fanout-v1:01.07'],
+            runtime='python', lessons=['mlmaths:09.18'],
             related=['derivatives-of-common-activation-functions', 'evaluate-scalar-neuron', 'apply-local-vector-jacobian-rules'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Autotuned tiled matmul', tags=['GPU Programming', 'Linear Algebra'], diff='Medium', runtime='triton',
-            tol=[1e-4, 1e-4], lessons=['ieng:13.03', 'air-fanout-v1:03.02'],
+            tol=[1e-4, 1e-4], lessons=['ieng:13.03', 'mltk:01.07'],
             related=['fused-matmul-bias-relu', 'grouped-program-id-matmul', 'block-pointer-matmul'])
 
 STATEMENT = r"""

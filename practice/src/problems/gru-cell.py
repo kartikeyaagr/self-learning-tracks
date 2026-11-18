@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='GRU over a sequence (PyTorch gate convention)', tags=['Neural Networks', 'NLP', 'Time Series'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:04.24'],
+            runtime='numpy', lessons=['dlcore:06.03'],
             related=['vanilla-rnn-cell', 'lstm-cell', 'sequence-to-sequence-forward-pass'])
 
 STATEMENT = r"""

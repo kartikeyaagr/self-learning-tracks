@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='ViT patch embedding with a class token', tags=['Computer Vision', 'Transformers'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:03.04'], related=['reshaping-arrays', '2d-sinusoidal-positional-embedding', 'vit-multi-head-self-attention'])
+            lessons=['mltk:01.06'], related=['reshaping-arrays', '2d-sinusoidal-positional-embedding', 'vit-multi-head-self-attention'])
 
 STATEMENT = r"""
 A Vision Transformer turns an image into a token sequence in three steps: cut it into non-overlapping `p x p` patches, project each flattened patch to the model width `D` with a shared linear layer, and prepend a learnable **class token**. A learned position embedding is then added to every token.

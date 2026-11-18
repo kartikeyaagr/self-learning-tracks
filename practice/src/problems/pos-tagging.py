@@ -1,5 +1,5 @@
 META = dict(title='Most-frequent-tag POS baseline', tags=['NLP', 'Classification'], diff='Easy', runtime='python',
-            lessons=['air-fanout-v1:04.24'], related=['greedy-sequence-tagging', 'named-entity-recognition', 'text-classification'])
+            lessons=['dlcore:06.03'], related=['greedy-sequence-tagging', 'named-entity-recognition', 'text-classification'])
 
 STATEMENT = r"""
 A surprisingly strong part-of-speech tagger assigns every word the tag it had most often in training. Every real tagger is compared against this baseline.

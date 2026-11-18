@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Forward pass of one neuron with Value nodes', tags=['Neural Networks', 'Activation Functions'],
-            diff='Easy', runtime='python', lessons=['air-fanout-v1:05.01'],
+            diff='Easy', runtime='python', lessons=['dlcore:01.01'],
             related=['differentiate-tanh-activation', 'backpropagate-through-scalar-neuron', 'build-scalar-neuron-module'])
 
 STATEMENT = r"""

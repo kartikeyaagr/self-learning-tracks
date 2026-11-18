@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='RMSProp on the Rosenbrock valley', tags=['Optimization', 'Training'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:01.14', 'air-fanout-v1:05.05'],
+            lessons=['mlmaths:14.03', 'mlmaths:14.04'],
             related=['adagrad', 'adam-optimizer', 'optimizer-showdown'])
 
 STATEMENT = r"""

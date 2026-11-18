@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Elman RNN over padded sequences', tags=['Neural Networks', 'NLP', 'Time Series'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:04.24', 'air-fanout-v1:04.27'],
+            runtime='numpy', lessons=['dlcore:06.03', 'mltk:02.07'],
             related=['gru-cell', 'lstm-cell', 'sequence-to-sequence-forward-pass'])
 
 STATEMENT = r"""

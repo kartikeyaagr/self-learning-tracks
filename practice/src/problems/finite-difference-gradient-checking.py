@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Gradient checking with central differences', tags=['Calculus', 'Training'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:01.08', 'air-fanout-v1:01.04'],
+            lessons=['dlcore:01.04', 'mlmaths:09.21'],
             related=['chain-rule-through-3-layer-network', 'forward-mode-autodiff-with-dual-numbers'])
 
 STATEMENT = r"""

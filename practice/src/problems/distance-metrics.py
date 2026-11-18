@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Pairwise distance matrices', tags=['Classic ML', 'Linear Algebra'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:02.04', 'air-fanout-v1:02.03'], related=['cosine-similarity-matrix', 'knn-classifier'])
+            lessons=['mlmaths:14.06', 'mltk:01.03'], related=['cosine-similarity-matrix', 'knn-classifier'])
 
 STATEMENT = r"""
 Many algorithms (k-NN, clustering, retrieval) start from a matrix of distances between two sets of points. Write `pairwise_distances(A, B, metric)` that returns $D_{ij} = \mathrm{dist}(a_i, b_j)$.

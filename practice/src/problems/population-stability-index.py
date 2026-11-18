@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Population Stability Index for feature drift', tags=['MLOps', 'Feature Engineering'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:11.12', 'air-fanout-v1:11.01'], related=['two-sample-ks-drift', 'percentiles-quantiles'])
+            lessons=['mlcore:09.03'], related=['two-sample-ks-drift', 'percentiles-quantiles'])
 
 STATEMENT = r"""
 A model was trained on one population and now scores another. The **Population Stability Index** (PSI) is the usual first check that a feature's distribution hasn't moved. Bin both samples with the same edges, turn counts into proportions $r_i$ (reference) and $c_i$ (current), and sum

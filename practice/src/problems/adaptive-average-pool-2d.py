@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Adaptive average pooling', tags=['Convolutional Networks'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:04.02'], related=['average-pool-2d', 'max-pool-2d', 'roi-align'])
+            lessons=['dlcore:03.01'], related=['average-pool-2d', 'max-pool-2d', 'roi-align'])
 
 STATEMENT = r"""
 Adaptive pooling fixes the **output** size instead of the window size, so a classifier head can accept images of any resolution. The input is split into `out_h x out_w` bins whose edges are rounded outward, which means neighbouring bins may overlap when the sizes don't divide evenly.

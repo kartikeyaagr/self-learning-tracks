@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Backward pass of a softmax classifier with smoothing and class weights', tags=['Loss Functions', 'Calculus', 'Classification'],
-            diff='Hard', runtime='numpy', lessons=['air-fanout-v1:02.02', 'air-fanout-v1:01.09'],
+            diff='Hard', runtime='numpy', lessons=['mlmaths:10.32', 'mlmaths:09.28'],
             related=['cross-entropy-logits', 'softmax-jacobian', 'softmax-numerical-stability-and-log-sum-exp'])
 
 STATEMENT = r"""

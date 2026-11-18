@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Dot products along the last axis', tags=['Linear Algebra'], diff='Easy', runtime='numpy',
-            lessons=['mlmaths:06.01', 'air-fanout-v1:02.01'], related=['cosine-similarity', 'matrix-vector-multiply', 'vector-projection'])
+            lessons=['mlmaths:06.01', 'mlmaths:06.03'], related=['cosine-similarity', 'matrix-vector-multiply', 'vector-projection'])
 
 STATEMENT = r"""
 The dot product of two vectors $a, b \in \mathbb{R}^d$ is

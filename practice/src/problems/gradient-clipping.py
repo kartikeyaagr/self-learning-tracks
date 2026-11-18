@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Gradient clipping: value, global norm, adaptive', tags=['Training', 'Optimization'], diff='Hard', runtime='numpy',
-            lessons=['air-fanout-v1:02.04'],
+            lessons=['mlmaths:14.06'],
             related=['gradient-accumulation', 'adam-optimizer'])
 
 STATEMENT = r"""

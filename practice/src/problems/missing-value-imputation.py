@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Column-wise missing value imputation', tags=['Data Processing', 'Feature Engineering'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:11.12'], related=['feature-scaling', 'categorical-encoding'])
+            lessons=['mlcore:07.05'], related=['feature-scaling', 'categorical-encoding'])
 
 STATEMENT = r"""
 Missing values are encoded as `nan`. Write `impute(X_train, X_test, strategy)` that learns one fill value per column from `X_train` and uses it to replace the `nan`s in **both** arrays.

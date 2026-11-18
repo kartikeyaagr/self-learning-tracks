@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='A two-layer classifier as an nn.Module', tags=['Neural Networks', 'Classification'], diff='Easy', runtime='torch',
-            lessons=['air-fanout-v1:05.03', 'ieng:00.05'],
+            lessons=['dlcore:01.01', 'ieng:00.05'],
             related=['multi-layer-perceptron-forward-pass', 'custom-linear-layer', 'mini-training-loop'])
 
 STATEMENT = r"""

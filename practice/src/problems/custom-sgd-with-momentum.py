@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='SGD with momentum as a torch.optim.Optimizer', tags=['Optimization', 'Training'], diff='Hard',
-            runtime='torch', lessons=['air-fanout-v1:05.06', 'air-fanout-v1:05.05'],
+            runtime='torch', lessons=['mlmaths:14.03', 'mlmaths:14.04'],
             related=['classical-momentum', 'nesterov-momentum', 'manual-weight-update'])
 
 STATEMENT = r"""

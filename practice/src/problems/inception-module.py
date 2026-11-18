@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Inception module with 1x1 reductions', tags=['Convolutional Networks', 'Computer Vision'], diff='Hard',
-            runtime='numpy', lessons=['air-fanout-v1:04.09'],
+            runtime='numpy', lessons=['dlcore:03.05'],
             related=['2d-convolution', 'pooling-layers', 'depthwise-separable-convolution'])
 
 STATEMENT = r"""

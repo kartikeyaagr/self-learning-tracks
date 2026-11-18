@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='A VGG block: stacked 3x3 convs, then pool', tags=['Convolutional Networks', 'Computer Vision'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:04.02', 'air-fanout-v1:04.08'],
+            runtime='numpy', lessons=['dlcore:03.01', 'dlcore:02.05'],
             related=['2d-convolution', 'pooling-layers', 'resnet-residual-block'])
 
 STATEMENT = r"""

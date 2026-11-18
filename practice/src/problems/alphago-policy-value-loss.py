@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Combined policy-value loss for self-play training', tags=['Loss Functions', 'Reinforcement Learning'],
-            diff='Medium', runtime='numpy', lessons=['air-fanout-v1:01.11', 'air-fanout-v1:02.04'],
+            diff='Medium', runtime='numpy', lessons=['mlmaths:15.01', 'mlmaths:14.06'],
             related=['turn-root-visits-into-search-policy', 'apply-one-policy-value-head-training-step',
                      'cross-entropy-logits'])
 

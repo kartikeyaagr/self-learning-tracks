@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Centre pad-or-crop to a fixed size', tags=['Computer Vision', 'Data Processing'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:03.05'], related=['basic-indexing', 'bilinear-resize'])
+            lessons=['mltk:01.02'], related=['basic-indexing', 'bilinear-resize'])
 
 STATEMENT = r"""
 A batch needs every image at the same size. A common recipe that never distorts the aspect ratio: on each axis, **crop** the centre if the image is too big and **pad** symmetrically with a constant if it is too small. The two axes are handled independently, so a wide, short image can be cropped horizontally and padded vertically at once.

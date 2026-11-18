@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='SARSA along one trajectory', tags=['Reinforcement Learning'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:07.01'],
+            lessons=['dlcore:08.01'],
             related=['q-learning-update', 'expected-sarsa', 'td-0-value-update'])
 
 STATEMENT = r"""

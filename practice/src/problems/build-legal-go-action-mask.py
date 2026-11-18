@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Legal-move mask for Go', tags=['Reinforcement Learning'], diff='Hard', runtime='numpy',
-            lessons=['air-fanout-v1:07.01'],
+            lessons=['dlcore:08.01'],
             related=['find-go-group-and-its-liberties', 'apply-go-action-with-captures-and-repetition',
                      'initialize-legal-mcts-edge-statistics'])
 

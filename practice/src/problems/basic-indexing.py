@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Centre crop with a stride', tags=['Computer Vision', 'Data Processing'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:03.05'], related=['reshaping-arrays', 'zeros-and-ones', 'mutation-trap'])
+            lessons=['mltk:01.02'], related=['reshaping-arrays', 'zeros-and-ones', 'mutation-trap'])
 
 STATEMENT = r"""
 Write `center_crop(img, h, w, stride=1)` that cuts an `h x w` window from the middle of an image and then keeps every `stride`-th pixel in both directions. Use slicing only.

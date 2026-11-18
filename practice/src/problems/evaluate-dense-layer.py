@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='A dense layer of Value neurons', tags=['Neural Networks'], diff='Medium', runtime='python',
-            lessons=['air-fanout-v1:05.02'],
+            lessons=['dlcore:01.01'],
             related=['build-scalar-neuron-module', 'evaluate-multi-layer-perceptron', 'jacobian-of-neural-network-layer'])
 
 STATEMENT = r"""

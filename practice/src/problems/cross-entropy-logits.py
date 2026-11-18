@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Cross-entropy from logits', tags=['Loss Functions', 'Classification'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:02.02'], related=['softmax-rows', 'softmax-jacobian'])
+            lessons=['mlmaths:10.32'], related=['softmax-rows', 'softmax-jacobian'])
 
 STATEMENT = r"""
 Classifiers output raw logits $z \in \mathbb{R}^{N \times C}$. The cross-entropy loss for sample $n$ with true class $y_n$ is

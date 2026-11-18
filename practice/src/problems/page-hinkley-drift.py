@@ -1,5 +1,5 @@
 META = dict(title='Page-Hinkley test for streaming drift', tags=['MLOps', 'Time Series'], diff='Medium', runtime='python',
-            lessons=['air-fanout-v1:11.01'], related=['consecutive-breach-alerts', 'two-sample-ks-drift'])
+            lessons=['mlcore:09.03'], related=['consecutive-breach-alerts', 'two-sample-ks-drift'])
 
 STATEMENT = r"""
 Batch drift tests compare two fixed windows. A streaming detector instead watches one value at a time (say each request's loss) and raises an alarm soon after the mean shifts. The **Page-Hinkley** test accumulates how far values sit above their running mean, and alarms when that sum climbs far above its lowest point so far.

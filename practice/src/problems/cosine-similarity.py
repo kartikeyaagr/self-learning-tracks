@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Cosine similarity of two vectors', tags=['Linear Algebra', 'Embeddings'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:02.01', 'aieng:02.02'], related=['dot-product', 'vector-norms', 'cosine-similarity-matrix'])
+            lessons=['mlmaths:06.03', 'aieng:02.02'], related=['dot-product', 'vector-norms', 'cosine-similarity-matrix'])
 
 STATEMENT = r"""
 Cosine similarity compares the **direction** of two vectors and ignores their length:

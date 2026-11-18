@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Linear warmup, then linear decay', tags=['Training', 'Optimization'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:05.05', 'air-fanout-v1:10.04'],
+            lessons=['mlmaths:14.04', 'air-fanout-v1:10.04'],
             related=['cosine-annealing-with-warm-restarts', 'lr-range-test-and-one-cycle-policy'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Lasso by cyclic coordinate descent', tags=['Regression', 'Optimization'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:02.04'], related=['ridge-regression', 'linear-regression'])
+            lessons=['mlmaths:14.06'], related=['ridge-regression', 'linear-regression'])
 
 STATEMENT = r"""
 The lasso uses an L1 penalty, which drives some weights to **exactly** zero:

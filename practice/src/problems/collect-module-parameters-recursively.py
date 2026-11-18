@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Named parameters of nested modules', tags=['Neural Networks'], diff='Medium', runtime='python',
-            lessons=['air-fanout-v1:05.03'],
+            lessons=['dlcore:01.01'],
             related=['evaluate-multi-layer-perceptron', 'build-scalar-neuron-module', 'apply-one-full-sgd-training-step'])
 
 STATEMENT = r"""

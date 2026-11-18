@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Autoencoder with optional tied weights', tags=['Generative Models', 'Neural Networks', 'Loss Functions'],
-            diff='Medium', runtime='numpy', lessons=['air-fanout-v1:05.03'],
+            diff='Medium', runtime='numpy', lessons=['dlcore:01.01'],
             related=['variational-autoencoder-forward-pass', 'multi-layer-perceptron-forward-pass', 'log-loss-binary-cross-entropy'])
 
 STATEMENT = r"""

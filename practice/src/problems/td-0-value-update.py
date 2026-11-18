@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='TD(0) value updates from a transition stream', tags=['Reinforcement Learning'], diff='Easy',
-            runtime='numpy', lessons=['air-fanout-v1:07.01'],
+            runtime='numpy', lessons=['dlcore:08.01'],
             related=['monte-carlo-policy-evaluation', 'sarsa-update', 'q-learning-update'])
 
 STATEMENT = r"""

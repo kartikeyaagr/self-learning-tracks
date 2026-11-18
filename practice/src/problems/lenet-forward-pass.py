@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='A LeNet-style CNN, end to end', tags=['Convolutional Networks', 'Computer Vision'], diff='Hard', runtime='numpy',
-            lessons=['air-fanout-v1:04.02'], related=['2d-convolution', 'pooling-layers', 'multi-layer-perceptron-forward-pass'])
+            lessons=['dlcore:03.01'], related=['2d-convolution', 'pooling-layers', 'multi-layer-perceptron-forward-pass'])
 
 STATEMENT = r"""
 Assemble a complete small convolutional classifier in the style of LeNet-5:

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Interpret a program into a Value graph', tags=['Neural Networks'], diff='Medium', runtime='python',
-            lessons=['air-fanout-v1:01.08'],
+            lessons=['dlcore:01.04'],
             related=['create-multiplication-value-node', 'trace-reachable-expression-graph', 'run-reverse-mode-autodiff'])
 
 STATEMENT = r"""

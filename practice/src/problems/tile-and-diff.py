@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Remove seasonality, then difference', tags=['Time Series', 'Data Processing'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:01.14'], related=['angle-features', 'boolean-masking', 'concat-and-correlate'])
+            runtime='numpy', lessons=['mlmaths:14.03'], related=['angle-features', 'boolean-masking', 'concat-and-correlate'])
 
 STATEMENT = r"""
 A daily metric often repeats a weekly pattern. A simple way to study what is left: estimate the average value at each **phase** of the cycle, subtract that repeating profile, and then look at day-to-day changes.

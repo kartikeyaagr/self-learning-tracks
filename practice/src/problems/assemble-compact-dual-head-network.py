@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Forward pass of a small dual-head Go network', tags=['Convolutional Networks', 'Reinforcement Learning'],
-            diff='Hard', runtime='numpy', lessons=['air-fanout-v1:04.02'],
+            diff='Hard', runtime='numpy', lessons=['dlcore:03.01'],
             related=['apply-alphago-residual-block', 'policy-and-value-heads', 'encode-alphago-zero-board-history',
                      'run-deterministic-neural-guided-mcts'])
 

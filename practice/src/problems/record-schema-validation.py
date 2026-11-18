@@ -1,7 +1,7 @@
 import math
 
 META = dict(title='Validate incoming records against a data contract', tags=['MLOps', 'Data Processing'], diff='Medium', runtime='python',
-            lessons=['air-fanout-v1:11.12'], related=['concatenate-dataframes', 'training-serving-skew'])
+            lessons=['air-fanout-v1:14.03', 'mlcore:07.05'], related=['concatenate-dataframes', 'training-serving-skew'])
 
 STATEMENT = r"""
 Before a batch reaches feature computation, a validation step checks it against a schema (a "data contract") and reports every violation, so bad upstream data is caught at the door instead of as a silent accuracy drop a week later.

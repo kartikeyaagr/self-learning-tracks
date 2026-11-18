@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Train a tiny MLP with your own autograd', tags=['Training', 'Neural Networks'], diff='Hard',
-            runtime='python', lessons=['air-fanout-v1:05.07', 'air-fanout-v1:05.05'],
+            runtime='python', lessons=['air-fanout-v1:05.07', 'mlmaths:14.04'],
             related=['apply-one-full-sgd-training-step', 'accumulate-shared-path-gradients', 'evaluate-multi-layer-perceptron'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Two-sample Kolmogorov-Smirnov drift test', tags=['MLOps', 'Probability and Statistics'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:11.12'], related=['population-stability-index', 'percentiles-quantiles'])
+            lessons=['mlcore:09.03'], related=['population-stability-index', 'percentiles-quantiles'])
 
 STATEMENT = r"""
 PSI needs bins. The two-sample **Kolmogorov-Smirnov** test doesn't: it compares the empirical CDFs of the reference and current samples directly,

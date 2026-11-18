@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Sweep the learning rate', tags=['Training', 'Optimization'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:05.05', 'air-fanout-v1:04.23'],
+            lessons=['mlmaths:14.04', 'mlcore:06.05'],
             related=['vanilla-gradient-descent', 'lr-range-test-and-one-cycle-policy'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Max and average pooling', tags=['Convolutional Networks', 'Computer Vision'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:04.02'], related=['2d-convolution', 'vgg-convolution-block'])
+            lessons=['dlcore:03.01'], related=['2d-convolution', 'vgg-convolution-block'])
 
 STATEMENT = r"""
 Pooling shrinks a feature map by summarising each $k \times k$ window with one number. Write `pool2d(x, k, stride=None, mode='max')`.

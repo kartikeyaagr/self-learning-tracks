@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='RMSNorm and gated MLP block', tags=['Transformers', 'Neural Networks'], diff='Hard', runtime='numpy',
-            lessons=['air-fanout-v1:05.04', 'ieng:02.03'], related=['layer-norm', 'softmax-rows', 'sigmoid-stable'])
+            lessons=['dlcore:02.02', 'ieng:02.03'], related=['layer-norm', 'softmax-rows', 'sigmoid-stable'])
 
 STATEMENT = r"""
 Many modern transformer layers apply the same three-stage feed-forward block to every token: normalise, apply a **gated** linear expansion, project back and add the input (a residual connection). Implement it in NumPy for a whole batch at once.

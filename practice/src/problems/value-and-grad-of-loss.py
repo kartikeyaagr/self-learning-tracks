@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='value_and_grad with an auxiliary metric', tags=['JAX', 'Loss Functions'], diff='Easy', runtime='jax',
-            lessons=['air-fanout-v1:01.04'], related=['hessian-vector-product', 'per-example-gradient-clipping'],
+            lessons=['mlmaths:09.21'], related=['hessian-vector-product', 'per-example-gradient-clipping'],
             tol=[1e-4, 1e-5])
 
 STATEMENT = r"""

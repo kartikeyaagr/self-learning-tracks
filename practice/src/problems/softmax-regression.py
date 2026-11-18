@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Multinomial logistic (softmax) regression', tags=['Classification', 'Optimization'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:02.02'], related=['softmax-rows', 'cross-entropy-logits', 'logistic-regression'])
+            lessons=['mlmaths:10.32'], related=['softmax-rows', 'cross-entropy-logits', 'logistic-regression'])
 
 STATEMENT = r"""
 Softmax regression generalises logistic regression to $C$ classes. With weights $W \in \mathbb R^{d\times C}$ and biases $b \in \mathbb R^C$, the class probabilities are $P = \mathrm{softmax}(XW + b)$ row-wise, and the training objective is

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Xavier, He and LeCun initialisation', tags=['Neural Networks', 'Training'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:05.02'], related=['multi-layer-perceptron-forward-pass', 'batch-normalization'])
+            lessons=['dlcore:01.01'], related=['multi-layer-perceptron-forward-pass', 'batch-normalization'])
 
 STATEMENT = r"""
 Initialisation schemes pick the weight variance so that activations (or gradients) keep roughly the same scale from layer to layer. They all depend on the layer's **fan-in** and **fan-out**.

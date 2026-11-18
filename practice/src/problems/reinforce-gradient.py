@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='REINFORCE gradient for a linear softmax policy', tags=['Reinforcement Learning'], diff='Easy',
-            runtime='numpy', lessons=['air-fanout-v1:07.02'],
+            runtime='numpy', lessons=['dlcore:08.06'],
             related=['reinforce-with-baseline', 'discounted-returns', 'softmax-cross-entropy-gradient'])
 
 STATEMENT = r"""

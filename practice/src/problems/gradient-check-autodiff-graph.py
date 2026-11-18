@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Gradient-check a whole autograd graph', tags=['Neural Networks', 'Calculus'], diff='Hard',
-            runtime='python', lessons=['air-fanout-v1:01.08'],
+            runtime='python', lessons=['dlcore:01.04'],
             related=['run-reverse-mode-autodiff', 'gradient-check-scalar-neuron', 'check-product-chain-gradient'])
 
 STATEMENT = r"""

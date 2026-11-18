@@ -2,7 +2,7 @@ import numpy as np
 
 META = dict(title='Row-wise L2 norm and normalization', tags=['GPU Programming', 'Embeddings'], diff='Easy',
             runtime='triton', tol=[1e-5, 1e-6],
-            lessons=['ieng:13.04', 'air-fanout-v1:02.04'], related=['vector-norms', 'vector-sum-reduction', 'rmsnorm-forward'])
+            lessons=['ieng:13.04', 'mlmaths:14.06'], related=['vector-norms', 'vector-sum-reduction', 'rmsnorm-forward'])
 
 STATEMENT = r"""
 Embedding search L2-normalises every vector so that a dot product becomes a cosine similarity. Write a kernel that computes each row's L2 norm and the normalised row together.

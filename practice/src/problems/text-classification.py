@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Multinomial naive Bayes text classifier', tags=['NLP', 'Classification'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:04.24'], related=['bag-of-words', 'gaussian-naive-bayes', 'tf-idf'])
+            lessons=['dlcore:06.03'], related=['bag-of-words', 'gaussian-naive-bayes', 'tf-idf'])
 
 STATEMENT = r"""
 Multinomial naive Bayes treats a document as a bag of words drawn independently from a class-specific distribution. It trains by counting and is a strong baseline for spam filtering and topic classification.

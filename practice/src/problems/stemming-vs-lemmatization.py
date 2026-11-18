@@ -1,5 +1,5 @@
 META = dict(title='A suffix stemmer next to a lemma lookup', tags=['NLP'], diff='Easy', runtime='python',
-            lessons=['air-fanout-v1:04.24'], related=['text-normalization', 'vocabulary-building'])
+            lessons=['dlcore:06.03'], related=['text-normalization', 'vocabulary-building'])
 
 STATEMENT = r"""
 Stemming and lemmatization both map inflected words onto a shared base so that *connects*, *connected* and *connecting* count as one feature. A **stemmer** chops suffixes by rule and may produce non-words (`running` becomes `runn`). A **lemmatizer** looks the word up and returns a real dictionary form (`ran` becomes `run`), but only for words it knows.

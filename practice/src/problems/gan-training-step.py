@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='One GAN training step, gradients by hand', tags=['Generative Models', 'Training', 'Loss Functions'], diff='Hard',
-            runtime='numpy', lessons=['air-fanout-v1:01.08', 'air-fanout-v1:04.13'],
+            runtime='numpy', lessons=['dlcore:01.04'],
             related=['variational-autoencoder-forward-pass', 'backpropagation-single-hidden-layer', 'log-loss-binary-cross-entropy'])
 
 STATEMENT = r"""

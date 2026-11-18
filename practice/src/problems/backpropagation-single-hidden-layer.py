@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Backprop by hand: tanh hidden layer, softmax output', tags=['Neural Networks', 'Loss Functions'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:01.08', 'air-fanout-v1:01.07'],
+            runtime='numpy', lessons=['dlcore:01.04', 'mlmaths:09.18'],
             related=['multi-layer-perceptron-forward-pass', 'softmax-cross-entropy-gradient', 'finite-difference-gradient-checking'])
 
 STATEMENT = r"""

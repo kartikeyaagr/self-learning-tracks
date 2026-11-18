@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Train logistic regression with Adam', tags=['Optimization', 'Classification', 'Training'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:05.06'],
+            runtime='numpy', lessons=['mlmaths:14.03'],
             related=['adam-step', 'rmsprop', 'adamw-decoupled-weight-decay', 'cross-entropy-logits'])
 
 STATEMENT = r"""

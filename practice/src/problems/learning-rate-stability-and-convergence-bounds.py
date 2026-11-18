@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Step-size limits and convergence rate of gradient descent', tags=['Optimization', 'Training'], diff='Hard',
-            runtime='numpy', lessons=['mlmaths:07.01', 'air-fanout-v1:05.05'],
+            runtime='numpy', lessons=['mlmaths:07.01', 'mlmaths:14.04'],
             related=['hessian-matrix-and-convexity-of-linear-regressio', 'gradient-descent-on-non-convex-loss',
                      'limit-of-learning-rate-schedule'])
 

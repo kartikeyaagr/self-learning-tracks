@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Transposed convolution (scatter form)', tags=['Convolutional Networks', 'U-Net'], diff='Hard', runtime='numpy',
-            lessons=['air-fanout-v1:04.02'], related=['multichannel-2d-convolution', 'dilated-2d-convolution', 'bilinear-resize'])
+            lessons=['dlcore:03.01'], related=['multichannel-2d-convolution', 'dilated-2d-convolution', 'bilinear-resize'])
 
 STATEMENT = r"""
 A transposed convolution ("deconvolution") is the learnable upsampler of decoders and U-Nets. The easiest way to think about it is as a **scatter**: every input pixel stamps a scaled copy of the kernel into the output, the stamps are placed `stride` pixels apart, and overlapping stamps add up. `padding` then trims that many pixels from each side of the result.

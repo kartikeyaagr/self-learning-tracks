@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Where an exponential LR schedule settles', tags=['Calculus', 'Training'], diff='Easy', runtime='python',
-            lessons=['air-fanout-v1:05.05'], related=['learning-rate-stability-and-convergence-bounds', 'adam-step'])
+            lessons=['mlmaths:14.04'], related=['learning-rate-stability-and-convergence-bounds', 'adam-step'])
 
 STATEMENT = r"""
 A common learning-rate schedule decays geometrically towards a floor:

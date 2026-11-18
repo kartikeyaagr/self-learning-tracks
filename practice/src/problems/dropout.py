@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Inverted dropout in a tiny MLP', tags=['Neural Networks', 'Training'], diff='Hard', runtime='numpy',
-            lessons=['air-fanout-v1:05.07', 'air-fanout-v1:01.08'],
+            lessons=['air-fanout-v1:05.07', 'dlcore:01.04'],
             related=['early-stopping', 'gradient-clipping'])
 
 STATEMENT = r"""

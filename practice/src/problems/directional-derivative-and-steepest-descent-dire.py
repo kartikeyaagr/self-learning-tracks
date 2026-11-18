@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Directional derivatives and steepest descent in three norms', tags=['Calculus', 'Optimization'], diff='Medium',
-            runtime='numpy', lessons=['mlmaths:09.08', 'air-fanout-v1:01.04'],
+            runtime='numpy', lessons=['mlmaths:09.08', 'mlmaths:09.21'],
             related=['gradient-descent-on-non-convex-loss', 'hessian-matrix-and-convexity-of-linear-regressio'])
 
 STATEMENT = r"""

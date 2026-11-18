@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Nearest neighbours in an embedding table', tags=['Embeddings'], diff='Easy', runtime='numpy',
-            lessons=['aieng:02.02', 'air-fanout-v1:02.01'], related=['cosine-similarity-matrix', 'sentence-embeddings', 'word2vec'])
+            lessons=['aieng:02.02', 'mlmaths:06.03'], related=['cosine-similarity-matrix', 'sentence-embeddings', 'word2vec'])
 
 STATEMENT = r"""
 Word embeddings place similar words close together. Write `nearest(E, words, query, k)` that returns the `k` words most similar to `query` by cosine similarity:

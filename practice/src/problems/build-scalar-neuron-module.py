@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='A Neuron module with shared parameters', tags=['Neural Networks'], diff='Medium', runtime='python',
-            lessons=['air-fanout-v1:05.01'],
+            lessons=['dlcore:01.01'],
             related=['evaluate-scalar-neuron', 'evaluate-dense-layer', 'collect-module-parameters-recursively'])
 
 STATEMENT = r"""

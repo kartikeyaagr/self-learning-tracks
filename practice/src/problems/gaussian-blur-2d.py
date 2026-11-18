@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Separable Gaussian blur', tags=['Computer Vision', 'Convolutional Networks'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:04.02'], related=['sobel-edge-detection', 'multichannel-2d-convolution'])
+            lessons=['dlcore:03.01'], related=['sobel-edge-detection', 'multichannel-2d-convolution'])
 
 STATEMENT = r"""
 A 2-D Gaussian kernel is the outer product of two 1-D Gaussians, so blurring can be done as a 1-D pass down the rows followed by a 1-D pass along the columns. That's $2(2r+1)$ multiply-adds per pixel instead of $(2r+1)^2$.

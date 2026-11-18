@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Step-decay learning rates with an optimizer and scheduler', tags=['Training', 'Optimization'], diff='Easy', runtime='torch',
-            lessons=['air-fanout-v1:05.05', 'air-fanout-v1:10.04'],
+            lessons=['mlmaths:14.04', 'air-fanout-v1:10.04'],
             related=['learning-rate-warmup-scheduler', 'linear-warmup', 'mini-training-loop'])
 
 STATEMENT = r"""

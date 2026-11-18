@@ -1,5 +1,5 @@
 META = dict(title='Reproducible train/val/test split by hashing ids', tags=['MLOps', 'Data Processing'], diff='Easy', runtime='python',
-            lessons=['air-fanout-v1:11.04'], related=['k-fold-cross-validation'])
+            lessons=['mlcore:09.02'], related=['k-fold-cross-validation'])
 
 STATEMENT = r"""
 `random.shuffle` gives a different split every time the dataset grows, so yesterday's test users can leak into today's training set. Production pipelines instead assign each example to a split by **hashing a stable id**: the same id always lands in the same split, on every machine, forever.

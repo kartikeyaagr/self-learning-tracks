@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Numerically stable softmax', tags=['Activation Functions'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:02.02', 'ieng:00.03'], related=['sigmoid-stable', 'softmax-jacobian', 'cross-entropy-logits'])
+            lessons=['mlmaths:10.32', 'ieng:00.03'], related=['sigmoid-stable', 'softmax-jacobian', 'cross-entropy-logits'])
 
 STATEMENT = r"""
 Softmax turns a vector of scores (logits) into a probability distribution:

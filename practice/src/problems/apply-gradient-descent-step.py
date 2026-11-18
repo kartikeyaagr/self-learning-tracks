@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Fit a line with hand-derived gradient steps', tags=['Optimization', 'Regression'], diff='Medium',
-            runtime='python', lessons=['air-fanout-v1:01.04'],
+            runtime='python', lessons=['mlmaths:09.21'],
             related=['vanilla-gradient-descent', 'measure-scalar-expression-partials', 'apply-one-full-sgd-training-step'])
 
 STATEMENT = r"""

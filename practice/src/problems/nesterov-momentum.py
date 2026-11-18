@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Nesterov accelerated gradient', tags=['Optimization', 'Training'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:01.14'],
+            lessons=['mlmaths:14.03'],
             related=['classical-momentum', 'vanilla-gradient-descent', 'optimizer-showdown'])
 
 STATEMENT = r"""

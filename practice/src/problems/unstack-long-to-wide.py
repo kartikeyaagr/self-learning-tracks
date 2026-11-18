@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 META = dict(title='Training-log metrics from long to wide', tags=['Data Processing', 'Training', 'MLOps'], diff='Hard',
-            runtime='pandas', lessons=['air-fanout-v1:11.06'], related=['melt-wide-to-long', 'pivot-tables', 'drop-duplicates'])
+            runtime='pandas', lessons=['air-fanout-v1:14.01'], related=['melt-wide-to-long', 'pivot-tables', 'drop-duplicates'])
 
 STATEMENT = r"""
 An experiment tracker stores metrics in long form, one row per logged value. `df` has columns `run` (str), `step` (int), `metric` (str) and `value` (float). Training loss is logged every step, evaluation metrics only now and then, and a retry can log the same value twice.

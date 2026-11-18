@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='AdamW over a pytree with a weight-decay mask', tags=['JAX', 'Optimization'], diff='Medium', runtime='jax',
-            lessons=['air-fanout-v1:05.06'], related=['adamw-decoupled-weight-decay', 'adam-step', 'sgd-with-momentum-over-pytree'],
+            lessons=['mlmaths:14.03'], related=['adamw-decoupled-weight-decay', 'adam-step', 'sgd-with-momentum-over-pytree'],
             tol=[1e-5, 1e-6])
 
 STATEMENT = r"""

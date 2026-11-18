@@ -1,5 +1,5 @@
 META = dict(title='Decode BIO tags into entity spans', tags=['NLP'], diff='Easy', runtime='python',
-            lessons=['air-fanout-v1:04.24'], related=['token-classification', 'greedy-sequence-tagging', 'span-extraction'])
+            lessons=['dlcore:06.03'], related=['token-classification', 'greedy-sequence-tagging', 'span-extraction'])
 
 STATEMENT = r"""
 Named entity recognition is usually trained as tagging: each token gets `B-TYPE` (begins an entity), `I-TYPE` (inside one) or `O` (outside). To report or score entities you have to turn the tag sequence back into spans.

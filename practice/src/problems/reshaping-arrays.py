@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Cut an image into flat patches', tags=['Computer Vision', 'Data Processing'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:03.04', 'air-fanout-v1:03.03'], related=['basic-indexing', 'quantize-and-frame'])
+            lessons=['mltk:01.06'], related=['basic-indexing', 'quantize-and-frame'])
 
 STATEMENT = r"""
 Vision transformers do not read pixels one by one. They cut the image into non-overlapping `p x p` patches and flatten each patch into a vector. The cut can be done with reshapes alone, without copying pixels in a loop.

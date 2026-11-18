@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Encoder-decoder RNN with teacher forcing', tags=['NLP', 'Neural Networks', 'Loss Functions'], diff='Hard',
-            runtime='numpy', lessons=['air-fanout-v1:04.25', 'air-fanout-v1:04.24'],
+            runtime='numpy', lessons=['dlcore:05.03', 'dlcore:06.03'],
             related=['vanilla-rnn-cell', 'gru-cell', 'cross-entropy-logits'])
 
 STATEMENT = r"""

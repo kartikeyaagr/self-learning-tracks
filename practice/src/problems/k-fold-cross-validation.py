@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='K-fold cross-validation splits', tags=['Metrics & Evaluation', 'Data Processing'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:04.23'], related=['stacking-ensemble', 'regression-metrics'])
+            lessons=['mlcore:06.05'], related=['stacking-ensemble', 'regression-metrics'])
 
 STATEMENT = r"""
 K-fold cross-validation partitions the rows into $k$ folds; each fold is the validation set once while the other $k - 1$ folds form the training set.

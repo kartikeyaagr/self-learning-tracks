@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='t-SNE input affinities with a perplexity search', tags=['Probability', 'Embeddings'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:01.11'], related=['softmax-rows', 'pca-projection'])
+            lessons=['mlmaths:15.01'], related=['softmax-rows', 'pca-projection'])
 
 STATEMENT = r"""
 t-SNE starts by turning distances in the input space into probabilities. Each point $i$ gets its own Gaussian bandwidth, set so that its neighbour distribution has a chosen **perplexity**.

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='exp, powers and division for Value', tags=['Neural Networks', 'Calculus'], diff='Medium',
-            runtime='python', lessons=['air-fanout-v1:01.06', 'air-fanout-v1:01.08'],
+            runtime='python', lessons=['air-fanout-v1:01.06', 'dlcore:01.04'],
             related=['run-reverse-mode-autodiff', 'apply-local-vector-jacobian-rules', 'gradient-check-autodiff-graph'])
 
 STATEMENT = r"""

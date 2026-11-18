@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Sobel gradients and edge magnitude', tags=['Computer Vision', 'Convolutional Networks'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:04.02'], related=['gaussian-blur-2d', 'multichannel-2d-convolution'])
+            lessons=['dlcore:03.01'], related=['gaussian-blur-2d', 'multichannel-2d-convolution'])
 
 STATEMENT = r"""
 The Sobel operator estimates image gradients with two small kernels: a central difference in one direction, smoothed with weights `1, 2, 1` in the other.

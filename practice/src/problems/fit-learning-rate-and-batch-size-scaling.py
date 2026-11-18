@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Fit learning-rate and batch-size scaling laws from sweeps', tags=['Scaling Laws', 'Training'],
-            diff='Hard', runtime='numpy', lessons=['air-fanout-v1:04.23', 'air-fanout-v1:12.01'],
+            diff='Hard', runtime='numpy', lessons=['mlcore:06.05', 'air-fanout-v1:12.01'],
             related=['isoflop-sweep-exponent', 'power-law-log-fit', 'estimate-critical-batch-size'])
 
 STATEMENT = r"""

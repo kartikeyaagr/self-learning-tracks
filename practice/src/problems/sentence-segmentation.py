@@ -1,5 +1,5 @@
 META = dict(title='Rule-based sentence splitter', tags=['NLP'], diff='Medium', runtime='python',
-            lessons=['air-fanout-v1:04.24'], related=['tokenization', 'regex-patterns-for-nlp'])
+            lessons=['dlcore:06.03'], related=['tokenization', 'regex-patterns-for-nlp'])
 
 STATEMENT = r"""
 Splitting on every `.` breaks on `Dr. Smith`, `3.14` and `e.g. this`. Write `split_sentences(text, abbreviations)` that follows these rules.

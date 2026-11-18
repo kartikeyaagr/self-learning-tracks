@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Weighted binary log loss', tags=['Loss Functions', 'Metrics & Evaluation'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:01.11'], related=['cross-entropy-logits', 'logistic-regression', 'sigmoid-stable'])
+            lessons=['mlmaths:15.01'], related=['cross-entropy-logits', 'logistic-regression', 'sigmoid-stable'])
 
 STATEMENT = r"""
 Log loss (binary cross-entropy) scores predicted probabilities $p_i = P(y_i = 1)$ against labels $y_i \in \{0, 1\}$:

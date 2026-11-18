@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Dilated convolution with same padding', tags=['Convolutional Networks'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:04.02'], related=['multichannel-2d-convolution', '2d-transposed-convolution'])
+            lessons=['dlcore:03.01'], related=['multichannel-2d-convolution', '2d-transposed-convolution'])
 
 STATEMENT = r"""
 A dilated (atrous) convolution spreads the kernel taps `d` pixels apart. A `3 x 3` kernel with dilation 2 sees a `5 x 5` area with the same 9 weights, so the receptive field grows without extra parameters or downsampling. Segmentation networks stack them to see context at full resolution.

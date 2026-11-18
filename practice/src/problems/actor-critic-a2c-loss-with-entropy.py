@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='A2C loss with an entropy bonus, and its gradients', tags=['Reinforcement Learning', 'Loss Functions'],
-            diff='Medium', runtime='numpy', lessons=['air-fanout-v1:07.02', 'air-fanout-v1:07.04'],
+            diff='Medium', runtime='numpy', lessons=['dlcore:08.06', 'air-fanout-v1:07.04'],
             related=['reinforce-with-baseline', 'gae-advantages', 'ppo-clipped-surrogate-objective'])
 
 STATEMENT = r"""

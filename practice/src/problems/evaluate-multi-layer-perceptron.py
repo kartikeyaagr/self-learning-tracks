@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Forward and backward through a Value MLP', tags=['Neural Networks'], diff='Hard', runtime='python',
-            lessons=['air-fanout-v1:05.03'],
+            lessons=['dlcore:01.01'],
             related=['evaluate-dense-layer', 'collect-module-parameters-recursively', 'jvp-and-vjp-for-2-layer-network'])
 
 STATEMENT = r"""

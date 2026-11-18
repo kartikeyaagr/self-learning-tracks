@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='AdaGrad on least squares', tags=['Optimization', 'Training'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:05.05'],
+            lessons=['mlmaths:14.04'],
             related=['rmsprop', 'adam-optimizer', 'minimum-of-axis-aligned-paraboloid'])
 
 STATEMENT = r"""

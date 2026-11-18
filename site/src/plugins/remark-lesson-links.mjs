@@ -2,10 +2,9 @@
 // Lessons link by id, so a moved module or renamed slug never breaks them; an unknown id fails the build.
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { visit } from 'unist-util-visit';
 
-const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '../content/courses');
+const ROOT = path.resolve(process.cwd(), 'src/content/courses');   // cwd is site/ (bundled copies can't use import.meta.url)
 const BASE = (import.meta.env?.BASE_URL ?? '/self-learning-tracks/').replace(/\/$/, '');
 let map;   // ponytail: built once per process; restart `astro dev` after adding a lesson
 

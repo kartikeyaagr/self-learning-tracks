@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Spectral norm by power iteration with fori_loop', tags=['JAX', 'Linear Algebra'], diff='Medium',
-            runtime='jax', lessons=['air-fanout-v1:01.13'], related=['hessian-vector-product', 'exponential-moving-average-with-scan'],
+            runtime='jax', lessons=['mlmaths:07.08'], related=['hessian-vector-product', 'exponential-moving-average-with-scan'],
             tol=[1e-4, 1e-5])
 
 STATEMENT = r"""

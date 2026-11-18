@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Expected SARSA with an epsilon-greedy target', tags=['Reinforcement Learning'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:07.01'],
+            runtime='numpy', lessons=['dlcore:08.01'],
             related=['sarsa-update', 'q-learning-update', 'epsilon-greedy-action-selection'])
 
 STATEMENT = r"""
