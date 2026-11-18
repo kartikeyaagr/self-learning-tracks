@@ -335,6 +335,24 @@ def load_build(path, ids, lessons):
     return b
 
 
+def load_capstone(path, lessons, builds):
+    """content/capstones/<destination id>.json: the destination's public project (pages/capstones/[id].astro)."""
+    c, where = json.loads(path.read_text(encoding='utf-8')), f'capstones/{path.name}:'
+    assert c.get('id') == path.stem, f'{where} id must equal the file name'
+    for k in ('title', 'summary', 'brief', 'resume'):
+        assert isinstance(c.get(k), str) and c[k].strip(), f'{where} missing {k}'
+    assert len(c.get('milestones', [])) >= 3, f'{where} give at least 3 milestones'
+    for m in c['milestones']:
+        assert m.get('title') and (('build' in m) != ('lessons' in m)), f'{where} each milestone needs a title and a build or lessons'
+        assert 'build' not in m or m['build'] in builds, f"{where} unknown build {m.get('build')}"
+        bad = [r for r in m.get('lessons', []) if r not in lessons]
+        assert not bad, f'{where} unknown lessons {bad}'
+    assert len(c.get('deliverables', [])) >= 3 and all(isinstance(x, str) for x in c['deliverables']), f'{where} 3+ deliverables'
+    assert len(c.get('rubric', [])) >= 4 and all(r.get('area') and r.get('meets') and r.get('strong') for r in c['rubric']), \
+        f'{where} 4+ rubric rows with area, meets and strong'
+    return c
+
+
 def load_quiz(path, plans):
     """quizzes/<plan id>.json: multiple-choice questions for each section of a study plan."""
     q = json.loads(path.read_text(encoding='utf-8'))
@@ -486,6 +504,15 @@ def routes(lessons, ids, round_ids, plans, probs=None):
             if i:
                 assert STAGES.index(by[cid]['stage']) >= STAGES.index(by[route[i - 1]]['stage']), \
                     f"{where} {cid!r} ({by[cid]['stage']}) comes after a later-stage concept"
+
+    # capstones (content/capstones/<destination id>.json): one per routed destination, after its final round
+    builds = {g.stem for g in (SRC / 'builds').glob('*.json')}
+    caps = {f.stem: load_capstone(f, lessons, builds) for f in sorted((CONTENT / 'capstones').glob('*.json'))}
+    for d in dests:
+        assert d['id'] in caps or not d.get('concepts'), f"capstones/: {d['id']!r} has a route but no capstone"
+        if d['id'] in caps:
+            c = caps.pop(d['id']); d['capstone'] = {'title': c['title'], 'summary': c['summary']}
+    assert not caps, f'capstones/: no destination for {sorted(caps)}'
 
     sets = []
     for pid, pl in sorted(plans.items()):

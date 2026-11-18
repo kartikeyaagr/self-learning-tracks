@@ -1,0 +1,29 @@
+{
+  "id": "research",
+  "title": "Reproduce a result and publish the write-up",
+  "summary": "Reproduce one published result at small scale (or run your own scaling-law sweep), with ablations, plots and a write-up someone else could rerun.",
+  "brief": "Choose one claim from a paper and reproduce it at a scale you can afford. Two good shapes:\n\n- **A scaling-law sweep.** Train a family of small transformers (say 1M to 50M parameters) at several compute budgets, fit loss against parameters and tokens, and compare your compute-optimal split with the published one. This is the cheapest way to touch a real research question.\n- **A method reproduction.** Pick a paper whose main table you can approach at small scale (a training trick, an attention variant, a fine-tuning method, a post-training objective) and reproduce its central comparison against the baseline it reports.\n\nEither way, the work is the same: write down exactly what the paper claims and under what conditions, rebuild the baseline first, reproduce the main result, then run ablations that test *why* it works. Report where your numbers differ and what you think explains the gap. A result that does not reproduce, written up carefully, is a good outcome.\n\nTrack every run. Pin your data, code and seeds so that someone else can regenerate each plot. Run at least three seeds for the main comparison, and show the spread.",
+  "milestones": [
+    {"title": "A small GPT you can train and trust", "build": "tiny-gpt-from-scratch"},
+    {"title": "Scaling laws and compute-optimal training", "build": "chinchilla"},
+    {"title": "Read the paper and rebuild its baseline", "lessons": ["ieng:29.01", "ieng:29.02", "ieng:29.03", "ieng:29.04"], "note": "Written for inference papers, but the method carries over to any paper."},
+    {"title": "Ablations and where the result stops holding", "lessons": ["ieng:29.06", "ieng:29.07"]},
+    {"title": "Reproducible runs", "lessons": ["air-fanout-v1:14.01", "air-fanout-v1:14.02"]},
+    {"title": "Write it up", "lessons": ["air-fanout-v1:09.01"]}
+  ],
+  "deliverables": [
+    "A public repository with training code, configs for every run, and a script that regenerates each figure",
+    "A README with the claim you tested, the main result next to the paper's number, and the main plot",
+    "Run logs or an experiment-tracker export covering every run in the write-up, with at least three seeds for the main comparison",
+    "At least two ablations that test why the result holds",
+    "A write-up of 1,500 to 3,000 words, in paper or blog form: setup, results, ablations, differences from the paper and their likely causes"
+  ],
+  "rubric": [
+    {"area": "Claim", "meets": "The write-up states the exact claim tested and the conditions it was made under.", "strong": "It also states what result would have falsified it, before showing the numbers."},
+    {"area": "Baseline", "meets": "The baseline is reproduced first and its number is reported next to the paper's.", "strong": "Differences in data, scale or tuning budget between baseline and method are controlled and stated."},
+    {"area": "Evidence", "meets": "The main comparison uses several seeds and shows the spread.", "strong": "Ablations isolate the mechanism, and the analysis says how far the conclusion extends beyond the tested scale."},
+    {"area": "Honesty", "meets": "Gaps from the paper are reported.", "strong": "Each gap comes with a tested or clearly argued explanation, and negative results are written up as carefully as positive ones."},
+    {"area": "Reproducibility", "meets": "Code, configs and seeds are public.", "strong": "One command per figure, pinned environment, and data versioned by hash."}
+  ],
+  "resume": "Reproduced [paper]'s [claim] at [scale] ([N] runs, [k] seeds): [matched / did not match] the reported [metric] ([ours] vs [theirs]); ablations showed [finding]. Write-up: [link]."
+}

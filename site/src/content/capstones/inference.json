@@ -1,0 +1,29 @@
+{
+  "id": "inference",
+  "title": "Build and benchmark a mini inference engine",
+  "summary": "A small LLM server with a paged KV cache, continuous batching, one quantised path and speculative decoding, measured against a naive baseline.",
+  "brief": "Build a serving engine for a small open model (something in the 0.1B to 1.5B range that fits on one GPU, or on a CPU if you have to) and prove, with numbers, what each optimisation buys.\n\nStart from a naive loop that serves one request at a time with no KV cache. That is your baseline. Then add, one at a time and measuring after each:\n\n1. **A KV cache**, so decoding stops recomputing the prefix.\n2. **A paged KV cache** with a block allocator, so memory goes to tokens that exist, not to the longest possible sequence.\n3. **Continuous batching**: new requests join the running batch at each decode step instead of waiting for the batch to finish.\n4. **One quantised path**: int8 or 4-bit weights (or an int8 KV cache), with the quality cost measured, not assumed.\n5. **Speculative decoding** with a small draft model, reporting the acceptance rate as well as the speed-up.\n\nRun every configuration on the same workload: a fixed set of prompts with a realistic mix of prompt and output lengths, sent at a fixed arrival rate after a warm-up. Report time to first token, time per output token and tokens per second at p50 and p95. The result that matters is the table, and the explanation of why each row moved.\n\nKeep the scope honest. You are not trying to beat vLLM; you are showing you understand what it does and can measure it. A run against vLLM or SGLang on the same workload is a strong extra, not a requirement.",
+  "milestones": [
+    {"title": "Measure serving latency properly", "lessons": ["ieng:04.01", "ieng:04.04", "ieng:04.05", "ieng:04.08"], "note": "Build the benchmark harness first, so every later change is measured the same way."},
+    {"title": "KV cache, batching and scheduling", "build": "llm-serving-scheduler-from-scratch"},
+    {"title": "Paged KV cache and prefix caching", "build": "pagedattention"},
+    {"title": "One quantised path", "build": "quantization-from-scratch"},
+    {"title": "Speculative decoding", "build": "speculative-decoding"},
+    {"title": "Assemble the engine", "lessons": ["ieng:28.01", "ieng:28.02", "ieng:28.04", "ieng:28.05", "ieng:28.06", "ieng:28.08"], "note": "Module 28 walks through the same engine step by step; use it as a reference, not a template."}
+  ],
+  "deliverables": [
+    "A public repository with the engine, the benchmark harness and a one-command way to reproduce the main table",
+    "A README that opens with the results table: each configuration's TTFT, TPOT and tokens/s at p50 and p95, against the naive baseline",
+    "The workload definition (prompt and output length mix, arrival rate, warm-up) and the hardware you ran on",
+    "A quality check for the quantised path (perplexity or task accuracy before and after) and the speculative decoding acceptance rate",
+    "A write-up of 800 to 1,500 words: what each optimisation changed, why, and where it stopped helping"
+  ],
+  "rubric": [
+    {"area": "Correctness", "meets": "Every configuration produces the same greedy output as the baseline (or a documented, measured difference for the quantised path).", "strong": "Tests compare outputs token by token across configurations, and the paged allocator has tests for allocation, freeing and copy-on-write."},
+    {"area": "Measurement", "meets": "Latency is reported at p50 and p95 after a warm-up, on a fixed workload, with the hardware stated.", "strong": "Results hold across repeated runs (variance reported), and throughput is shown against load, including where the SLO breaks."},
+    {"area": "Explanation", "meets": "Each row of the table comes with a reason it moved.", "strong": "The write-up predicts the effect before measuring it (memory bandwidth, batch size, acceptance rate) and explains where the prediction was wrong."},
+    {"area": "Trade-offs", "meets": "The quantised path reports its quality cost and memory saving.", "strong": "It shows when an optimisation hurts: small batches, long prompts, or a low acceptance rate for speculative decoding."},
+    {"area": "Reproducibility", "meets": "One command rebuilds the main table.", "strong": "Pinned versions, seeds, and a script that regenerates every figure in the write-up."}
+  ],
+  "resume": "Built a mini LLM inference engine (paged KV cache, continuous batching, [int8] weights, speculative decoding): [N]x the tokens/s of a naive baseline at p95 TPOT of [X] ms on [hardware]."
+}
