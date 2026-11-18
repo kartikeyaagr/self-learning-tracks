@@ -179,6 +179,27 @@
      "problems": ["precision-recall-curve-and-average-precision", "ndcg-at-k", "mmr-diversity-rerank"], "needs": ["model-evaluation"]},
     {"id": "design-case-studies", "title": "Design case studies", "summary": "Practise the framework on fraud, ETA, ad clicks, feed ranking and short-video recommendations.", "course": "ml-system-design", "stage": "serving",
      "lessons": ["mlsd:09.01", "mlsd:09.03", "mlsd:10.02", "mlsd:10.05", "mlsd:10.07"],
-     "problems": ["log-loss-binary-cross-entropy", "expected-calibration-error", "in-batch-softmax-logq"], "needs": ["ml-system-design"]}
+     "problems": ["log-loss-binary-cross-entropy", "expected-calibration-error", "in-batch-softmax-logq"], "needs": ["ml-system-design"]},
+    {"id": "search-and-retrieval", "title": "Search engines", "summary": "Inverted indexes, BM25, keeping an index in sync and measuring whether search is any good.", "course": "system-design-101", "stage": "core",
+     "lessons": ["sdsd:09.01", "sdsd:09.02", "sdsd:09.05", "sdsd:09.09", "sdsd:09.10", "sdsd:09.14"],
+     "problems": ["tf-idf", "prefix-top-k-autocomplete", "spell-correction"], "needs": []},
+    {"id": "api-design", "title": "APIs and service calls", "summary": "API contracts, HTTP and gRPC, load balancing, and the retries, timeouts and idempotency that keep calls safe.", "course": "system-design-101", "stage": "systems",
+     "lessons": ["sdsd:02.01", "sdsd:02.03", "sdsd:02.06", "sdsd:02.09", "sdsd:02.11", "sdsd:02.12"],
+     "problems": ["idempotency-key-store"], "needs": []},
+    {"id": "data-storage", "title": "Databases and storage", "summary": "Schemas, indexes, isolation, sharding, consistent hashing and replication: where state lives and how it scales.", "course": "system-design-101", "stage": "systems",
+     "lessons": ["sdsd:03.01", "sdsd:03.03", "sdsd:03.06", "sdsd:04.05", "sdsd:04.07", "sdsd:06.03"],
+     "problems": ["consistent-hash-ring"], "needs": []},
+    {"id": "caching", "title": "Caching", "summary": "Cache layers, distributed caches, eviction, TTLs, stampedes and what happens when the cache goes down.", "course": "system-design-101", "stage": "systems",
+     "lessons": ["sdsd:05.01", "sdsd:05.02", "sdsd:05.03", "sdsd:05.04", "sdsd:05.05", "sdsd:05.06"],
+     "problems": ["lru-cache-with-ttl"], "needs": []},
+    {"id": "async-and-streams", "title": "Queues and async work", "summary": "Moving work off the request path: task queues versus event streams, lag, work queues and fanout.", "course": "system-design-101", "stage": "systems",
+     "lessons": ["sdsd:08.01", "sdsd:08.02", "sdsd:08.04", "sdsd:08.06", "sdsd:08.09"],
+     "problems": ["queue-lag-drain-time"], "needs": ["api-design"]},
+    {"id": "reliability", "title": "Reliability and operations", "summary": "Observability, SLOs and error budgets, circuit breakers, rate limits, safe deploys and disaster recovery.", "course": "system-design-101", "stage": "serving",
+     "lessons": ["sdsd:14.01", "sdsd:14.02", "sdsd:06.10", "sdsd:14.11", "sdsd:14.04", "sdsd:14.08"],
+     "problems": ["error-budget-burn-rate", "sliding-window-rate-limiter", "consecutive-breach-alerts"], "needs": []},
+    {"id": "system-design-interviews", "title": "System design interviews", "summary": "Clarify requirements, estimate capacity, then design a URL shortener, notifications, chat and a feed.", "course": "system-design-101", "stage": "serving",
+     "lessons": ["sdsd:01.01", "sdsd:01.06", "sdsd:15.03", "sdsd:16.01", "sdsd:16.06", "sdsd:16.07"],
+     "problems": ["back-of-envelope-capacity"], "needs": ["api-design", "data-storage", "caching"]}
   ]
 }

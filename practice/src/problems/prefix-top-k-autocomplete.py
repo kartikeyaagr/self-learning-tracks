@@ -1,4 +1,5 @@
-META = dict(title='Prefix autocomplete with frequency and recency', tags=['Data Processing', 'Recommender Systems'], diff='Medium', runtime='python')
+META = dict(title='Prefix autocomplete with frequency and recency', tags=['Data Processing', 'Recommender Systems'], diff='Medium', runtime='python',
+            lessons=['sdsd:09.14'])
 
 STATEMENT = r"""
 Build query autocomplete from a search log. Write `autocomplete(log, prefixes, k, now, half_life)`.
