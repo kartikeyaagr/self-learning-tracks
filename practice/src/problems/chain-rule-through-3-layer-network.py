@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Chain rule through a three-layer scalar network', tags=['Neural Networks', 'Calculus'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:01.07', 'air-fanout-v1:01.08'],
+            runtime='numpy', lessons=['mlmaths:09.18', 'dlcore:01.04'],
             related=['derivatives-of-common-activation-functions', 'backpropagation-through-computation-graph',
                      'finite-difference-gradient-checking'])
 

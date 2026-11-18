@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Functional array updates with .at[]', tags=['JAX'], diff='Easy', runtime='jax',
-            lessons=['air-fanout-v1:03.05'], related=['prng-key-splitting', 'masked-mean-without-boolean-indexing'],
+            lessons=['mltk:01.02'], related=['prng-key-splitting', 'masked-mean-without-boolean-indexing'],
             tol=[1e-5, 1e-6])
 
 STATEMENT = r"""

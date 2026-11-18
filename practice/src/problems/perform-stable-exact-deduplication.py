@@ -1,5 +1,5 @@
 META = dict(title='Stable exact deduplication of a text corpus', tags=['Data Processing', 'NLP'], diff='Easy',
-            runtime='python', lessons=['air-fanout-v1:10.03', 'air-fanout-v1:11.12'],
+            runtime='python', lessons=['air-fanout-v1:10.03', 'mlcore:07.05'],
             related=['text-deduplication-minhash', 'hashed-dataset-split', 'temperature-based-data-mixtures'])
 
 STATEMENT = r"""

@@ -4,6 +4,7 @@ import { getCollection } from 'astro:content';
 import fs from 'node:fs';
 import path from 'node:path';
 import { inl } from './inline.mjs';
+import { lessonHref } from '../plugins/remark-lesson-links.mjs';
 
 export const key = id => id.replace('.', '-');                    // lesson id "03.02" -> progress key "03-02"
 
@@ -14,6 +15,8 @@ export async function courseData(courseId) {
   const order = Object.fromEntries(course.modules.map((m, i) => [m.n, i]));   // module codes aren't always numeric (IN, 00…)
   const lessons = (await getCollection('lessons', l => l.data.course === courseId))
     .sort((a, b) => order[a.data.module] - order[b.data.module] || a.data.id.localeCompare(b.data.id));
+  // HTML lessons (AI Research) link to other lessons as href="lesson:<key>:<id>", resolved like Markdown lesson links
+  for (const l of lessons) if (l.data.html) l.data.html = l.data.html.replace(/href="lesson:([^"]+)"/g, (_, r) => `href="${lessonHref(r, `(${courseId} ${l.data.id})`)}"`);
   const modules = course.modules.map(m => ({...m, lessons: lessons.filter(l => l.data.module === m.n)}));
   const mfile = path.resolve(process.cwd(), 'src/content/courses', courseId, 'math.json');
   const math = fs.existsSync(mfile) ? JSON.parse(fs.readFileSync(mfile, 'utf8')) : null;

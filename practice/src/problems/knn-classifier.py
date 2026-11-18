@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='k-nearest-neighbours classifier', tags=['Classification', 'Classic ML'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:02.03'], related=['distance-metrics', 'cosine-similarity-matrix'])
+            lessons=['mltk:01.03'], related=['distance-metrics', 'cosine-similarity-matrix'])
 
 STATEMENT = r"""
 A k-NN classifier has no training step: to label a query point, find the $k$ training points closest to it and take a majority vote of their labels.

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Compose an image transform pipeline', tags=['Computer Vision', 'Data Processing'], diff='Easy', runtime='torch',
-            lessons=['air-fanout-v1:04.08', 'air-fanout-v1:11.12'],
+            lessons=['dlcore:02.05', 'mlcore:07.05'],
             related=['image-normalize', 'custom-dataset-class', 'per-channel-mean-and-std'])
 
 STATEMENT = r"""

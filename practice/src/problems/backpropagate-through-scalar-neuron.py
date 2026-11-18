@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Backward closures for a tanh neuron', tags=['Neural Networks', 'Calculus'], diff='Medium',
-            runtime='python', lessons=['air-fanout-v1:01.07', 'air-fanout-v1:05.01'],
+            runtime='python', lessons=['mlmaths:09.18', 'dlcore:01.01'],
             related=['evaluate-scalar-neuron', 'differentiate-tanh-activation', 'gradient-check-scalar-neuron'])
 
 STATEMENT = r"""

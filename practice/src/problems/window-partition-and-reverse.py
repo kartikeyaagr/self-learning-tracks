@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Shifted window partition and reverse', tags=['Computer Vision', 'Attention'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:03.04'], related=['vit-patchify', 'vit-multi-head-self-attention', 'reshaping-arrays'])
+            lessons=['mltk:01.06'], related=['vit-patchify', 'vit-multi-head-self-attention', 'reshaping-arrays'])
 
 STATEMENT = r"""
 Swin Transformers compute attention inside non-overlapping `ws x ws` windows of the token grid instead of over the whole image. Every other block **cyclically shifts** the grid before partitioning, so information crosses window borders. The two building blocks are a partition (grid to windows) and its reverse (windows back to grid).

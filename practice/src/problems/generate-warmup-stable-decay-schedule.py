@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Warmup-stable-decay learning-rate schedule', tags=['Training', 'Scaling Laws'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:05.05'],
+            runtime='numpy', lessons=['mlmaths:14.04'],
             related=['linear-warmup', 'cosine-annealing-with-warm-restarts', 'fit-learning-rate-and-batch-size-scaling'])
 
 STATEMENT = r"""

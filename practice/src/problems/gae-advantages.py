@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Generalized Advantage Estimation', tags=['Reinforcement Learning'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:07.04', 'air-fanout-v1:07.02'], related=['value-iteration-step'])
+            lessons=['air-fanout-v1:07.04', 'dlcore:08.06'], related=['value-iteration-step'])
 
 STATEMENT = r"""
 PPO and other actor-critic methods weight each action by an **advantage**: how much better it went than the critic expected. GAE blends n-step estimates with a decay $\lambda$:

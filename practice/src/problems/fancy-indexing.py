@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Embedding gradient with repeated ids', tags=['Embeddings', 'Neural Networks'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:03.05', 'aieng:02.01'], related=['mutation-trap', 'boolean-masking'])
+            runtime='numpy', lessons=['mltk:01.02', 'aieng:02.01'], related=['mutation-trap', 'boolean-masking'])
 
 STATEMENT = r"""
 An embedding layer is a lookup: `out = E[ids]`, where `E` has shape `(V, d)` (one row per vocabulary item) and `ids` holds integer token ids. In the backward pass, the gradient for row `v` of `E` is the **sum** of the upstream gradients at every position where token `v` appeared:

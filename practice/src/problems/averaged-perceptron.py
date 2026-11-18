@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='The averaged perceptron', tags=['Classification', 'Classic ML'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:05.01'], related=['svm-with-hinge-loss-sgd', 'logistic-regression'])
+            lessons=['dlcore:01.01'], related=['svm-with-hinge-loss-sgd', 'logistic-regression'])
 
 STATEMENT = r"""
 The perceptron learns a linear rule $\hat y = \mathrm{sign}(w^\top x + b)$ by correcting itself on every mistake. Its final weights depend heavily on the last few examples, so a far more stable answer is the **average** of the weights over the whole run.

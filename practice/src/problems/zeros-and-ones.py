@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Border mask of width k', tags=['Data Processing', 'Computer Vision'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:03.07'], related=['basic-indexing', 'create-arrays-from-lists'])
+            lessons=['mltk:04.01'], related=['basic-indexing', 'create-arrays-from-lists'])
 
 STATEMENT = r"""
 Image pipelines often need a mask that marks the pixels near the edge, for example to ignore a convolution's unreliable border or to draw a frame.

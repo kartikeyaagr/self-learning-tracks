@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='2-D max pooling with stride', tags=['Convolutional Networks'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:04.02'], related=['average-pool-2d', 'adaptive-average-pool-2d'])
+            lessons=['dlcore:03.01'], related=['average-pool-2d', 'adaptive-average-pool-2d'])
 
 STATEMENT = r"""
 Max pooling slides a window over each channel of a feature map and keeps the largest value in each window. It shrinks the map and makes the response tolerant to small shifts.

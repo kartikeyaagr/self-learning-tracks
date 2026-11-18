@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Gradient check for a long product', tags=['Calculus'], diff='Medium', runtime='python',
-            lessons=['air-fanout-v1:01.04', 'air-fanout-v1:01.07'],
+            lessons=['mlmaths:09.21', 'mlmaths:09.18'],
             related=['measure-scalar-expression-partials', 'finite-difference-gradient-checking', 'gradient-check-autodiff-graph'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import pandas as pd
 
 META = dict(title='Training/serving skew report', tags=['MLOps', 'Data Processing', 'Feature Engineering'], diff='Medium', runtime='pandas',
-            lessons=['air-fanout-v1:11.12', 'air-fanout-v1:11.01'], related=['record-schema-validation', 'point-in-time-feature-join'])
+            lessons=['mlcore:09.03'], related=['record-schema-validation', 'point-in-time-feature-join'])
 
 STATEMENT = r"""
 The online service computes features with one code path; the offline training pipeline recomputes them with another. When the two disagree, the model is trained on numbers it never sees in production. To catch this, the service logs the features it actually used, and you compare them with what the training pipeline produced for the same requests.

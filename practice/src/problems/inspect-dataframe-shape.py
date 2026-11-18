@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 META = dict(title='First-look profile of a table', tags=['Data Processing'], diff='Easy', runtime='pandas',
-            lessons=['air-fanout-v1:11.12'], related=['data-types-overview', 'handle-missing-values'])
+            lessons=['mlcore:07.05'], related=['data-types-overview', 'handle-missing-values'])
 
 STATEMENT = r"""
 Before cleaning a new dataset you want four numbers: how big it is and how much of it is missing.

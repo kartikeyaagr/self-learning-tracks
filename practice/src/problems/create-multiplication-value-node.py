@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='A Value node that multiplies', tags=['Neural Networks'], diff='Easy', runtime='python',
-            lessons=['air-fanout-v1:01.08'],
+            lessons=['dlcore:01.04'],
             related=['create-addition-value-node', 'build-scalar-expression-graph'])
 
 STATEMENT = r"""

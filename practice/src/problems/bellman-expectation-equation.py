@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Exact policy evaluation with the Bellman expectation equation', tags=['Reinforcement Learning', 'Linear Algebra'],
-            diff='Easy', runtime='numpy', lessons=['air-fanout-v1:07.01'],
+            diff='Easy', runtime='numpy', lessons=['dlcore:08.01'],
             related=['value-iteration-step', 'policy-iteration', 'value-iteration'])
 
 STATEMENT = r"""

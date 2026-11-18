@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Nudge each input of a small expression', tags=['Calculus'], diff='Easy', runtime='python',
-            lessons=['air-fanout-v1:01.04'],
+            lessons=['mlmaths:09.21'],
             related=['estimate-scalar-derivative', 'check-product-chain-gradient', 'build-scalar-expression-graph'])
 
 STATEMENT = r"""

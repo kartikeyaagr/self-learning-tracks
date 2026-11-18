@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Random forest classifier from scratch', tags=['Classic ML', 'Classification'], diff='Hard', runtime='numpy',
-            lessons=['air-fanout-v1:04.07'], related=['bagging-classifier', 'decision-tree-classifier-cart', 'permutation-feature-importance'])
+            lessons=['mlcore:04.03'], related=['bagging-classifier', 'decision-tree-classifier-cart', 'permutation-feature-importance'])
 
 STATEMENT = r"""
 A random forest is bagged decision trees with one extra source of randomness: each split only considers a random subset of the features. Write `random_forest(X_train, y_train, X_test, n_trees, max_depth, max_features, seed)` that grows the forest and returns its predictions.

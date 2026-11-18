@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Min-max scale each column', tags=['Feature Engineering', 'Data Processing'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:02.03'], related=['normalize-columns', 'row-scaling', 'winsorize'])
+            lessons=['mltk:01.03'], related=['normalize-columns', 'row-scaling', 'winsorize'])
 
 STATEMENT = r"""
 Min-max scaling maps each feature (column) linearly so its smallest value lands on `new_min` and its largest on `new_max`:

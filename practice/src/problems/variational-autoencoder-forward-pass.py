@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='VAE forward pass and the ELBO', tags=['Generative Models', 'Probability', 'Loss Functions'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:01.12', 'air-fanout-v1:01.11'],
+            runtime='numpy', lessons=['air-fanout-v1:01.12', 'mlmaths:15.01'],
             related=['autoencoder-forward-pass', 'kl-divergence-discrete-and-continuous', 'gan-training-step'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='ViT input: patches, projection, class token, positions', tags=['Transformers', 'Computer Vision', 'Embeddings'],
-            diff='Hard', runtime='numpy', lessons=['air-fanout-v1:03.04', 'ieng:26.03'],
+            diff='Hard', runtime='numpy', lessons=['mltk:01.06', 'ieng:26.03'],
             related=['reshaping-arrays', '2d-convolution', 'transformer-encoder-block'])
 
 STATEMENT = r"""

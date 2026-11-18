@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Residual tower block (conv, batch norm, skip)', tags=['Convolutional Networks', 'Neural Networks'],
-            diff='Medium', runtime='numpy', lessons=['air-fanout-v1:04.02', 'ieng:02.03'],
+            diff='Medium', runtime='numpy', lessons=['dlcore:03.01', 'ieng:02.03'],
             related=['encode-alphago-zero-board-history', 'policy-and-value-heads', 'assemble-compact-dual-head-network'])
 
 STATEMENT = r"""

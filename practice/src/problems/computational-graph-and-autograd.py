@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Tensor autograd with broadcasting', tags=['Neural Networks', 'Calculus'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:01.08', 'air-fanout-v1:02.03'],
+            lessons=['dlcore:01.04', 'mltk:01.03'],
             related=['backpropagation-through-computation-graph', 'backpropagation-single-hidden-layer',
                      'jvp-and-vjp-for-2-layer-network'])
 

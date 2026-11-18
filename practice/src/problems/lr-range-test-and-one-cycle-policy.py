@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='LR range test to a one-cycle schedule', tags=['Training', 'Optimization'], diff='Hard', runtime='numpy',
-            lessons=['air-fanout-v1:05.05', 'air-fanout-v1:01.14'],
+            lessons=['mlmaths:14.04', 'mlmaths:14.03'],
             related=['learning-rate-sweep', 'cosine-annealing-with-warm-restarts', 'linear-warmup'])
 
 STATEMENT = r"""

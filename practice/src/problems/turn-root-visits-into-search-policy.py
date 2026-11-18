@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Root visit counts to a move policy with temperature', tags=['Reinforcement Learning'],
-            diff='Medium', runtime='numpy', lessons=['air-fanout-v1:02.02'],
+            diff='Medium', runtime='numpy', lessons=['mlmaths:10.32'],
             related=['mix-dirichlet-noise-into-root-priors', 'alphago-policy-value-loss',
                      'run-deterministic-neural-guided-mcts'])
 

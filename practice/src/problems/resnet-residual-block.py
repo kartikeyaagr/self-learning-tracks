@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='ResNet basic block with a projection shortcut', tags=['Convolutional Networks', 'Computer Vision'],
-            diff='Medium', runtime='numpy', lessons=['air-fanout-v1:04.02'],
+            diff='Medium', runtime='numpy', lessons=['dlcore:03.01'],
             related=['2d-convolution', 'batch-normalization', 'vgg-convolution-block'])
 
 STATEMENT = r"""

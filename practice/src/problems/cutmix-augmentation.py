@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='CutMix with area-corrected labels', tags=['Computer Vision', 'Training'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:03.05'], related=['mixup-augmentation', 'zero-pad-and-center-crop'])
+            lessons=['mltk:01.02'], related=['mixup-augmentation', 'zero-pad-and-center-crop'])
 
 STATEMENT = r"""
 **CutMix** pastes a rectangle from a partner image into each image and mixes the labels in proportion to the area each image keeps. The rectangle is clipped at the image border, so the label weight must be computed from the **actual** pasted area, not from the requested one.

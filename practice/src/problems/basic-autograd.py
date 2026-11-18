@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Logistic-regression gradients with autograd', tags=['Neural Networks', 'Loss Functions'], diff='Easy', runtime='torch',
-            lessons=['air-fanout-v1:01.08', 'ieng:00.05'],
+            lessons=['dlcore:01.04', 'ieng:00.05'],
             related=['computational-graph-and-autograd', 'manual-weight-update', 'log-loss-binary-cross-entropy'])
 
 STATEMENT = r"""

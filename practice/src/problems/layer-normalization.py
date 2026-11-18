@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='LayerNorm backward pass', tags=['Neural Networks', 'Transformers', 'Calculus'], diff='Medium', runtime='numpy',
-            lessons=['ieng:02.03', 'air-fanout-v1:05.04'],
+            lessons=['ieng:02.03', 'dlcore:02.02'],
             related=['layer-norm', 'batch-normalization', 'transformer-encoder-block'])
 
 STATEMENT = r"""

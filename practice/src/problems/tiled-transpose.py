@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Tiled matrix transpose', tags=['GPU Programming', 'Linear Algebra'], diff='Medium', runtime='triton',
-            lessons=['ieng:13.03', 'air-fanout-v1:03.03'],
+            lessons=['ieng:13.03', 'mltk:01.06'],
             related=['matrix-transpose', 'autotuned-matrix-multiplication', 'block-pointer-matmul'])
 
 STATEMENT = r"""

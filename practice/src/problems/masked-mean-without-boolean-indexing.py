@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Masked statistics under jit, no boolean indexing', tags=['JAX', 'Data Processing'], diff='Easy',
-            runtime='jax', lessons=['air-fanout-v1:02.03'],
+            runtime='jax', lessons=['mltk:01.03'],
             related=['masked-mean-pooling', 'pad-and-mask-to-bucket-length'], tol=[1e-5, 1e-6])
 
 STATEMENT = r"""

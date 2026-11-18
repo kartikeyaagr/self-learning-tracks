@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Build the helper tensors for a sequence batch', tags=['Neural Networks'], diff='Easy', runtime='torch',
-            lessons=['air-fanout-v1:03.01', 'air-fanout-v1:03.07'],
+            lessons=['mltk:04.01'],
             related=['arange-and-linspace', 'tensor-operations', 'tensor-shape-manipulation'])
 
 STATEMENT = r"""

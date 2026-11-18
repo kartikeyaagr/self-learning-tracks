@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='One Adam optimizer step', tags=['Optimization', 'Training'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:05.06'], related=['cross-entropy-logits'])
+            lessons=['mlmaths:14.03'], related=['cross-entropy-logits'])
 
 STATEMENT = r"""
 Adam keeps running averages of the gradient ($m$) and of its square ($v$), corrects their start-up bias, and scales each parameter's step by its own gradient history. At step $t$ (counting from 1):

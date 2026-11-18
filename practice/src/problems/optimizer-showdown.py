@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Optimizer showdown on an ill-conditioned bowl', tags=['Optimization', 'Training'], diff='Hard', runtime='numpy',
-            lessons=['air-fanout-v1:05.06', 'mlmaths:07.01'],
+            lessons=['mlmaths:14.03', 'mlmaths:07.01'],
             related=['vanilla-gradient-descent', 'classical-momentum', 'nesterov-momentum', 'rmsprop', 'adam-optimizer'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='backward() for a scalar autograd engine', tags=['Neural Networks', 'Calculus'], diff='Hard',
-            runtime='python', lessons=['air-fanout-v1:01.08', 'air-fanout-v1:01.07'],
+            runtime='python', lessons=['dlcore:01.04', 'mlmaths:09.18'],
             related=['topologically-sort-computation-dag', 'apply-local-vector-jacobian-rules',
                      'backpropagation-through-computation-graph', 'accumulate-shared-path-gradients'])
 

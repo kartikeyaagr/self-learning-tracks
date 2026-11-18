@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Bagging decision stumps', tags=['Classic ML', 'Classification'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:04.07'], related=['random-forest', 'decision-tree-classifier-cart'])
+            lessons=['mlcore:04.03'], related=['random-forest', 'decision-tree-classifier-cart'])
 
 STATEMENT = r"""
 Bagging (bootstrap aggregating) trains the same weak learner on many bootstrap resamples of the training set and lets them vote. Here the weak learner is a **decision stump**: a tree with a single Gini split.

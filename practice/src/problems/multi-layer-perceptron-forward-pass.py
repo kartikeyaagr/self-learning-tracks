@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Forward pass of a configurable MLP', tags=['Neural Networks'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:05.03', 'air-fanout-v1:05.02'],
+            lessons=['dlcore:01.01'],
             related=['perceptron', 'activation-functions', 'backpropagation-single-hidden-layer'])
 
 STATEMENT = r"""

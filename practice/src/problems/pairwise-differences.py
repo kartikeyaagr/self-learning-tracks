@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Manhattan distance matrix', tags=['Data Processing', 'Clustering'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:02.04', 'air-fanout-v1:02.03'], related=['outer-sum', 'cosine-similarity-matrix', 'kmeans-step'])
+            lessons=['mlmaths:14.06', 'mltk:01.03'], related=['outer-sum', 'cosine-similarity-matrix', 'kmeans-step'])
 
 STATEMENT = r"""
 The Manhattan (L1) distance between two points is the sum of the absolute differences of their coordinates:

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Squeeze-and-excitation channel gating', tags=['Convolutional Networks', 'Attention', 'Computer Vision'],
-            diff='Medium', runtime='numpy', lessons=['air-fanout-v1:04.02'],
+            diff='Medium', runtime='numpy', lessons=['dlcore:03.01'],
             related=['resnet-residual-block', 'depthwise-separable-convolution', 'pooling-layers'])
 
 STATEMENT = r"""

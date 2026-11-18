@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Overflow-safe p-norms', tags=['Linear Algebra'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:02.04', 'mlmaths:06.01'], related=['cosine-similarity', 'euclidean-distance'])
+            lessons=['mlmaths:14.06', 'mlmaths:06.01'], related=['cosine-similarity', 'euclidean-distance'])
 
 STATEMENT = r"""
 The $p$-norm of a vector $x \in \mathbb{R}^d$ is

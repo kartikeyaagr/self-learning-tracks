@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='First-visit and every-visit Monte Carlo evaluation', tags=['Reinforcement Learning'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:07.01'],
+            runtime='numpy', lessons=['dlcore:08.01'],
             related=['discounted-returns', 'td-0-value-update', 'bellman-expectation-equation'])
 
 STATEMENT = r"""

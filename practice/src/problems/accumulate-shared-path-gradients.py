@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Shared nodes, stale gradients and zero_grad', tags=['Neural Networks', 'Training'], diff='Medium',
-            runtime='python', lessons=['air-fanout-v1:01.08', 'air-fanout-v1:01.07'],
+            runtime='python', lessons=['dlcore:01.04', 'mlmaths:09.18'],
             related=['run-reverse-mode-autodiff', 'gradient-accumulation', 'apply-one-full-sgd-training-step'])
 
 STATEMENT = r"""

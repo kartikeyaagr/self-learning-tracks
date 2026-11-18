@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Gradient-check a neuron\'s squared error', tags=['Neural Networks', 'Calculus'], diff='Medium',
-            runtime='python', lessons=['air-fanout-v1:01.08', 'air-fanout-v1:05.01'],
+            runtime='python', lessons=['dlcore:01.04', 'dlcore:01.01'],
             related=['backpropagate-through-scalar-neuron', 'check-product-chain-gradient', 'gradient-check-autodiff-graph'])
 
 STATEMENT = r"""

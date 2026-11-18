@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='U-Net decoder step: upsample, align, concatenate', tags=['U-Net', 'Convolutional Networks'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:03.06'],
+            runtime='numpy', lessons=['mltk:01.06'],
             related=['transposed-convolution', 'resnet-residual-block', '2d-convolution'])
 
 STATEMENT = r"""

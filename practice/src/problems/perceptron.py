@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Perceptron until a clean epoch', tags=['Neural Networks', 'Classification'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:05.01'], related=['averaged-perceptron', 'multi-layer-perceptron-forward-pass'])
+            lessons=['dlcore:01.01'], related=['averaged-perceptron', 'multi-layer-perceptron-forward-pass'])
 
 STATEMENT = r"""
 The perceptron is a single neuron with a step activation, $\hat y = \operatorname{sign}(w^\top x + b)$. It learns by nudging the weights toward every example it gets wrong, and on linearly separable data it is guaranteed to stop making mistakes after finitely many updates.

@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 META = dict(title='Impute sensor gaps by station', tags=['Data Processing', 'Time Series'], diff='Medium',
-            runtime='pandas', lessons=['air-fanout-v1:11.12'], related=['inspect-dataframe-shape', 'replace-values', 'groupby-basics'])
+            runtime='pandas', lessons=['mlcore:07.05'], related=['inspect-dataframe-shape', 'replace-values', 'groupby-basics'])
 
 STATEMENT = r"""
 Weather stations report `temp` and `humidity`, but readings drop out. `df` has columns `station` (str), `temp` (float) and `humidity` (float), one row per report in time order; missing readings are NaN.

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='SGD with momentum over a nested pytree', tags=['JAX', 'Optimization'], diff='Easy', runtime='jax',
-            lessons=['air-fanout-v1:05.05'], related=['classical-momentum', 'adamw', 'global-norm-gradient-clipping'],
+            lessons=['mlmaths:14.04'], related=['classical-momentum', 'adamw', 'global-norm-gradient-clipping'],
             tol=[1e-5, 1e-6])
 
 STATEMENT = r"""

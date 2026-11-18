@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Grouped conv2d forward and backward with unfold and fold', tags=['Convolutional Networks', 'Neural Networks'],
-            diff='Hard', runtime='torch', lessons=['air-fanout-v1:04.02'],
+            diff='Hard', runtime='torch', lessons=['dlcore:03.01'],
             related=['2d-convolution', 'multichannel-2d-convolution', 'depthwise-separable-convolution'])
 
 STATEMENT = r"""

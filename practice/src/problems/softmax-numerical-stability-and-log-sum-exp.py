@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Weighted, masked log-sum-exp', tags=['Activation Functions', 'Loss Functions'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:02.02', 'ieng:00.03'], related=['softmax-rows', 'cross-entropy-logits'])
+            lessons=['mlmaths:10.32', 'ieng:00.03'], related=['softmax-rows', 'cross-entropy-logits'])
 
 STATEMENT = r"""
 Log-sum-exp is the workhorse behind log-softmax, cross-entropy, mixture likelihoods and attention masking. The weighted version is

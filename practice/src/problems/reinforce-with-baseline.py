@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='REINFORCE with a time-dependent baseline', tags=['Reinforcement Learning'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:07.02'],
+            runtime='numpy', lessons=['dlcore:08.06'],
             related=['reinforce-gradient', 'discounted-returns', 'rloo-reinforce-leave-one-out'])
 
 STATEMENT = r"""

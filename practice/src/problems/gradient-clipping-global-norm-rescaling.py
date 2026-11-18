@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Clip gradients by their global norm', tags=['Training', 'Optimization'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:02.04'],
+            lessons=['mlmaths:14.06'],
             related=['adam-step', 'learning-rate-stability-and-convergence-bounds'])
 
 STATEMENT = r"""

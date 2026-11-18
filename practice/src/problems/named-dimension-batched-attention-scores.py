@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Attention scores from named-axis layouts', tags=['Attention', 'Transformers'], diff='Easy', runtime='torch',
-            lessons=['air-fanout-v1:03.02', 'ieng:00.02'],
+            lessons=['mltk:01.07', 'ieng:00.02'],
             related=['scaled-dot-product-attention', 'causal-grouped-query-attention', 'rotary-query-and-key-embeddings'])
 
 STATEMENT = r"""

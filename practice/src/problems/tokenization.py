@@ -1,5 +1,5 @@
 META = dict(title='Word tokenizer with character offsets', tags=['NLP', 'Data Processing'], diff='Easy', runtime='python',
-            lessons=['ieng:01.02', 'air-fanout-v1:04.24'], related=['text-normalization', 'regex-patterns-for-nlp', 'subword-tokenization'])
+            lessons=['ieng:01.02', 'dlcore:06.03'], related=['text-normalization', 'regex-patterns-for-nlp', 'subword-tokenization'])
 
 STATEMENT = r"""
 Before any model sees text, it is cut into tokens. Many pipelines also keep each token's **character span** so predictions (an entity, an answer span) can be mapped back onto the original string.

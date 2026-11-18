@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Walk everything an output depends on', tags=['Neural Networks'], diff='Medium', runtime='python',
-            lessons=['air-fanout-v1:01.08'],
+            lessons=['dlcore:01.04'],
             related=['build-scalar-expression-graph', 'topologically-sort-computation-dag'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='One-hot encoding with rare and unseen categories', tags=['Feature Engineering', 'Data Processing'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:11.12'], related=['missing-value-imputation', 'feature-scaling'])
+            lessons=['mlcore:07.05'], related=['missing-value-imputation', 'feature-scaling'])
 
 STATEMENT = r"""
 Most models need numbers, so a categorical column is expanded into one 0/1 indicator column per category. Two practical wrinkles: categories that appear only a handful of times in training aren't worth a column, and the test set can contain categories never seen in training.

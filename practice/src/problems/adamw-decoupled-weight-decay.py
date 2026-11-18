@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='AdamW vs Adam with L2', tags=['Optimization', 'Training'], diff='Hard', runtime='numpy',
-            lessons=['air-fanout-v1:05.06', 'air-fanout-v1:02.04'],
+            lessons=['mlmaths:14.03', 'mlmaths:14.06'],
             related=['adam-optimizer', 'adam-step', 'lasso-regression-using-ista'])
 
 STATEMENT = r"""

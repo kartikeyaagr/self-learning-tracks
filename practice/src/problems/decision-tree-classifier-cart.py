@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='CART decision tree classifier (Gini)', tags=['Classification', 'Classic ML'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:01.11'], related=['decision-tree-regressor', 'random-forest', 'bagging-classifier'])
+            lessons=['mlmaths:15.01'], related=['decision-tree-regressor', 'random-forest', 'bagging-classifier'])
 
 STATEMENT = r"""
 Grow a binary classification tree greedily: at each node, try every axis-aligned split and keep the one that makes the children purest. Impurity is Gini, $G = 1 - \sum_c p_c^2$, where $p_c$ is the fraction of the node's samples in class $c$.

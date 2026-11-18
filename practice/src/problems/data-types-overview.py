@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 META = dict(title='Group columns by data type', tags=['Data Processing'], diff='Easy', runtime='pandas',
-            lessons=['air-fanout-v1:11.12'], related=['change-data-types', 'inspect-dataframe-shape'])
+            lessons=['mlcore:07.05'], related=['change-data-types', 'inspect-dataframe-shape'])
 
 STATEMENT = r"""
 A preprocessing pipeline treats columns differently by type: numbers get scaled, booleans become 0/1, text gets encoded. The first step is to sort the columns into buckets.

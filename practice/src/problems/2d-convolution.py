@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='2D convolution with stride, padding and dilation', tags=['Convolutional Networks', 'Computer Vision'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:04.02'],
+            runtime='numpy', lessons=['dlcore:03.01'],
             related=['pooling-layers', 'transposed-convolution', 'depthwise-separable-convolution'])
 
 STATEMENT = r"""

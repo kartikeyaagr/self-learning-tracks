@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Seven activations, overflow-free', tags=['Activation Functions'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:05.02'],
+            lessons=['dlcore:01.01'],
             related=['derivatives-of-common-activation-functions', 'sigmoid-stable', 'softmax-rows'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Adam, AdaMax and the bias correction: optimiser trajectories on a noisy quadratic', tags=['Optimization', 'Training'],
-            diff='Hard', runtime='numpy', lessons=['mlmaths:14.03', 'air-fanout-v1:05.06'],
+            diff='Hard', runtime='numpy', lessons=['mlmaths:14.03'],
             related=['adam-step', 'adam-optimizer', 'rmsprop', 'classical-momentum', 'optimizer-showdown'])
 
 STATEMENT = r"""

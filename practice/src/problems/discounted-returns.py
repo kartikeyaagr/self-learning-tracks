@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Discounted returns across episode boundaries', tags=['Reinforcement Learning'], diff='Easy',
-            runtime='numpy', lessons=['air-fanout-v1:07.01', 'air-fanout-v1:07.02'],
+            runtime='numpy', lessons=['dlcore:08.01', 'dlcore:08.06'],
             related=['gae-advantages', 'monte-carlo-policy-evaluation', 'reinforce-gradient'])
 
 STATEMENT = r"""

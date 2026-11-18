@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Standardise features with broadcasting', tags=['Data Processing', 'Neural Networks'], diff='Easy', runtime='torch',
-            lessons=['air-fanout-v1:02.03', 'air-fanout-v1:03.08'],
+            lessons=['mltk:01.03', 'mltk:04.06'],
             related=['tensor-factory', 'per-channel-mean-and-std', 'batch-normalization'])
 
 STATEMENT = r"""

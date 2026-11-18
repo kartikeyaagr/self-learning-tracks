@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Inclusive float range', tags=['Data Processing'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:03.07'], related=['zeros-and-ones', 'tile-and-diff'])
+            lessons=['mltk:04.01'], related=['zeros-and-ones', 'tile-and-diff'])
 
 STATEMENT = r"""
 `np.arange(start, stop, step)` excludes `stop`, and with a float step its length depends on rounding error: `np.arange(1.0, 1.3, 0.1)` returns **four** values, the last one being about `1.3`. That is why grids with float steps are usually built from an integer count instead.

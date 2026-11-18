@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Batched multi-channel conv2d', tags=['Convolutional Networks'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:04.02'], related=['dilated-2d-convolution', '2d-transposed-convolution', 'max-pool-2d'])
+            lessons=['dlcore:03.01'], related=['dilated-2d-convolution', '2d-transposed-convolution', 'max-pool-2d'])
 
 STATEMENT = r"""
 A convolution layer maps `C_in` input channels to `C_out` output channels. Each output channel has its own `C_in x kh x kw` filter, and every output pixel is a dot product between that filter and the input patch under it, plus a bias. Deep-learning "convolution" is really **cross-correlation**: the kernel is not flipped.

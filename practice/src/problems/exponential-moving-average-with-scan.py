@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Bias-corrected EMA with resets via lax.scan', tags=['JAX', 'Time Series'], diff='Medium', runtime='jax',
-            lessons=['air-fanout-v1:01.14'], related=['gradient-accumulation-with-scan', 'greedy-decode-loop-with-scan'],
+            lessons=['mlmaths:14.03'], related=['gradient-accumulation-with-scan', 'greedy-decode-loop-with-scan'],
             tol=[1e-4, 1e-6])
 
 STATEMENT = r"""

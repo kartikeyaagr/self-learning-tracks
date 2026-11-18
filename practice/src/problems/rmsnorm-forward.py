@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Fused residual add and RMSNorm', tags=['GPU Programming', 'Transformers'], diff='Medium',
-            runtime='triton', tol=[1e-4, 1e-5], lessons=['ieng:13.05', 'air-fanout-v1:05.04'],
+            runtime='triton', tol=[1e-4, 1e-5], lessons=['ieng:13.05', 'dlcore:02.02'],
             related=['layernorm-forward', 'l2-vector-norm', 'norm-gated-linear-transform'])
 
 STATEMENT = r"""

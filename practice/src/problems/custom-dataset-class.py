@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='A sliding-window Dataset for forecasting', tags=['Time Series', 'Data Processing'], diff='Easy', runtime='torch',
-            lessons=['air-fanout-v1:10.03', 'air-fanout-v1:04.27'],
+            lessons=['air-fanout-v1:10.03', 'mltk:02.07'],
             related=['balanced-dataloader', 'transform-pipeline', 'delayed-label-monitoring'])
 
 STATEMENT = r"""

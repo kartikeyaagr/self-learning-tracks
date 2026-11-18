@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Warmup-cosine schedule on a traced step', tags=['JAX', 'Training', 'Optimization'], diff='Medium',
-            runtime='jax', lessons=['air-fanout-v1:05.05'], related=['static-arguments-in-jit', 'adamw'],
+            runtime='jax', lessons=['mlmaths:14.04'], related=['static-arguments-in-jit', 'adamw'],
             tol=[1e-5, 1e-8])
 
 STATEMENT = r"""

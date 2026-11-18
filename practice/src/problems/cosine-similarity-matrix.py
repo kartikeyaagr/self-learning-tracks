@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Pairwise cosine similarity', tags=['Linear Algebra', 'Embeddings'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:02.01'], related=['scaled-dot-product-attention', 'precision-recall-at-k'])
+            lessons=['mlmaths:06.03'], related=['scaled-dot-product-attention', 'precision-recall-at-k'])
 
 STATEMENT = r"""
 Cosine similarity compares directions and ignores lengths:

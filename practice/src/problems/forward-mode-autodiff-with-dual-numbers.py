@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Forward-mode autodiff with dual numbers', tags=['Calculus'], diff='Hard', runtime='numpy',
-            lessons=['air-fanout-v1:01.06', 'air-fanout-v1:01.07'],
+            lessons=['air-fanout-v1:01.06', 'mlmaths:09.18'],
             related=['backpropagation-through-computation-graph', 'jvp-and-vjp-for-2-layer-network',
                      'finite-difference-gradient-checking'])
 

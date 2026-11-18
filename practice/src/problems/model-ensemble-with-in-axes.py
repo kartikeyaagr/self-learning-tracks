@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Run a model ensemble with vmap in_axes', tags=['JAX', 'Neural Networks'], diff='Easy', runtime='jax',
-            lessons=['air-fanout-v1:04.07'], related=['prng-key-splitting', 'batched-attention-with-vmap'],
+            lessons=['mlcore:04.03'], related=['prng-key-splitting', 'batched-attention-with-vmap'],
             tol=[1e-4, 1e-5])
 
 STATEMENT = r"""

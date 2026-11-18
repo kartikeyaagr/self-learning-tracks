@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Average pooling with padding', tags=['Convolutional Networks'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:04.02'], related=['max-pool-2d', 'adaptive-average-pool-2d'])
+            lessons=['dlcore:03.01'], related=['max-pool-2d', 'adaptive-average-pool-2d'])
 
 STATEMENT = r"""
 Average pooling replaces each window with its mean. When the input is zero-padded, there's a choice at the border: divide by the full window size (the padding counts as zeros) or only by the number of **real** pixels in the window.

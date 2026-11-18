@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Normalise an image into a CHW tensor', tags=['Computer Vision', 'Data Processing'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:03.03'], related=['per-channel-mean-and-std', 'rgb-to-grayscale', 'normalize-columns'])
+            lessons=['mltk:01.06'], related=['per-channel-mean-and-std', 'rgb-to-grayscale', 'normalize-columns'])
 
 STATEMENT = r"""
 Images come off disk as `uint8` in **height, width, channel** order. Most CNNs want floats in **channel, height, width** order, standardised with the per-channel mean and standard deviation of the training set (measured on the 0-1 scale). That preprocessing is:

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Pack ragged lists into a padded array', tags=['Data Processing', 'NLP'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:03.01'], related=['mutation-trap', 'zeros-and-ones'])
+            lessons=['mltk:04.01'], related=['mutation-trap', 'zeros-and-ones'])
 
 STATEMENT = r"""
 Real data rarely arrives as a neat rectangle. Token sequences, purchase histories and sensor bursts come as Python lists of different lengths, but a NumPy array must be rectangular. The usual fix is to **pad** every row to the longest length.

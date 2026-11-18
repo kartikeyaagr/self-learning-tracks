@@ -1,5 +1,5 @@
 META = dict(title='Extract URLs, emails, mentions and hashtags', tags=['NLP', 'Data Processing'], diff='Easy', runtime='python',
-            lessons=['air-fanout-v1:04.24'], related=['tokenization', 'text-normalization'])
+            lessons=['dlcore:06.03'], related=['tokenization', 'text-normalization'])
 
 STATEMENT = r"""
 Social-media text mixes words with URLs, email addresses, `@mentions` and `#hashtags`. A common preprocessing step pulls these out (or replaces them with placeholder tokens) before tokenizing.

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='AdaBoost with decision stumps', tags=['Classic ML', 'Classification'], diff='Hard', runtime='numpy',
-            lessons=['air-fanout-v1:04.07'], related=['gradient-boosted-regressor', 'bagging-classifier'])
+            lessons=['mlcore:04.03'], related=['gradient-boosted-regressor', 'bagging-classifier'])
 
 STATEMENT = r"""
 Discrete AdaBoost builds a strong classifier $F(x) = \sum_t \alpha_t h_t(x)$ from weak ones by re-weighting the training set after every round, so the next learner focuses on the examples the ensemble still gets wrong.

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Warmup plus cosine decay with LambdaLR', tags=['Training', 'Language Models'], diff='Medium', runtime='torch',
-            lessons=['air-fanout-v1:05.05', 'air-fanout-v1:10.04'],
+            lessons=['mlmaths:14.04', 'air-fanout-v1:10.04'],
             related=['linear-warmup', 'cosine-annealing-with-warm-restarts', 'optimizer-scheduler'])
 
 STATEMENT = r"""

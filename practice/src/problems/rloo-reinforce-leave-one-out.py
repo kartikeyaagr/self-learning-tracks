@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='RLOO: REINFORCE with a leave-one-out baseline', tags=['Reinforcement Learning', 'Language Models'],
-            diff='Medium', runtime='numpy', lessons=['air-fanout-v1:07.05', 'air-fanout-v1:07.02'],
+            diff='Medium', runtime='numpy', lessons=['air-fanout-v1:07.05', 'dlcore:08.06'],
             related=['grpo-group-relative-advantage', 'reinforce-with-baseline', 'reinforce-gradient'])
 
 STATEMENT = r"""

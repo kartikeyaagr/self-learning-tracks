@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='KL divergence: categorical and Gaussian', tags=['Probability', 'Loss Functions'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:01.12', 'air-fanout-v1:01.11'],
+            lessons=['air-fanout-v1:01.12', 'mlmaths:15.01'],
             related=['expected-value-via-numerical-integration', 'cross-entropy-logits'])
 
 STATEMENT = r"""

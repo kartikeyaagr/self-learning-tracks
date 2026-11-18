@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 META = dict(title='Standardise survey answers and sentinels', tags=['Data Processing'], diff='Medium', runtime='pandas',
-            lessons=['air-fanout-v1:11.12'], related=['change-data-types', 'handle-missing-values', 'drop-duplicates'])
+            lessons=['mlcore:07.05'], related=['change-data-types', 'handle-missing-values', 'drop-duplicates'])
 
 STATEMENT = r"""
 A survey export has two problems. The yes/no column was typed by hand, and the numeric score uses magic numbers for "no answer".

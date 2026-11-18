@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Pair totals under a budget', tags=['Data Processing'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:02.03'], related=['pairwise-differences', 'row-scaling'])
+            lessons=['mltk:01.03'], related=['pairwise-differences', 'row-scaling'])
 
 STATEMENT = r"""
 A shop sells `m` mains and `n` sides, with prices `a` and `b`. Write `pair_totals(a, b, budget)` that prices **every** (main, side) combination at once and counts how many fit the budget.

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Encode Go history as input planes', tags=['Reinforcement Learning', 'Feature Engineering'],
-            diff='Medium', runtime='numpy', lessons=['air-fanout-v1:04.02'],
+            diff='Medium', runtime='numpy', lessons=['dlcore:03.01'],
             related=['apply-go-action-with-captures-and-repetition', 'apply-alphago-residual-block',
                      'apply-dihedral-go-symmetry'])
 

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Value iteration to convergence', tags=['Reinforcement Learning'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:07.01'],
+            lessons=['dlcore:08.01'],
             related=['value-iteration-step', 'policy-iteration', 'bellman-expectation-equation'])
 
 STATEMENT = r"""

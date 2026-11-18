@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='A ResNet bottleneck block as an nn.Module', tags=['Convolutional Networks', 'Neural Networks'],
-            diff='Medium', runtime='torch', lessons=['air-fanout-v1:04.02', 'ieng:02.03'],
+            diff='Medium', runtime='torch', lessons=['dlcore:03.01', 'ieng:02.03'],
             related=['resnet-residual-block', 'apply-alphago-residual-block', 'batch-normalization'])
 
 STATEMENT = r"""

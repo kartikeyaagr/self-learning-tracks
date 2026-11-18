@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Pixel shuffle with view and permute', tags=['Computer Vision', 'Convolutional Networks'], diff='Easy', runtime='torch',
-            lessons=['air-fanout-v1:03.04', 'air-fanout-v1:03.03'],
+            lessons=['mltk:01.06'],
             related=['window-partition-and-reverse', 'transposed-convolution', 'tensor-factory'])
 
 STATEMENT = r"""

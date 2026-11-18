@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 META = dict(title='Parse a table that arrived as text', tags=['Data Processing'], diff='Medium', runtime='pandas',
-            lessons=['air-fanout-v1:11.12'], related=['data-types-overview', 'replace-values'])
+            lessons=['mlcore:07.05'], related=['data-types-overview', 'replace-values'])
 
 STATEMENT = r"""
 A CSV was read with every column as text, so nothing can be summed or filtered numerically. `df` has four columns, all strings:

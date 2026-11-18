@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Cosine annealing with warm restarts', tags=['Training', 'Optimization'], diff='Medium', runtime='numpy',
-            lessons=['air-fanout-v1:05.05'],
+            lessons=['mlmaths:14.04'],
             related=['linear-warmup', 'lr-range-test-and-one-cycle-policy'])
 
 STATEMENT = r"""

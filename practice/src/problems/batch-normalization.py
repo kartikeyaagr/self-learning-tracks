@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='BatchNorm in train and eval mode', tags=['Neural Networks', 'Training', 'Convolutional Networks'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:01.14'],
+            runtime='numpy', lessons=['mlmaths:14.03'],
             related=['layer-normalization', 'layer-norm', 'resnet-residual-block'])
 
 STATEMENT = r"""

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Transposed convolution (learned upsampling)', tags=['Convolutional Networks', 'U-Net'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:04.02'], related=['2d-convolution', 'u-net-skip-connection'])
+            runtime='numpy', lessons=['dlcore:03.01'], related=['2d-convolution', 'u-net-skip-connection'])
 
 STATEMENT = r"""
 A transposed convolution runs a convolution "backwards": every **input** pixel stamps a scaled copy of the kernel onto the output, and overlapping stamps add. With stride 2 it doubles the resolution, which is how decoders and U-Nets upsample.

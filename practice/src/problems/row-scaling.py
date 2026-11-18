@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Turn count rows into distributions', tags=['Data Processing', 'Probability'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:02.03'], related=['column-scaling', 'outer-sum', 'normalize-columns'])
+            lessons=['mltk:01.03'], related=['column-scaling', 'outer-sum', 'normalize-columns'])
 
 STATEMENT = r"""
 Each row of a count matrix records how often something happened (a user's clicks per category, a word's co-occurrence counts). Dividing each row by its total turns it into a probability distribution.

@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='LSTM cell: forward and backward for one step', tags=['Neural Networks', 'NLP', 'Calculus'], diff='Hard',
-            runtime='numpy', lessons=['air-fanout-v1:01.08', 'air-fanout-v1:01.10'],
+            runtime='numpy', lessons=['dlcore:01.04', 'air-fanout-v1:01.10'],
             related=['vanilla-rnn-cell', 'gru-cell', 'backpropagation-single-hidden-layer'])
 
 STATEMENT = r"""

@@ -2086,6 +2086,131 @@
 "Medium"
 ]
 ],
+"air-fanout-v1:14.01": [
+[
+"self-join",
+"Seed variance: pair runs with identical hyperparameters (self join)",
+"Medium"
+],
+[
+"summarize-across-seeds",
+"Summarise RL results across seeds",
+"Easy"
+],
+[
+"learning-rate-sweep",
+"Sweep the learning rate",
+"Easy"
+],
+[
+"hashed-dataset-split",
+"Reproducible train/val/test split by hashing ids",
+"Easy"
+],
+[
+"unstack-long-to-wide",
+"Training-log metrics from long to wide",
+"Hard"
+]
+],
+"air-fanout-v1:14.02": [
+[
+"content-hash-data-manifest",
+"Content-addressed dataset manifest and upload plan",
+"Medium"
+],
+[
+"model-registry-promotion",
+"Model registry promotion with gates and rollback",
+"Medium"
+],
+[
+"common-table-expressions",
+"Fine-tuning lineage with a recursive CTE",
+"Medium"
+],
+[
+"row-number",
+"Keep the latest version of each record (ROW_NUMBER)",
+"Medium"
+]
+],
+"air-fanout-v1:14.03": [
+[
+"record-schema-validation",
+"Validate incoming records against a data contract",
+"Medium"
+],
+[
+"finite-difference-gradient-checking",
+"Gradient checking with central differences",
+"Medium"
+],
+[
+"bootstrap-confidence-interval",
+"Bootstrap confidence intervals, vectorised",
+"Hard"
+],
+[
+"train-serving-skew-check",
+"Detect train-serving skew from logged features",
+"Medium"
+],
+[
+"mini-batch-training-loop",
+"A mini-batch training loop with validation checkpoints",
+"Medium"
+]
+],
+"air-fanout-v1:14.04": [
+[
+"dag-cache-invalidation",
+"Pipeline cache keys and invalidation over a DAG",
+"Medium"
+],
+[
+"topologically-sort-computation-dag",
+"Topological order of a Value graph",
+"Medium"
+],
+[
+"retry-backoff-schedule",
+"Retry an LLM API call with backoff, jitter, Retry-After and a deadline",
+"Medium"
+],
+[
+"content-hash-data-manifest",
+"Content-addressed dataset manifest and upload plan",
+"Medium"
+]
+],
+"air-fanout-v1:14.05": [
+[
+"canary-mann-whitney",
+"Canary judge with a Mann-Whitney U test",
+"Hard"
+],
+[
+"shadow-deployment-comparison",
+"Shadow deployment comparison and promotion call",
+"Medium"
+],
+[
+"model-registry-promotion",
+"Model registry promotion with gates and rollback",
+"Medium"
+],
+[
+"retraining-trigger-policy",
+"Retraining trigger policy with cooldown",
+"Medium"
+],
+[
+"consecutive-breach-alerts",
+"Alert incidents from consecutive threshold breaches",
+"Easy"
+]
+],
 "dlcore:01.01": [
 [
 "multi-layer-perceptron-forward-pass",
@@ -2111,6 +2236,51 @@
 "perceptron",
 "Perceptron until a clean epoch",
 "Easy"
+],
+[
+"evaluate-scalar-neuron",
+"Forward pass of one neuron with Value nodes",
+"Easy"
+],
+[
+"activation-functions",
+"Seven activations, overflow-free",
+"Easy"
+],
+[
+"build-scalar-neuron-module",
+"A Neuron module with shared parameters",
+"Medium"
+],
+[
+"autoencoder-forward-pass",
+"Autoencoder with optional tied weights",
+"Medium"
+],
+[
+"backpropagate-through-scalar-neuron",
+"Backward closures for a tanh neuron",
+"Medium"
+],
+[
+"gradient-check-scalar-neuron",
+"Gradient-check a neuron's squared error",
+"Medium"
+],
+[
+"collect-module-parameters-recursively",
+"Named parameters of nested modules",
+"Medium"
+],
+[
+"averaged-perceptron",
+"The averaged perceptron",
+"Medium"
+],
+[
+"weight-initialization",
+"Xavier, He and LeCun initialisation",
+"Medium"
 ]
 ],
 "dlcore:01.02": [
@@ -2192,6 +2362,91 @@
 "gradient-check-autodiff-graph",
 "Gradient-check a whole autograd graph",
 "Hard"
+],
+[
+"create-addition-value-node",
+"A Value node that adds",
+"Easy"
+],
+[
+"create-multiplication-value-node",
+"A Value node that multiplies",
+"Easy"
+],
+[
+"basic-autograd",
+"Logistic-regression gradients with autograd",
+"Easy"
+],
+[
+"backpropagation-single-hidden-layer",
+"Backprop by hand: tanh hidden layer, softmax output",
+"Medium"
+],
+[
+"chain-rule-through-3-layer-network",
+"Chain rule through a three-layer scalar network",
+"Medium"
+],
+[
+"finite-difference-gradient-checking",
+"Gradient checking with central differences",
+"Medium"
+],
+[
+"gradient-check-scalar-neuron",
+"Gradient-check a neuron's squared error",
+"Medium"
+],
+[
+"build-scalar-expression-graph",
+"Interpret a program into a Value graph",
+"Medium"
+],
+[
+"softmax-jacobian",
+"Jacobian of softmax",
+"Medium"
+],
+[
+"manual-weight-update",
+"SGD by hand with weight decay",
+"Medium"
+],
+[
+"computational-graph-and-autograd",
+"Tensor autograd with broadcasting",
+"Medium"
+],
+[
+"trace-reachable-expression-graph",
+"Walk everything an output depends on",
+"Medium"
+],
+[
+"differentiate-exponentials-and-powers",
+"exp, powers and division for Value",
+"Medium"
+],
+[
+"dropout",
+"Inverted dropout in a tiny MLP",
+"Hard"
+],
+[
+"lstm-cell",
+"LSTM cell: forward and backward for one step",
+"Hard"
+],
+[
+"gan-training-step",
+"One GAN training step, gradients by hand",
+"Hard"
+],
+[
+"apply-one-policy-value-head-training-step",
+"One SGD step on the policy and value heads",
+"Hard"
 ]
 ],
 "dlcore:01.05": [
@@ -2258,6 +2513,11 @@
 "layernorm-backward",
 "LayerNorm backward with deterministic weight gradients",
 "Hard"
+],
+[
+"rmsnorm-forward",
+"Fused residual add and RMSNorm",
+"Medium"
 ]
 ],
 "dlcore:02.03": [
@@ -2344,6 +2604,16 @@
 "gradient-clipping",
 "Gradient clipping: value, global norm, adaptive",
 "Hard"
+],
+[
+"transform-pipeline",
+"Compose an image transform pipeline",
+"Easy"
+],
+[
+"vgg-convolution-block",
+"A VGG block: stacked 3x3 convs, then pool",
+"Medium"
 ]
 ],
 "dlcore:03.01": [
@@ -2366,6 +2636,91 @@
 "dilated-2d-convolution",
 "Dilated convolution with same padding",
 "Medium"
+],
+[
+"max-pool-2d",
+"2-D max pooling with stride",
+"Easy"
+],
+[
+"average-pool-2d",
+"Average pooling with padding",
+"Easy"
+],
+[
+"pooling-layers",
+"Max and average pooling",
+"Easy"
+],
+[
+"residual-block",
+"A ResNet bottleneck block as an nn.Module",
+"Medium"
+],
+[
+"vgg-convolution-block",
+"A VGG block: stacked 3x3 convs, then pool",
+"Medium"
+],
+[
+"adaptive-average-pool-2d",
+"Adaptive average pooling",
+"Medium"
+],
+[
+"depthwise-separable-convolution",
+"Depthwise separable convolution and its savings",
+"Medium"
+],
+[
+"encode-alphago-zero-board-history",
+"Encode Go history as input planes",
+"Medium"
+],
+[
+"resnet-residual-block",
+"ResNet basic block with a projection shortcut",
+"Medium"
+],
+[
+"apply-alphago-residual-block",
+"Residual tower block (conv, batch norm, skip)",
+"Medium"
+],
+[
+"gaussian-blur-2d",
+"Separable Gaussian blur",
+"Medium"
+],
+[
+"sobel-edge-detection",
+"Sobel gradients and edge magnitude",
+"Medium"
+],
+[
+"squeeze-and-excitation-block",
+"Squeeze-and-excitation channel gating",
+"Medium"
+],
+[
+"transposed-convolution",
+"Transposed convolution (learned upsampling)",
+"Medium"
+],
+[
+"lenet-forward-pass",
+"A LeNet-style CNN, end to end",
+"Hard"
+],
+[
+"assemble-compact-dual-head-network",
+"Forward pass of a small dual-head Go network",
+"Hard"
+],
+[
+"2d-transposed-convolution",
+"Transposed convolution (scatter form)",
+"Hard"
 ]
 ],
 "dlcore:03.02": [
@@ -2823,6 +3178,51 @@
 "text-classification",
 "Multinomial naive Bayes text classifier",
 "Medium"
+],
+[
+"stemming-vs-lemmatization",
+"A suffix stemmer next to a lemma lookup",
+"Easy"
+],
+[
+"named-entity-recognition",
+"Decode BIO tags into entity spans",
+"Easy"
+],
+[
+"regex-patterns-for-nlp",
+"Extract URLs, emails, mentions and hashtags",
+"Easy"
+],
+[
+"pos-tagging",
+"Most-frequent-tag POS baseline",
+"Easy"
+],
+[
+"tokenization",
+"Word tokenizer with character offsets",
+"Easy"
+],
+[
+"vanilla-rnn-cell",
+"Elman RNN over padded sequences",
+"Medium"
+],
+[
+"gru-cell",
+"GRU over a sequence (PyTorch gate convention)",
+"Medium"
+],
+[
+"sentence-segmentation",
+"Rule-based sentence splitter",
+"Medium"
+],
+[
+"sequence-to-sequence-forward-pass",
+"Encoder-decoder RNN with teacher forcing",
+"Hard"
 ]
 ],
 "dlcore:06.04": [
@@ -3137,6 +3537,56 @@
 "value-iteration-step",
 "One Bellman backup (value iteration)",
 "Medium"
+],
+[
+"find-go-group-and-its-liberties",
+"Find a Go group and its liberties",
+"Easy"
+],
+[
+"sarsa-update",
+"SARSA along one trajectory",
+"Easy"
+],
+[
+"td-0-value-update",
+"TD(0) value updates from a transition stream",
+"Easy"
+],
+[
+"score-terminal-position-with-tromp-taylor-rules",
+"Area-score a finished Go board (Tromp-Taylor)",
+"Medium"
+],
+[
+"expected-sarsa",
+"Expected SARSA with an epsilon-greedy target",
+"Medium"
+],
+[
+"monte-carlo-policy-evaluation",
+"First-visit and every-visit Monte Carlo evaluation",
+"Medium"
+],
+[
+"policy-iteration",
+"Policy iteration",
+"Medium"
+],
+[
+"value-iteration",
+"Value iteration to convergence",
+"Medium"
+],
+[
+"build-legal-go-action-mask",
+"Legal-move mask for Go",
+"Hard"
+],
+[
+"apply-go-action-with-captures-and-repetition",
+"Play a Go move: captures, ko and superko",
+"Hard"
 ]
 ],
 "dlcore:08.02": [
@@ -3252,6 +3702,21 @@
 "reinforce-gradient",
 "REINFORCE gradient for a linear softmax policy",
 "Easy"
+],
+[
+"softmax-boltzmann-exploration",
+"Boltzmann exploration with a temperature",
+"Easy"
+],
+[
+"discounted-returns",
+"Discounted returns across episode boundaries",
+"Easy"
+],
+[
+"rloo-reinforce-leave-one-out",
+"RLOO: REINFORCE with a leave-one-out baseline",
+"Medium"
 ],
 [
 "ppo-update-epochs",
@@ -3977,6 +4442,16 @@
 "bootstrap-confidence-interval",
 "Bootstrap confidence intervals, vectorised",
 "Hard"
+],
+[
+"model-ensemble-with-in-axes",
+"Run a model ensemble with vmap in_axes",
+"Easy"
+],
+[
+"adaboost",
+"AdaBoost with decision stumps",
+"Hard"
 ]
 ],
 "mlcore:04.04": [
@@ -4250,6 +4725,16 @@
 "self-join",
 "Seed variance: pair runs with identical hyperparameters (self join)",
 "Medium"
+],
+[
+"k-fold-cross-validation",
+"K-fold cross-validation splits",
+"Easy"
+],
+[
+"fit-learning-rate-and-batch-size-scaling",
+"Fit learning-rate and batch-size scaling laws from sweeps",
+"Hard"
 ]
 ],
 "mlcore:06.06": [
@@ -4397,6 +4882,46 @@
 "transform-pipeline",
 "Compose an image transform pipeline",
 "Easy"
+],
+[
+"missing-value-imputation",
+"Column-wise missing value imputation",
+"Easy"
+],
+[
+"inspect-dataframe-shape",
+"First-look profile of a table",
+"Easy"
+],
+[
+"data-types-overview",
+"Group columns by data type",
+"Easy"
+],
+[
+"categorical-encoding",
+"One-hot encoding with rare and unseen categories",
+"Easy"
+],
+[
+"perform-stable-exact-deduplication",
+"Stable exact deduplication of a text corpus",
+"Easy"
+],
+[
+"handle-missing-values",
+"Impute sensor gaps by station",
+"Medium"
+],
+[
+"change-data-types",
+"Parse a table that arrived as text",
+"Medium"
+],
+[
+"replace-values",
+"Standardise survey answers and sentinels",
+"Medium"
 ]
 ],
 "mlcore:08.01": [
@@ -4578,6 +5103,16 @@
 "consecutive-breach-alerts",
 "Alert incidents from consecutive threshold breaches",
 "Easy"
+],
+[
+"page-hinkley-drift",
+"Page-Hinkley test for streaming drift",
+"Medium"
+],
+[
+"training-serving-skew",
+"Training/serving skew report",
+"Medium"
 ]
 ],
 "mlcore:09.04": [
@@ -4800,8 +5335,58 @@
 "Medium"
 ],
 [
+"orthogonalize-muon-momentum-update",
+"Muon: orthogonalize a momentum update with Newton-Schulz",
+"Easy"
+],
+[
+"adamw",
+"AdamW over a pytree with a weight-decay mask",
+"Medium"
+],
+[
+"batch-normalization",
+"BatchNorm in train and eval mode",
+"Medium"
+],
+[
+"exponential-moving-average-with-scan",
+"Bias-corrected EMA with resets via lax.scan",
+"Medium"
+],
+[
+"classical-momentum",
+"Gradient descent with momentum",
+"Medium"
+],
+[
+"nesterov-momentum",
+"Nesterov accelerated gradient",
+"Medium"
+],
+[
+"tile-and-diff",
+"Remove seasonality, then difference",
+"Medium"
+],
+[
 "adam-adamax-trajectories",
 "Adam, AdaMax and the bias correction: optimiser trajectories on a noisy quadratic",
+"Hard"
+],
+[
+"lr-range-test-and-one-cycle-policy",
+"LR range test to a one-cycle schedule",
+"Hard"
+],
+[
+"optimizer-showdown",
+"Optimizer showdown on an ill-conditioned bowl",
+"Hard"
+],
+[
+"custom-sgd-with-momentum",
+"SGD with momentum as a torch.optim.Optimizer",
 "Hard"
 ]
 ],
@@ -4830,6 +5415,61 @@
 "learning-rate-sweep",
 "Sweep the learning rate",
 "Easy"
+],
+[
+"sgd-with-momentum-over-pytree",
+"SGD with momentum over a nested pytree",
+"Easy"
+],
+[
+"optimizer-scheduler",
+"Step-decay learning rates with an optimizer and scheduler",
+"Easy"
+],
+[
+"limit-of-learning-rate-schedule",
+"Where an exponential LR schedule settles",
+"Easy"
+],
+[
+"adagrad",
+"AdaGrad on least squares",
+"Medium"
+],
+[
+"gradient-descent-on-non-convex-loss",
+"Gradient descent from many starts on a non-convex loss",
+"Medium"
+],
+[
+"rmsprop",
+"RMSProp on the Rosenbrock valley",
+"Medium"
+],
+[
+"learning-rate-warmup-scheduler",
+"Warmup plus cosine decay with LambdaLR",
+"Medium"
+],
+[
+"traced-learning-rate-schedule",
+"Warmup-cosine schedule on a traced step",
+"Medium"
+],
+[
+"custom-sgd-with-momentum",
+"SGD with momentum as a torch.optim.Optimizer",
+"Hard"
+],
+[
+"learning-rate-stability-and-convergence-bounds",
+"Step-size limits and convergence rate of gradient descent",
+"Hard"
+],
+[
+"train-tiny-micrograd-mlp",
+"Train a tiny MLP with your own autograd",
+"Hard"
 ]
 ],
 "mlmaths:14.05": [
@@ -4874,6 +5514,61 @@
 "early-stopping",
 "Early stopping with patience",
 "Easy"
+],
+[
+"lasso-regression",
+"Lasso by cyclic coordinate descent",
+"Easy"
+],
+[
+"pairwise-differences",
+"Manhattan distance matrix",
+"Easy"
+],
+[
+"vector-norms",
+"Overflow-safe p-norms",
+"Easy"
+],
+[
+"distance-metrics",
+"Pairwise distance matrices",
+"Easy"
+],
+[
+"ridge-regression",
+"Ridge regression with an unpenalised intercept",
+"Easy"
+],
+[
+"l2-vector-norm",
+"Row-wise L2 norm and normalization",
+"Easy"
+],
+[
+"gradient-clipping-global-norm-rescaling",
+"Clip gradients by their global norm",
+"Medium"
+],
+[
+"alphago-policy-value-loss",
+"Combined policy-value loss for self-play training",
+"Medium"
+],
+[
+"loss-functions",
+"Robust regression losses and their gradients",
+"Medium"
+],
+[
+"adamw-decoupled-weight-decay",
+"AdamW vs Adam with L2",
+"Hard"
+],
+[
+"gradient-clipping",
+"Gradient clipping: value, global norm, adaptive",
+"Hard"
 ]
 ],
 "mlmaths:15.01": [
@@ -4890,6 +5585,31 @@
 [
 "decision-tree-classifier-cart",
 "CART decision tree classifier (Gini)",
+"Medium"
+],
+[
+"log-loss-binary-cross-entropy",
+"Weighted binary log loss",
+"Easy"
+],
+[
+"alphago-policy-value-loss",
+"Combined policy-value loss for self-play training",
+"Medium"
+],
+[
+"kl-divergence-discrete-and-continuous",
+"KL divergence: categorical and Gaussian",
+"Medium"
+],
+[
+"variational-autoencoder-forward-pass",
+"VAE forward pass and the ELBO",
+"Medium"
+],
+[
+"t-sne-affinity-matrix",
+"t-SNE input affinities with a perplexity search",
 "Medium"
 ]
 ],
@@ -6417,6 +7137,21 @@
 "filter-and-extract",
 "Rows inside a bounding box",
 "Easy"
+],
+[
+"zero-pad-and-center-crop",
+"Centre pad-or-crop to a fixed size",
+"Easy"
+],
+[
+"functional-array-update",
+"Functional array updates with .at[]",
+"Easy"
+],
+[
+"cutmix-augmentation",
+"CutMix with area-corrected labels",
+"Medium"
 ]
 ],
 "mltk:01.03": [
@@ -6443,6 +7178,31 @@
 [
 "normalize-columns",
 "Standardise with train statistics",
+"Medium"
+],
+[
+"masked-mean-without-boolean-indexing",
+"Masked statistics under jit, no boolean indexing",
+"Easy"
+],
+[
+"distance-metrics",
+"Pairwise distance matrices",
+"Easy"
+],
+[
+"tensor-operations",
+"Standardise features with broadcasting",
+"Easy"
+],
+[
+"knn-classifier",
+"k-nearest-neighbours classifier",
+"Easy"
+],
+[
+"computational-graph-and-autograd",
+"Tensor autograd with broadcasting",
 "Medium"
 ]
 ],
@@ -6520,6 +7280,36 @@
 "outer-product",
 "Batched outer products",
 "Easy"
+],
+[
+"image-normalize",
+"Normalise an image into a CHW tensor",
+"Easy"
+],
+[
+"tensor-shape-manipulation",
+"Pixel shuffle with view and permute",
+"Easy"
+],
+[
+"vit-patchify",
+"ViT patch embedding with a class token",
+"Easy"
+],
+[
+"tiled-transpose",
+"Tiled matrix transpose",
+"Medium"
+],
+[
+"u-net-skip-connection",
+"U-Net decoder step: upsample, align, concatenate",
+"Medium"
+],
+[
+"vision-transformer-patch-embedding",
+"ViT input: patches, projection, class token, positions",
+"Hard"
 ]
 ],
 "mltk:01.07": [
@@ -6547,6 +7337,21 @@
 "random-array-generation",
 "Seeded bootstrap of the mean",
 "Easy"
+],
+[
+"named-dimension-batched-attention-scores",
+"Attention scores from named-axis layouts",
+"Easy"
+],
+[
+"matrix-multiply",
+"Matrix multiplication from scratch",
+"Easy"
+],
+[
+"autotuned-matrix-multiplication",
+"Autotuned tiled matmul",
+"Medium"
 ]
 ],
 "mltk:02.01": [
@@ -6726,6 +7531,16 @@
 "popularity-baseline-leave-last-out",
 "Leave-last-out evaluation of a popularity baseline",
 "Hard"
+],
+[
+"custom-dataset-class",
+"A sliding-window Dataset for forecasting",
+"Easy"
+],
+[
+"vanilla-rnn-cell",
+"Elman RNN over padded sequences",
+"Medium"
 ]
 ],
 "mltk:02.08": [
@@ -6939,6 +7754,21 @@
 "rmsnorm-forward-pass",
 "RMSNorm in half precision, the way LLMs do it",
 "Easy"
+],
+[
+"zeros-and-ones",
+"Border mask of width k",
+"Easy"
+],
+[
+"arange-and-linspace",
+"Inclusive float range",
+"Easy"
+],
+[
+"create-arrays-from-lists",
+"Pack ragged lists into a padded array",
+"Easy"
 ]
 ],
 "mltk:04.02": [
@@ -7059,6 +7889,11 @@
 "mini-batch-training-loop",
 "A mini-batch training loop with validation checkpoints",
 "Medium"
+],
+[
+"tensor-operations",
+"Standardise features with broadcasting",
+"Easy"
 ]
 ],
 "mltk:04.07": [
@@ -7473,225 +8308,6 @@
 "Hard"
 ]
 ],
-"air-fanout-v1:04.02": [
-[
-"max-pool-2d",
-"2-D max pooling with stride",
-"Easy"
-],
-[
-"average-pool-2d",
-"Average pooling with padding",
-"Easy"
-],
-[
-"pooling-layers",
-"Max and average pooling",
-"Easy"
-],
-[
-"2d-convolution",
-"2D convolution with stride, padding and dilation",
-"Medium"
-],
-[
-"residual-block",
-"A ResNet bottleneck block as an nn.Module",
-"Medium"
-],
-[
-"vgg-convolution-block",
-"A VGG block: stacked 3x3 convs, then pool",
-"Medium"
-],
-[
-"adaptive-average-pool-2d",
-"Adaptive average pooling",
-"Medium"
-],
-[
-"multichannel-2d-convolution",
-"Batched multi-channel conv2d",
-"Medium"
-],
-[
-"depthwise-separable-convolution",
-"Depthwise separable convolution and its savings",
-"Medium"
-],
-[
-"dilated-2d-convolution",
-"Dilated convolution with same padding",
-"Medium"
-],
-[
-"encode-alphago-zero-board-history",
-"Encode Go history as input planes",
-"Medium"
-],
-[
-"resnet-residual-block",
-"ResNet basic block with a projection shortcut",
-"Medium"
-],
-[
-"apply-alphago-residual-block",
-"Residual tower block (conv, batch norm, skip)",
-"Medium"
-],
-[
-"gaussian-blur-2d",
-"Separable Gaussian blur",
-"Medium"
-],
-[
-"sobel-edge-detection",
-"Sobel gradients and edge magnitude",
-"Medium"
-],
-[
-"squeeze-and-excitation-block",
-"Squeeze-and-excitation channel gating",
-"Medium"
-],
-[
-"transposed-convolution",
-"Transposed convolution (learned upsampling)",
-"Medium"
-],
-[
-"lenet-forward-pass",
-"A LeNet-style CNN, end to end",
-"Hard"
-],
-[
-"assemble-compact-dual-head-network",
-"Forward pass of a small dual-head Go network",
-"Hard"
-],
-[
-"conv2d",
-"Grouped conv2d forward and backward with unfold and fold",
-"Hard"
-],
-[
-"2d-transposed-convolution",
-"Transposed convolution (scatter form)",
-"Hard"
-]
-],
-"air-fanout-v1:01.08": [
-[
-"create-addition-value-node",
-"A Value node that adds",
-"Easy"
-],
-[
-"create-multiplication-value-node",
-"A Value node that multiplies",
-"Easy"
-],
-[
-"basic-autograd",
-"Logistic-regression gradients with autograd",
-"Easy"
-],
-[
-"backpropagation-single-hidden-layer",
-"Backprop by hand: tanh hidden layer, softmax output",
-"Medium"
-],
-[
-"chain-rule-through-3-layer-network",
-"Chain rule through a three-layer scalar network",
-"Medium"
-],
-[
-"finite-difference-gradient-checking",
-"Gradient checking with central differences",
-"Medium"
-],
-[
-"gradient-check-scalar-neuron",
-"Gradient-check a neuron's squared error",
-"Medium"
-],
-[
-"build-scalar-expression-graph",
-"Interpret a program into a Value graph",
-"Medium"
-],
-[
-"softmax-jacobian",
-"Jacobian of softmax",
-"Medium"
-],
-[
-"manual-weight-update",
-"SGD by hand with weight decay",
-"Medium"
-],
-[
-"accumulate-shared-path-gradients",
-"Shared nodes, stale gradients and zero_grad",
-"Medium"
-],
-[
-"computational-graph-and-autograd",
-"Tensor autograd with broadcasting",
-"Medium"
-],
-[
-"topologically-sort-computation-dag",
-"Topological order of a Value graph",
-"Medium"
-],
-[
-"trace-reachable-expression-graph",
-"Walk everything an output depends on",
-"Medium"
-],
-[
-"differentiate-exponentials-and-powers",
-"exp, powers and division for Value",
-"Medium"
-],
-[
-"gradient-check-autodiff-graph",
-"Gradient-check a whole autograd graph",
-"Hard"
-],
-[
-"dropout",
-"Inverted dropout in a tiny MLP",
-"Hard"
-],
-[
-"lstm-cell",
-"LSTM cell: forward and backward for one step",
-"Hard"
-],
-[
-"gan-training-step",
-"One GAN training step, gradients by hand",
-"Hard"
-],
-[
-"apply-one-policy-value-head-training-step",
-"One SGD step on the policy and value heads",
-"Hard"
-],
-[
-"backpropagation-through-computation-graph",
-"Reverse-mode backprop over a computation graph",
-"Hard"
-],
-[
-"run-reverse-mode-autodiff",
-"backward() for a scalar autograd engine",
-"Hard"
-]
-],
 "air-fanout-v1:10.03": [
 [
 "custom-dataset-class",
@@ -7729,71 +8345,7 @@
 "Medium"
 ]
 ],
-"air-fanout-v1:04.27": [
-[
-"custom-dataset-class",
-"A sliding-window Dataset for forecasting",
-"Easy"
-],
-[
-"vanilla-rnn-cell",
-"Elman RNN over padded sequences",
-"Medium"
-]
-],
-"air-fanout-v1:04.24": [
-[
-"stemming-vs-lemmatization",
-"A suffix stemmer next to a lemma lookup",
-"Easy"
-],
-[
-"named-entity-recognition",
-"Decode BIO tags into entity spans",
-"Easy"
-],
-[
-"regex-patterns-for-nlp",
-"Extract URLs, emails, mentions and hashtags",
-"Easy"
-],
-[
-"pos-tagging",
-"Most-frequent-tag POS baseline",
-"Easy"
-],
-[
-"tokenization",
-"Word tokenizer with character offsets",
-"Easy"
-],
-[
-"vanilla-rnn-cell",
-"Elman RNN over padded sequences",
-"Medium"
-],
-[
-"gru-cell",
-"GRU over a sequence (PyTorch gate convention)",
-"Medium"
-],
-[
-"text-classification",
-"Multinomial naive Bayes text classifier",
-"Medium"
-],
-[
-"sentence-segmentation",
-"Rule-based sentence splitter",
-"Medium"
-],
-[
-"sequence-to-sequence-forward-pass",
-"Encoder-decoder RNN with teacher forcing",
-"Hard"
-]
-],
-"air-fanout-v1:01.07": [
+"mlmaths:09.18": [
 [
 "differentiate-tanh-activation",
 "A tanh node with its backward rule",
@@ -7847,33 +8399,6 @@
 [
 "run-reverse-mode-autodiff",
 "backward() for a scalar autograd engine",
-"Hard"
-]
-],
-"air-fanout-v1:05.03": [
-[
-"simple-neural-network",
-"A two-layer classifier as an nn.Module",
-"Easy"
-],
-[
-"autoencoder-forward-pass",
-"Autoencoder with optional tied weights",
-"Medium"
-],
-[
-"multi-layer-perceptron-forward-pass",
-"Forward pass of a configurable MLP",
-"Medium"
-],
-[
-"collect-module-parameters-recursively",
-"Named parameters of nested modules",
-"Medium"
-],
-[
-"evaluate-multi-layer-perceptron",
-"Forward and backward through a Value MLP",
 "Hard"
 ]
 ],
@@ -8264,23 +8789,6 @@
 "Medium"
 ]
 ],
-"air-fanout-v1:03.02": [
-[
-"named-dimension-batched-attention-scores",
-"Attention scores from named-axis layouts",
-"Easy"
-],
-[
-"matrix-multiply",
-"Matrix multiplication from scratch",
-"Easy"
-],
-[
-"autotuned-matrix-multiplication",
-"Autotuned tiled matmul",
-"Medium"
-]
-],
 "ieng:00.02": [
 [
 "named-dimension-batched-attention-scores",
@@ -8324,11 +8832,16 @@
 "Easy"
 ]
 ],
-"air-fanout-v1:01.03": [
+"mlmaths:03.01": [
 [
 "outer-product",
 "Batched outer products",
 "Easy"
+],
+[
+"convex-polytope-membership",
+"Points inside a convex polytope",
+"Medium"
 ]
 ],
 "mlmaths:10.01": [
@@ -8469,72 +8982,6 @@
 "Hard"
 ]
 ],
-"air-fanout-v1:07.02": [
-[
-"softmax-boltzmann-exploration",
-"Boltzmann exploration with a temperature",
-"Easy"
-],
-[
-"discounted-returns",
-"Discounted returns across episode boundaries",
-"Easy"
-],
-[
-"reinforce-gradient",
-"REINFORCE gradient for a linear softmax policy",
-"Easy"
-],
-[
-"actor-critic-a2c-loss-with-entropy",
-"A2C loss with an entropy bonus, and its gradients",
-"Medium"
-],
-[
-"gae-advantages",
-"Generalized Advantage Estimation",
-"Medium"
-],
-[
-"reinforce-with-baseline",
-"REINFORCE with a time-dependent baseline",
-"Medium"
-],
-[
-"rloo-reinforce-leave-one-out",
-"RLOO: REINFORCE with a leave-one-out baseline",
-"Medium"
-]
-],
-"air-fanout-v1:03.07": [
-[
-"zeros-and-ones",
-"Border mask of width k",
-"Easy"
-],
-[
-"tensor-factory",
-"Build the helper tensors for a sequence batch",
-"Easy"
-],
-[
-"arange-and-linspace",
-"Inclusive float range",
-"Easy"
-]
-],
-"air-fanout-v1:03.01": [
-[
-"tensor-factory",
-"Build the helper tensors for a sequence batch",
-"Easy"
-],
-[
-"create-arrays-from-lists",
-"Pack ragged lists into a padded array",
-"Easy"
-]
-],
 "ieng:26.03": [
 [
 "clip-cosine-retrieval",
@@ -8609,38 +9056,6 @@
 "in-batch-softmax-logq",
 "Two-tower in-batch softmax with logQ correction",
 "Hard"
-]
-],
-"air-fanout-v1:03.05": [
-[
-"basic-indexing",
-"Centre crop with a stride",
-"Easy"
-],
-[
-"zero-pad-and-center-crop",
-"Centre pad-or-crop to a fixed size",
-"Easy"
-],
-[
-"functional-array-update",
-"Functional array updates with .at[]",
-"Easy"
-],
-[
-"mutation-trap",
-"Mask tokens without corrupting labels",
-"Easy"
-],
-[
-"cutmix-augmentation",
-"CutMix with area-corrected labels",
-"Medium"
-],
-[
-"fancy-indexing",
-"Embedding gradient with repeated ids",
-"Medium"
 ]
 ],
 "mlmaths:03.33": [
@@ -8754,73 +9169,6 @@
 "Hard"
 ]
 ],
-"air-fanout-v1:11.12": [
-[
-"missing-value-imputation",
-"Column-wise missing value imputation",
-"Easy"
-],
-[
-"transform-pipeline",
-"Compose an image transform pipeline",
-"Easy"
-],
-[
-"inspect-dataframe-shape",
-"First-look profile of a table",
-"Easy"
-],
-[
-"data-types-overview",
-"Group columns by data type",
-"Easy"
-],
-[
-"categorical-encoding",
-"One-hot encoding with rare and unseen categories",
-"Easy"
-],
-[
-"population-stability-index",
-"Population Stability Index for feature drift",
-"Easy"
-],
-[
-"perform-stable-exact-deduplication",
-"Stable exact deduplication of a text corpus",
-"Easy"
-],
-[
-"handle-missing-values",
-"Impute sensor gaps by station",
-"Medium"
-],
-[
-"change-data-types",
-"Parse a table that arrived as text",
-"Medium"
-],
-[
-"replace-values",
-"Standardise survey answers and sentinels",
-"Medium"
-],
-[
-"training-serving-skew",
-"Training/serving skew report",
-"Medium"
-],
-[
-"two-sample-ks-drift",
-"Two-sample Kolmogorov-Smirnov drift test",
-"Medium"
-],
-[
-"record-schema-validation",
-"Validate incoming records against a data contract",
-"Medium"
-]
-],
 "mlmaths:12.01": [
 [
 "sample-variance-and-standard-deviation",
@@ -8878,18 +9226,6 @@
 "Hard"
 ]
 ],
-"air-fanout-v1:04.08": [
-[
-"transform-pipeline",
-"Compose an image transform pipeline",
-"Easy"
-],
-[
-"vgg-convolution-block",
-"A VGG block: stacked 3x3 convs, then pool",
-"Medium"
-]
-],
 "sdsd:03.03": [
 [
 "where-clauses",
@@ -8897,7 +9233,7 @@
 "Easy"
 ]
 ],
-"air-fanout-v1:02.01": [
+"mlmaths:06.03": [
 [
 "cosine-similarity",
 "Cosine similarity of two vectors",
@@ -9007,55 +9343,6 @@
 "Hard"
 ]
 ],
-"air-fanout-v1:03.04": [
-[
-"reshaping-arrays",
-"Cut an image into flat patches",
-"Easy"
-],
-[
-"tensor-shape-manipulation",
-"Pixel shuffle with view and permute",
-"Easy"
-],
-[
-"vit-patchify",
-"ViT patch embedding with a class token",
-"Easy"
-],
-[
-"window-partition-and-reverse",
-"Shifted window partition and reverse",
-"Medium"
-],
-[
-"vision-transformer-patch-embedding",
-"ViT input: patches, projection, class token, positions",
-"Hard"
-]
-],
-"air-fanout-v1:03.03": [
-[
-"reshaping-arrays",
-"Cut an image into flat patches",
-"Easy"
-],
-[
-"image-normalize",
-"Normalise an image into a CHW tensor",
-"Easy"
-],
-[
-"tensor-shape-manipulation",
-"Pixel shuffle with view and permute",
-"Easy"
-],
-[
-"tiled-transpose",
-"Tiled matrix transpose",
-"Medium"
-]
-],
 "air-fanout-v1:01.06": [
 [
 "derivatives-of-common-activation-functions",
@@ -9122,68 +9409,6 @@
 "Easy"
 ]
 ],
-"air-fanout-v1:07.01": [
-[
-"discounted-returns",
-"Discounted returns across episode boundaries",
-"Easy"
-],
-[
-"bellman-expectation-equation",
-"Exact policy evaluation with the Bellman expectation equation",
-"Easy"
-],
-[
-"find-go-group-and-its-liberties",
-"Find a Go group and its liberties",
-"Easy"
-],
-[
-"sarsa-update",
-"SARSA along one trajectory",
-"Easy"
-],
-[
-"td-0-value-update",
-"TD(0) value updates from a transition stream",
-"Easy"
-],
-[
-"score-terminal-position-with-tromp-taylor-rules",
-"Area-score a finished Go board (Tromp-Taylor)",
-"Medium"
-],
-[
-"expected-sarsa",
-"Expected SARSA with an epsilon-greedy target",
-"Medium"
-],
-[
-"monte-carlo-policy-evaluation",
-"First-visit and every-visit Monte Carlo evaluation",
-"Medium"
-],
-[
-"policy-iteration",
-"Policy iteration",
-"Medium"
-],
-[
-"value-iteration",
-"Value iteration to convergence",
-"Medium"
-],
-[
-"build-legal-go-action-mask",
-"Legal-move mask for Go",
-"Hard"
-],
-[
-"apply-go-action-with-captures-and-repetition",
-"Play a Go move: captures, ko and superko",
-"Hard"
-]
-],
 "mlmaths:06.01": [
 [
 "dot-product",
@@ -9204,38 +9429,6 @@
 "vector-projection",
 "Project vectors onto a direction",
 "Easy"
-]
-],
-"air-fanout-v1:05.01": [
-[
-"evaluate-scalar-neuron",
-"Forward pass of one neuron with Value nodes",
-"Easy"
-],
-[
-"perceptron",
-"Perceptron until a clean epoch",
-"Easy"
-],
-[
-"build-scalar-neuron-module",
-"A Neuron module with shared parameters",
-"Medium"
-],
-[
-"backpropagate-through-scalar-neuron",
-"Backward closures for a tanh neuron",
-"Medium"
-],
-[
-"gradient-check-scalar-neuron",
-"Gradient-check a neuron's squared error",
-"Medium"
-],
-[
-"averaged-perceptron",
-"The averaged perceptron",
-"Medium"
 ]
 ],
 "mlmaths:10.25": [
@@ -9344,10 +9537,15 @@
 "Medium"
 ]
 ],
-"air-fanout-v1:01.04": [
+"mlmaths:09.21": [
 [
 "vanilla-gradient-descent",
 "Gradient descent on a quadratic bowl",
+"Easy"
+],
+[
+"jacobian-of-vector-valued-polynomial",
+"Jacobian of a polynomial map",
 "Easy"
 ],
 [
@@ -9379,18 +9577,6 @@
 "finite-difference-gradient-checking",
 "Gradient checking with central differences",
 "Medium"
-]
-],
-"mlmaths:09.21": [
-[
-"vanilla-gradient-descent",
-"Gradient descent on a quadratic bowl",
-"Easy"
-],
-[
-"jacobian-of-vector-valued-polynomial",
-"Jacobian of a polynomial map",
-"Easy"
 ],
 [
 "hessian-tensor-of-vector-valued-function",
@@ -9466,11 +9652,31 @@
 "Hard"
 ]
 ],
-"air-fanout-v1:01.09": [
+"mlmaths:09.28": [
 [
 "jacobian-of-vector-valued-polynomial",
 "Jacobian of a polynomial map",
 "Easy"
+],
+[
+"taylor-approximation-of-loss-landscape",
+"First- and second-order Taylor models of a logistic loss",
+"Medium"
+],
+[
+"hessian-tensor-of-vector-valued-function",
+"Hessian tensor of a gated linear unit",
+"Medium"
+],
+[
+"hessian-vector-product",
+"Hessian-vector products, forward over reverse",
+"Medium"
+],
+[
+"softmax-jacobian",
+"Jacobian of softmax",
+"Medium"
 ],
 [
 "softmax-cross-entropy-gradient",
@@ -9530,23 +9736,6 @@
 "Hard"
 ]
 ],
-"air-fanout-v1:04.23": [
-[
-"k-fold-cross-validation",
-"K-fold cross-validation splits",
-"Easy"
-],
-[
-"learning-rate-sweep",
-"Sweep the learning rate",
-"Easy"
-],
-[
-"fit-learning-rate-and-batch-size-scaling",
-"Fit learning-rate and batch-size scaling laws from sweeps",
-"Hard"
-]
-],
 "air-fanout-v1:01.12": [
 [
 "diagonal-gaussian-kl-divergence",
@@ -9603,73 +9792,6 @@
 [
 "multi-head-latent-attention-mla",
 "Multi-head latent attention with decoupled RoPE",
-"Hard"
-]
-],
-"air-fanout-v1:02.04": [
-[
-"lasso-regression",
-"Lasso by cyclic coordinate descent",
-"Easy"
-],
-[
-"pairwise-differences",
-"Manhattan distance matrix",
-"Easy"
-],
-[
-"vector-norms",
-"Overflow-safe p-norms",
-"Easy"
-],
-[
-"distance-metrics",
-"Pairwise distance matrices",
-"Easy"
-],
-[
-"ridge-regression",
-"Ridge regression with an unpenalised intercept",
-"Easy"
-],
-[
-"l2-vector-norm",
-"Row-wise L2 norm and normalization",
-"Easy"
-],
-[
-"gradient-clipping-global-norm-rescaling",
-"Clip gradients by their global norm",
-"Medium"
-],
-[
-"alphago-policy-value-loss",
-"Combined policy-value loss for self-play training",
-"Medium"
-],
-[
-"lasso-regression-using-ista",
-"Lasso regression with ISTA",
-"Medium"
-],
-[
-"subgradients-for-non-smooth-functions",
-"Minimum-norm subgradient of the lasso",
-"Medium"
-],
-[
-"loss-functions",
-"Robust regression losses and their gradients",
-"Medium"
-],
-[
-"adamw-decoupled-weight-decay",
-"AdamW vs Adam with L2",
-"Hard"
-],
-[
-"gradient-clipping",
-"Gradient clipping: value, global norm, adaptive",
 "Hard"
 ]
 ],
@@ -9824,135 +9946,6 @@
 "linear-combination",
 "Linear combinations of vectors",
 "Easy"
-]
-],
-"air-fanout-v1:05.05": [
-[
-"linear-warmup",
-"Linear warmup, then linear decay",
-"Easy"
-],
-[
-"sgd-with-momentum-over-pytree",
-"SGD with momentum over a nested pytree",
-"Easy"
-],
-[
-"optimizer-scheduler",
-"Step-decay learning rates with an optimizer and scheduler",
-"Easy"
-],
-[
-"learning-rate-sweep",
-"Sweep the learning rate",
-"Easy"
-],
-[
-"limit-of-learning-rate-schedule",
-"Where an exponential LR schedule settles",
-"Easy"
-],
-[
-"adagrad",
-"AdaGrad on least squares",
-"Medium"
-],
-[
-"cosine-annealing-with-warm-restarts",
-"Cosine annealing with warm restarts",
-"Medium"
-],
-[
-"gradient-descent-on-non-convex-loss",
-"Gradient descent from many starts on a non-convex loss",
-"Medium"
-],
-[
-"rmsprop",
-"RMSProp on the Rosenbrock valley",
-"Medium"
-],
-[
-"learning-rate-warmup-scheduler",
-"Warmup plus cosine decay with LambdaLR",
-"Medium"
-],
-[
-"traced-learning-rate-schedule",
-"Warmup-cosine schedule on a traced step",
-"Medium"
-],
-[
-"generate-warmup-stable-decay-schedule",
-"Warmup-stable-decay learning-rate schedule",
-"Medium"
-],
-[
-"lr-range-test-and-one-cycle-policy",
-"LR range test to a one-cycle schedule",
-"Hard"
-],
-[
-"custom-sgd-with-momentum",
-"SGD with momentum as a torch.optim.Optimizer",
-"Hard"
-],
-[
-"learning-rate-stability-and-convergence-bounds",
-"Step-size limits and convergence rate of gradient descent",
-"Hard"
-],
-[
-"train-tiny-micrograd-mlp",
-"Train a tiny MLP with your own autograd",
-"Hard"
-]
-],
-"air-fanout-v1:02.03": [
-[
-"pairwise-differences",
-"Manhattan distance matrix",
-"Easy"
-],
-[
-"masked-mean-without-boolean-indexing",
-"Masked statistics under jit, no boolean indexing",
-"Easy"
-],
-[
-"column-scaling",
-"Min-max scale each column",
-"Easy"
-],
-[
-"outer-sum",
-"Pair totals under a budget",
-"Easy"
-],
-[
-"distance-metrics",
-"Pairwise distance matrices",
-"Easy"
-],
-[
-"tensor-operations",
-"Standardise features with broadcasting",
-"Easy"
-],
-[
-"row-scaling",
-"Turn count rows into distributions",
-"Easy"
-],
-[
-"knn-classifier",
-"k-nearest-neighbours classifier",
-"Easy"
-],
-[
-"computational-graph-and-autograd",
-"Tensor autograd with broadcasting",
-"Medium"
 ]
 ],
 "mlmaths:04.06": [
@@ -10137,48 +10130,6 @@
 "Hard"
 ]
 ],
-"air-fanout-v1:05.06": [
-[
-"orthogonalize-muon-momentum-update",
-"Muon: orthogonalize a momentum update with Newton-Schulz",
-"Easy"
-],
-[
-"adamw",
-"AdamW over a pytree with a weight-decay mask",
-"Medium"
-],
-[
-"adam-step",
-"One Adam optimizer step",
-"Medium"
-],
-[
-"adam-optimizer",
-"Train logistic regression with Adam",
-"Medium"
-],
-[
-"adam-adamax-trajectories",
-"Adam, AdaMax and the bias correction: optimiser trajectories on a noisy quadratic",
-"Hard"
-],
-[
-"adamw-decoupled-weight-decay",
-"AdamW vs Adam with L2",
-"Hard"
-],
-[
-"optimizer-showdown",
-"Optimizer showdown on an ill-conditioned bowl",
-"Hard"
-],
-[
-"custom-sgd-with-momentum",
-"SGD with momentum as a torch.optim.Optimizer",
-"Hard"
-]
-],
 "ieng:04.06": [
 [
 "p50-p95-and-p99-inference-latency",
@@ -10198,7 +10149,7 @@
 "Hard"
 ]
 ],
-"air-fanout-v1:02.02": [
+"mlmaths:10.32": [
 [
 "softmax-rows",
 "Numerically stable softmax",
@@ -10313,23 +10264,6 @@
 "Medium"
 ]
 ],
-"air-fanout-v1:11.01": [
-[
-"population-stability-index",
-"Population Stability Index for feature drift",
-"Easy"
-],
-[
-"page-hinkley-drift",
-"Page-Hinkley test for streaming drift",
-"Medium"
-],
-[
-"training-serving-skew",
-"Training/serving skew report",
-"Medium"
-]
-],
 "mlmaths:06.13": [
 [
 "vector-projection",
@@ -10349,28 +10283,6 @@
 [
 "qr-decomposition",
 "Householder QR from scratch",
-"Hard"
-]
-],
-"air-fanout-v1:05.04": [
-[
-"rmsnorm-forward-pass",
-"RMSNorm in half precision, the way LLMs do it",
-"Easy"
-],
-[
-"rmsnorm-forward",
-"Fused residual add and RMSNorm",
-"Medium"
-],
-[
-"layer-normalization",
-"LayerNorm backward pass",
-"Medium"
-],
-[
-"norm-gated-linear-transform",
-"RMSNorm and gated MLP block",
 "Hard"
 ]
 ],
@@ -10448,62 +10360,11 @@
 "Hard"
 ]
 ],
-"air-fanout-v1:11.04": [
-[
-"hashed-dataset-split",
-"Reproducible train/val/test split by hashing ids",
-"Easy"
-]
-],
 "mlmaths:02.18": [
 [
 "filter-and-extract",
 "Rows inside a bounding box",
 "Easy"
-]
-],
-"air-fanout-v1:04.07": [
-[
-"model-ensemble-with-in-axes",
-"Run a model ensemble with vmap in_axes",
-"Easy"
-],
-[
-"bagging-classifier",
-"Bagging decision stumps",
-"Medium"
-],
-[
-"adaboost",
-"AdaBoost with decision stumps",
-"Hard"
-],
-[
-"random-forest",
-"Random forest classifier from scratch",
-"Hard"
-]
-],
-"air-fanout-v1:05.02": [
-[
-"activation-functions",
-"Seven activations, overflow-free",
-"Easy"
-],
-[
-"evaluate-dense-layer",
-"A dense layer of Value neurons",
-"Medium"
-],
-[
-"multi-layer-perceptron-forward-pass",
-"Forward pass of a configurable MLP",
-"Medium"
-],
-[
-"weight-initialization",
-"Xavier, He and LeCun initialisation",
-"Medium"
 ]
 ],
 "mlmaths:03.16": [
@@ -10528,13 +10389,6 @@
 "cholesky-decomposition",
 "Cholesky factorisation, solve and log-determinant",
 "Hard"
-]
-],
-"air-fanout-v1:03.08": [
-[
-"tensor-operations",
-"Standardise features with broadcasting",
-"Easy"
 ]
 ],
 "ieng:15.03": [
@@ -10689,38 +10543,6 @@
 "als-explicit-sweep",
 "One ALS sweep for explicit-rating matrix factorisation",
 "Hard"
-]
-],
-"air-fanout-v1:01.11": [
-[
-"log-loss-binary-cross-entropy",
-"Weighted binary log loss",
-"Easy"
-],
-[
-"decision-tree-classifier-cart",
-"CART decision tree classifier (Gini)",
-"Medium"
-],
-[
-"alphago-policy-value-loss",
-"Combined policy-value loss for self-play training",
-"Medium"
-],
-[
-"kl-divergence-discrete-and-continuous",
-"KL divergence: categorical and Gaussian",
-"Medium"
-],
-[
-"variational-autoencoder-forward-pass",
-"VAE forward pass and the ELBO",
-"Medium"
-],
-[
-"t-sne-affinity-matrix",
-"t-SNE input affinities with a perplexity search",
-"Medium"
 ]
 ],
 "ieng:18.03": [
@@ -10879,43 +10701,6 @@
 [
 "moe-token-dispatch-and-expert-aggregation",
 "MoE dispatch with expert capacity and weighted combine",
-"Hard"
-]
-],
-"air-fanout-v1:01.14": [
-[
-"batch-normalization",
-"BatchNorm in train and eval mode",
-"Medium"
-],
-[
-"exponential-moving-average-with-scan",
-"Bias-corrected EMA with resets via lax.scan",
-"Medium"
-],
-[
-"classical-momentum",
-"Gradient descent with momentum",
-"Medium"
-],
-[
-"nesterov-momentum",
-"Nesterov accelerated gradient",
-"Medium"
-],
-[
-"rmsprop",
-"RMSProp on the Rosenbrock valley",
-"Medium"
-],
-[
-"tile-and-diff",
-"Remove seasonality, then difference",
-"Medium"
-],
-[
-"lr-range-test-and-one-cycle-policy",
-"LR range test to a one-cycle schedule",
 "Hard"
 ]
 ],
@@ -11135,38 +10920,6 @@
 "subqueries",
 "Models missing a safety eval (subqueries and the NOT IN trap)",
 "Medium"
-]
-],
-"mlmaths:09.28": [
-[
-"taylor-approximation-of-loss-landscape",
-"First- and second-order Taylor models of a logistic loss",
-"Medium"
-],
-[
-"hessian-tensor-of-vector-valued-function",
-"Hessian tensor of a gated linear unit",
-"Medium"
-],
-[
-"hessian-vector-product",
-"Hessian-vector products, forward over reverse",
-"Medium"
-],
-[
-"softmax-jacobian",
-"Jacobian of softmax",
-"Medium"
-],
-[
-"jacobian-of-neural-network-layer",
-"Every Jacobian of a tanh layer",
-"Hard"
-],
-[
-"jvp-and-vjp-for-2-layer-network",
-"JVPs and VJPs through a two-layer MLP",
-"Hard"
 ]
 ],
 "mlmaths:10.35": [
@@ -11433,13 +11186,6 @@
 "Hard"
 ]
 ],
-"mlmaths:03.01": [
-[
-"convex-polytope-membership",
-"Points inside a convex polytope",
-"Medium"
-]
-],
 "sdsd:02.09": [
 [
 "retry-backoff-schedule",
@@ -11480,7 +11226,7 @@
 "Hard"
 ]
 ],
-"air-fanout-v1:01.13": [
+"mlmaths:07.08": [
 [
 "spectral-norm-by-power-iteration",
 "Spectral norm by power iteration with fori_loop",
@@ -11551,18 +11297,6 @@
 [
 "switch-ffn-layer-top1",
 "Switch Transformer layer: top-1 routing, expert capacity and the balance loss",
-"Hard"
-]
-],
-"air-fanout-v1:03.06": [
-[
-"u-net-skip-connection",
-"U-Net decoder step: upsample, align, concatenate",
-"Medium"
-],
-[
-"concat-and-correlate",
-"Best lag by cross-correlation",
 "Hard"
 ]
 ],
@@ -11658,13 +11392,6 @@
 "Hard"
 ]
 ],
-"air-fanout-v1:04.25": [
-[
-"sequence-to-sequence-forward-pass",
-"Encoder-decoder RNN with teacher forcing",
-"Hard"
-]
-],
 "ieng:16.03": [
 [
 "perform-exact-speculative-sampling",
@@ -11734,13 +11461,6 @@
 "Hard"
 ]
 ],
-"air-fanout-v1:04.09": [
-[
-"inception-module",
-"Inception module with 1x1 reductions",
-"Hard"
-]
-],
 "ieng:20.03": [
 [
 "multi-head-latent-attention-mla",
@@ -11752,13 +11472,6 @@
 [
 "multi-token-prediction-loss",
 "Multi-token prediction loss with sequential modules",
-"Hard"
-]
-],
-"air-fanout-v1:04.13": [
-[
-"gan-training-step",
-"One GAN training step, gradients by hand",
 "Hard"
 ]
 ],
@@ -11797,13 +11510,6 @@
 [
 "speculative-decoding-and-token-verification",
 "Speculative decoding: verify draft tokens by rejection sampling",
-"Hard"
-]
-],
-"air-fanout-v1:11.06": [
-[
-"unstack-long-to-wide",
-"Training-log metrics from long to wide",
 "Hard"
 ]
 ]

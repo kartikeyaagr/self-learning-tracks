@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Topological order of a Value graph', tags=['Neural Networks'], diff='Medium', runtime='python',
-            lessons=['air-fanout-v1:01.08'],
+            lessons=['dlcore:01.04'],
             related=['trace-reachable-expression-graph', 'run-reverse-mode-autodiff', 'backpropagation-through-computation-graph'])
 
 STATEMENT = r"""

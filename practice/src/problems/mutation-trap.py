@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Mask tokens without corrupting labels', tags=['NLP', 'Data Processing'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:03.05'], related=['fancy-indexing', 'basic-indexing'])
+            lessons=['mltk:01.02'], related=['fancy-indexing', 'basic-indexing'])
 
 STATEMENT = r"""
 Masked language modelling trains a model to recover hidden tokens. From a batch of token ids you build two arrays:

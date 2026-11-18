@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Robust regression losses and their gradients', tags=['Loss Functions', 'Regression'], diff='Medium',
-            runtime='numpy', lessons=['air-fanout-v1:02.04'],
+            runtime='numpy', lessons=['mlmaths:14.06'],
             related=['cross-entropy-logits', 'log-loss-binary-cross-entropy', 'regression-metrics'])
 
 STATEMENT = r"""

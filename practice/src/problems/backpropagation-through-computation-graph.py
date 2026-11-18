@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Reverse-mode backprop over a computation graph', tags=['Neural Networks', 'Calculus'], diff='Hard',
-            runtime='numpy', lessons=['air-fanout-v1:01.08', 'air-fanout-v1:01.07'],
+            runtime='numpy', lessons=['dlcore:01.04', 'mlmaths:09.18'],
             related=['forward-mode-autodiff-with-dual-numbers', 'chain-rule-through-3-layer-network',
                      'jvp-and-vjp-for-2-layer-network'])
 

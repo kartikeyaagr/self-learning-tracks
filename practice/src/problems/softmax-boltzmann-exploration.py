@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Boltzmann exploration with a temperature', tags=['Reinforcement Learning', 'Probability'], diff='Easy',
-            runtime='numpy', lessons=['air-fanout-v1:07.02'],
+            runtime='numpy', lessons=['dlcore:08.06'],
             related=['epsilon-greedy-action-selection', 'softmax-rows', 'expected-sarsa'])
 
 STATEMENT = r"""

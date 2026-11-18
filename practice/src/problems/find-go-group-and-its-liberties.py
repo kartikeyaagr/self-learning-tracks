@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Find a Go group and its liberties', tags=['Reinforcement Learning'], diff='Easy', runtime='numpy',
-            lessons=['air-fanout-v1:07.01'],
+            lessons=['dlcore:08.01'],
             related=['score-terminal-position-with-tromp-taylor-rules', 'build-legal-go-action-mask'])
 
 STATEMENT = r"""
