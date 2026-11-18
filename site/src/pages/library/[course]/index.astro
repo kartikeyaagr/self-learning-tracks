@@ -25,7 +25,7 @@ const byN = Object.fromEntries(modules.map(m => [m.n, m]));
   {course.parts.map((P, pi) => <>
     <div class="parth"><span class="lab">Part {pi + 1}</span><h3>{P.t}</h3></div>
     <div class="mods">{P.m.map(n => byN[n]).filter(Boolean).map(m => (
-      <a class="card mcard" href={u(`/library/${courseId}/${m.slug}/`)}>
+      <a class="card mcard" href={u(`/library/${courseId}/${m.slug}/`)} data-mn={m.n}>
         <div class="tp"><span class="lab">Module {m.n}</span></div>
         <h4>{m.name}</h4>
         <div class="seg" aria-hidden="true">{m.lessons.map(l => <i data-lk={key(l.data.id)}></i>)}</div>
@@ -40,7 +40,9 @@ const byN = Object.fromEntries(modules.map(m => [m.n, m]));
     const n = order.filter(([k]) => done[k]).length, nx = order.find(([k]) => !done[k]);
     document.getElementById('cnt').textContent = `${n} / ${order.length} lessons`;
     if (n && nx) { const c = document.getElementById('cont'); c.href = nx[2]; c.querySelector('h3').textContent = nx[1]; c.querySelector('.lab').textContent = 'Continue'; c.querySelector('.btn').firstChild.textContent = 'Continue '; }
-    document.querySelectorAll('.seg i[data-lk]').forEach(i => { if (done[i.dataset.lk]) i.classList.add('on'); });
+    const out = n => st.place?.modules?.[n] === 'skip';                 // placement (game.js placed()): no XP, shown as done
+    document.querySelectorAll('.seg i[data-lk]').forEach(i => { if (done[i.dataset.lk] || out(i.dataset.lk.slice(0, 2))) i.classList.add('on'); });
+    document.querySelectorAll('.mcard[data-mn]').forEach(a => { if (out(a.dataset.mn)) a.querySelector('.tp .lab').textContent += ' · Placed out'; });
     });
   </script>
 </Site>

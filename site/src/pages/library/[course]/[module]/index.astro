@@ -35,7 +35,9 @@ const plans = course.plans?.[m.n] || [];
   <script define:vars={{ courseKey: course.key, ks: m.lessons.map(l => key(l.data.id)) }}>
     // runs after the store module has loaded (module scripts run before DOMContentLoaded)
     document.addEventListener('DOMContentLoaded', () => {
-    const done = window.__store.ns(courseKey).done || {};
+    const st = window.__store.ns(courseKey), out = st.place?.modules?.[ks[0]?.slice(0, 2)] === 'skip';   // placement (game.js placed())
+    const done = out ? Object.fromEntries(ks.map(k => [k, true])) : st.done || {};
+    if (out) document.querySelector('.lab').textContent += ' · Placed out';
     document.querySelectorAll('.pnode').forEach((a, i) => { if (done[ks[i]]) { a.classList.add('done'); a.querySelector('.o').textContent = '✓'; } });
     const cur = document.querySelectorAll('.pnode')[ks.findIndex(k => !done[k])]; if (cur) cur.classList.add('cur');
     });

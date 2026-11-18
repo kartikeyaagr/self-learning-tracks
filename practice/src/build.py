@@ -1,6 +1,6 @@
 # /// script
 # requires-python = "==3.13.*"
-# dependencies = ["numpy==2.2.*", "pandas==2.3.*", "torch>=2.6", "jax[cpu]>=0.6", "numba>=0.61", "numba-cuda>=0.10"]
+# dependencies = ["numpy==2.2.*", "pandas==2.3.*", "torch>=2.6", "jax[cpu]>=0.6", "numba>=0.61", "numba-cuda>=0.10", "scipy==1.14.*"]
 # ///
 # Versions match the browser runtime (Pyodide 0.29.5: Python 3.13, numpy 2.2, pandas 2.3) so expected outputs agree.
 """Build the Practice track: verify every problem, then write the site files.
@@ -270,7 +270,8 @@ def main():
     # index.json: everything the Practice pages list (problem bodies stay in data/<slug>.json)
     (WEB / 'index.json').write_text(json.dumps({'topics': data, 'parts': [pn for pn, _ in PARTS], 'plans': plans, 'builds': builds,
                                                 'rounds': rounds}, ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
-    for f in ('runner.js', 'harness.py', 'shapetrace.py'):                   # the in-browser runner and the grader it shares with this build
+    pt, pg = placement()
+    for f in ('runner.js', 'harness.py', 'shapetrace.py', 'placement.py'):   # the in-browser runner and the graders it shares with this build
         (WEB / f).write_text((OUT / f).read_text(encoding='utf-8'), encoding='utf-8')
 
     # links.json: "trackkey:lessonid" -> [[slug, title, difficulty]], for "Practice this" on lesson pages
@@ -290,6 +291,7 @@ def main():
     print(f"routes: {len(rt['concepts'])} concepts · {len(rt['destinations'])} destinations · {len(rt['sets'])} sets "
           f"({sum(1 for x in rt['sets'] if x['boss'])} with a boss) · "
           f"{sum(1 for p in probs if p['theory'])}/{len(probs)} problems link theory")
+    print(f"placement: {len(pt)} tasks · {sum(len(g['questions']) for g in pg)} module questions")
 
 
 def load_plan(path, ids):
@@ -497,6 +499,47 @@ def routes(lessons, ids, round_ids, plans, probs=None):
     return {'stages': STAGES, 'courses': info, 'rounds': rounds, 'concepts': out_c, 'destinations': dests, 'sets': sets}
 
 
+PLACEMENT_MODULES = [f'{i:02d}' for i in range(1, 17)]   # ML Maths modules 01-16
+
+
+def placement():
+    """ML Maths placement (placement/mlmaths/): T*.py coding tasks and mcq.json question groups, graded in the browser by
+    practice/placement.py. Ships only if every SOLUTION passes its CHECK, every STARTER fails it, and every module is tested."""
+    import tempfile
+    import placement as P
+    d, tasks = SRC / 'placement' / 'mlmaths', []
+    def mcq_ok(q, where):
+        assert isinstance(q.get('q'), str) and q['q'].strip(), f'{where}: missing q'
+        assert isinstance(q.get('options'), list) and 3 <= len(q['options']) <= 5, f'{where}: 3-5 options'
+        assert isinstance(q.get('answer'), int) and 0 <= q['answer'] < len(q['options']), f'{where}: answer must index options'
+        assert isinstance(q.get('why'), str) and q['why'].strip(), f'{where}: missing why'
+    with tempfile.TemporaryDirectory() as tmp:
+        for f in sorted(d.glob('T*.py')):
+            m, where = load(f), f'placement/mlmaths/{f.name}'
+            for k in ('TITLE', 'MODULES', 'STATEMENT', 'STARTER', 'CHECK', 'SOLUTION', 'MCQ'):
+                assert hasattr(m, k), f'{where}: missing {k}'
+            assert m.MODULES and set(m.MODULES) <= set(PLACEMENT_MODULES), f'{where}: MODULES must be ML Maths module numbers'
+            r = P.grade(m.SOLUTION, m.CHECK, f'{tmp}/user.py')
+            assert r['ok'], f"{where}: SOLUTION fails its check: {r['msg']}"
+            assert not P.grade(m.STARTER, m.CHECK, f'{tmp}/user.py')['ok'], f'{where}: STARTER passes its check'
+            assert len(m.MCQ) == 2, f'{where}: two follow-up questions'
+            for i, q in enumerate(m.MCQ):
+                mcq_ok(q, f'{where} MCQ {i + 1}')
+            tasks.append({'id': f.stem, 'title': m.TITLE, 'modules': m.MODULES, 'statement': m.STATEMENT.strip(),
+                          'starter': m.STARTER, 'check': m.CHECK, 'mcq': m.MCQ})
+    groups = json.loads((d / 'mcq.json').read_text(encoding='utf-8'))['groups']
+    for g in groups:
+        where = f"placement/mlmaths/mcq.json {g.get('module')}"
+        assert g.get('module') in PLACEMENT_MODULES and len(g.get('questions', [])) == 3, f'{where}: module + three questions'
+        for i, q in enumerate(g['questions']):
+            mcq_ok(q, f'{where} Q{i + 1}')
+    missing = set(PLACEMENT_MODULES) - {n for t in tasks for n in t['modules']} - {g['module'] for g in groups}
+    assert not missing, f'placement: modules with no task or questions: {sorted(missing)}'
+    (WEB / 'placement-mlmaths.json').write_text(json.dumps({'tasks': tasks, 'groups': groups}, ensure_ascii=False,
+                                                          separators=(',', ':')), encoding='utf-8')
+    return tasks, groups
+
+
 def check(paths):
     """Verify only the given problem/plan files and write nothing, so parallel authors can't clash.
     Related slugs and plan entries may point at any problem file that exists on disk."""
@@ -536,7 +579,9 @@ def check(paths):
 
 
 if __name__ == '__main__':
-    if sys.argv[1:2] == ['--check']:
+    if sys.argv[1:2] == ['--placement']:              # verify the placement test only (writes placement-mlmaths.json)
+        tasks, groups = placement(); print(f'placement OK: {len(tasks)} tasks, {len(groups)} question groups')
+    elif sys.argv[1:2] == ['--check']:
         check(sys.argv[2:])
     else:
         main()

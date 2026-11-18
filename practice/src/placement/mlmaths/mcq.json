@@ -1,0 +1,238 @@
+{
+ "groups": [
+  {
+   "module": "01",
+   "title": "Sets",
+   "questions": [
+    {
+     "q": "Let $A = (0, 1]$. Which statement is true?",
+     "options": [
+      "$\\max A = 1$ and $\\min A = 0$.",
+      "$A$ has neither a maximum nor a minimum, because it is an interval of real numbers.",
+      "$\\sup A = \\max A = 1$; $\\inf A = 0$, but $A$ has no minimum.",
+      "$\\sup A = 1$, but $A$ has no maximum, because 1 is a boundary point of $A$."
+     ],
+     "answer": 2,
+     "why": "1 is in $A$ and bounds it above, so it is both the supremum and the maximum. 0 is the greatest lower bound but is not in $A$, and every $a \\in A$ has $a/2 \\in A$ below it, so there is no minimum."
+    },
+    {
+     "q": "Of 1,000 training examples, a toxicity filter flags 120, a PII filter flags 80, and 30 are flagged by both. How many are flagged by neither?",
+     "options": [
+      "830",
+      "800",
+      "770",
+      "970"
+     ],
+     "answer": 0,
+     "why": "$|A \\cup B| = |A| + |B| - |A \\cap B| = 120 + 80 - 30 = 170$ are flagged by at least one filter, leaving $1000 - 170 = 830$. Subtracting 200 counts the 30 overlapping examples twice."
+    },
+    {
+     "q": "Per-token losses are $\\ell = [2.0, 1.0, 3.0, 0.5]$ and the padding mask is $m = [1, 1, 0, 0]$ (1 marks a real token). What is the correct mean loss?",
+     "options": [
+      "0.75, from $\\sum_i m_i \\ell_i / 4$.",
+      "1.625, the mean of all four losses.",
+      "1.75, the mean over the padded positions.",
+      "1.5, from $\\sum_i m_i \\ell_i / \\sum_i m_i$."
+     ],
+     "answer": 3,
+     "why": "The indicator $m$ zeroes the padded losses and its sum counts the real tokens: $(2.0 + 1.0)/2 = 1.5$. Dividing by the sequence length would let the amount of padding change the loss scale."
+    }
+   ]
+  },
+  {
+   "module": "02",
+   "title": "Logic",
+   "questions": [
+    {
+     "q": "Claim: \"If a model is calibrated, its ECE is below 0.02.\" Which statement is logically equivalent to it?",
+     "options": [
+      "If its ECE is below 0.02, the model is calibrated.",
+      "If its ECE is at least 0.02, the model is not calibrated.",
+      "If the model is not calibrated, its ECE is at least 0.02.",
+      "The model is calibrated if and only if its ECE is below 0.02."
+     ],
+     "answer": 1,
+     "why": "Only the contrapositive $\\lnot q \\Rightarrow \\lnot p$ has the same truth table as $p \\Rightarrow q$. The converse and the inverse are equivalent to each other, not to the claim, and the \\\"if and only if\\\" adds the converse on top."
+    },
+    {
+     "q": "Over the real numbers, compare $S_1$: $\\forall x\\, \\exists y: y > x$ and $S_2$: $\\exists y\\, \\forall x: y > x$. Which is right?",
+     "options": [
+      "Both are true: they make the same claim in a different order.",
+      "$S_1$ is false and $S_2$ is true.",
+      "Both are false, because there is no largest real number.",
+      "$S_1$ is true (take $y = x + 1$, which depends on $x$); $S_2$ is false (no single $y$ beats every $x$; try $x = y$)."
+     ],
+     "answer": 3,
+     "why": "In $S_1$, $y$ is chosen after $x$, so it may depend on $x$. $S_2$ needs one $y$ that works for every $x$, and $x = y$ is a counterexample."
+    },
+    {
+     "q": "You choose the model $\\hat h$ with the lowest training error from a class $H$. Which guarantee bounds the true error of $\\hat h$?",
+     "options": [
+      "With probability at least $1 - \\delta$ over the sample, for all $h \\in H$: $|\\mathrm{err}(h) - \\widehat{\\mathrm{err}}(h)| \\le \\varepsilon$.",
+      "For all $h \\in H$, with probability at least $1 - \\delta$ over the sample: $|\\mathrm{err}(h) - \\widehat{\\mathrm{err}}(h)| \\le \\varepsilon$.",
+      "There is an $h \\in H$ such that, with probability at least $1 - \\delta$, $|\\mathrm{err}(h) - \\widehat{\\mathrm{err}}(h)| \\le \\varepsilon$.",
+      "Either of the first two: the order of \"for all\" and \"with probability\" does not matter."
+     ],
+     "answer": 0,
+     "why": "With \\\"for all $h$\\\" inside the probability, one high-probability event covers every $h$ at once, including the one picked using the data. With \\\"for all $h$\\\" outside, each fixed $h$ gets its own event, and the data-chosen $\\hat h$ is not a fixed $h$."
+    }
+   ]
+  },
+  {
+   "module": "13",
+   "title": "Statistics and experiments",
+   "questions": [
+    {
+     "q": "A two-sided test gives $p = 0.03$. Which statement is correct?",
+     "options": [
+      "There is a 3% probability that $H_0$ is true.",
+      "There is a 97% probability that the effect is real.",
+      "If $H_0$ were true, a test statistic at least this extreme would turn up in about 3% of repeated experiments.",
+      "The effect is large enough to matter, since $p < 0.05$."
+     ],
+     "answer": 2,
+     "why": "A p-value is computed assuming $H_0$, so it describes the data given $H_0$, not $H_0$ given the data. It also says nothing about effect size; report the estimate with its confidence interval."
+    },
+    {
+     "q": "A classifier gets 82% accuracy on 400 independent test examples. What is the approximate half-width of a 95% confidence interval for its accuracy?",
+     "options": [
+      "About 0.02",
+      "About 0.04",
+      "About 0.08",
+      "About 0.004"
+     ],
+     "answer": 1,
+     "why": "$\\mathrm{SE} = \\sqrt{0.82 \\times 0.18 / 400} \\approx 0.019$, and $1.96 \\times 0.019 \\approx 0.038$. 0.02 is one standard error, not the 95% half-width."
+    },
+    {
+     "q": "Two models are scored on the same 1,000 test examples: 85.0% versus 86.0% accuracy. What is the most appropriate way to judge whether the gap is real?",
+     "options": [
+      "Bootstrap each model's accuracy separately and check whether the two 95% intervals overlap.",
+      "A Welch two-sample t-test on the two columns of per-example scores.",
+      "A chi-square test on each model's number of correct answers, treating all 2,000 predictions as independent.",
+      "A paired analysis: bootstrap the per-example differences, or use McNemar's test on the examples where the models disagree."
+     ],
+     "answer": 3,
+     "why": "Both models see the same examples, so example difficulty is shared and cancels in per-example differences, which gives a much tighter interval. Methods that treat the two columns as independent ignore the pairing and are far too conservative."
+    }
+   ]
+  },
+  {
+   "module": "14",
+   "title": "Optimization for ML",
+   "questions": [
+    {
+     "q": "Plain gradient descent on a quadratic whose Hessian has eigenvalues 0.5 and 50. Which statement is right?",
+     "options": [
+      "The step must satisfy $\\eta < 2/0.5 = 4$, since the flattest direction limits the step; $\\eta = 1$ converges in a few steps.",
+      "The step must satisfy $\\eta < 2/50 = 0.04$; with $\\eta = 1/50$ the flat direction shrinks by a factor 0.99 per step, so about $100 \\ln(1/\\varepsilon)$ steps are needed.",
+      "Any $\\eta > 0$ converges, because the function is convex.",
+      "The step must satisfy $\\eta < 0.04$; with $\\eta = 1/50$ it needs about $\\sqrt{100}\\,\\ln(1/\\varepsilon) = 10 \\ln(1/\\varepsilon)$ steps."
+     ],
+     "answer": 1,
+     "why": "Each eigendirection is multiplied by $1 - \\eta\\lambda$ per step, so stability needs $|1 - 50\\eta| < 1$. With $\\eta = 1/L$ the flat direction contracts by $1 - 1/\\kappa = 0.99$, about $\\kappa \\ln(1/\\varepsilon)$ steps; $\\sqrt\\kappa$ scaling needs tuned momentum."
+    },
+    {
+     "q": "You switch on heavy-ball momentum with $\\beta = 0.9$, keeping the learning rate tuned for plain SGD, and training diverges. Why, and what is the usual fix?",
+     "options": [
+      "Under a steady gradient the step settles at $\\eta/(1 - \\beta) = 10\\eta$: the effective learning rate jumped tenfold. Divide $\\eta$ by about 10.",
+      "Momentum adds 0.9 times the gradient noise to every step; increase the batch size.",
+      "Momentum makes the effective learning rate $0.9\\eta$, which slows training but cannot cause divergence, so the problem must be in the data.",
+      "$\\beta = 0.9$ averages too few gradients; raise it to 0.99."
+     ],
+     "answer": 0,
+     "why": "The velocity settles where $v = \\beta v - \\eta g$, so $v = -\\eta g/(1 - \\beta)$. With $\\beta = 0.9$ that is 10 times the plain SGD step, which pushes a step size near the stability limit far past it."
+    },
+    {
+     "q": "How does adding $\\frac{\\lambda}{2}\\lVert\\theta\\rVert^2$ to the loss and training with Adam differ from AdamW with decay $\\lambda$?",
+     "options": [
+      "They are identical: an L2 penalty and weight decay are the same thing for every optimizer.",
+      "AdamW applies the decay only to biases and normalisation weights; Adam with L2 applies it to every parameter.",
+      "In Adam the penalty gradient $\\lambda\\theta$ is divided by $\\sqrt{\\hat v}$, so weights with large gradients are barely regularised; AdamW applies $\\theta \\leftarrow \\theta - \\eta\\lambda\\theta$ directly, outside the adaptive scaling.",
+      "Bias correction applies Adam's L2 penalty twice per step, so it regularises twice as strongly as AdamW."
+     ],
+     "answer": 2,
+     "why": "L2 and weight decay coincide only for plain SGD. Adam's per-coordinate scaling also rescales the penalty gradient, which AdamW avoids by decoupling the decay from the adaptive update."
+    }
+   ]
+  },
+  {
+   "module": "15",
+   "title": "Information theory for ML",
+   "questions": [
+    {
+     "q": "A source emits three symbols with probabilities $(\\tfrac12, \\tfrac14, \\tfrac14)$. What is its entropy, and what is the best possible average code length?",
+     "options": [
+      "$\\log_2 3 \\approx 1.585$ bits, because there are three symbols.",
+      "2 bits, because naming one of three symbols takes 2 bits.",
+      "1 bit, the surprise of the most likely symbol.",
+      "1.5 bits; the prefix code 0, 10, 11 achieves exactly 1.5 bits per symbol."
+     ],
+     "answer": 3,
+     "why": "$H = \\tfrac12 \\cdot 1 + \\tfrac14 \\cdot 2 + \\tfrac14 \\cdot 2 = 1.5$ bits. Here $-\\log_2 p$ is a whole number for every symbol, so a code meets the bound exactly. $\\log_2 3$ is the maximum, reached only by the uniform distribution."
+    },
+    {
+     "q": "A language model's average cross-entropy on held-out text is 2.0 nats per token. What is its perplexity?",
+     "options": [
+      "About 7.4 ($e^{2}$)",
+      "4 ($2^{2}$)",
+      "2",
+      "100 ($10^{2}$)"
+     ],
+     "answer": 0,
+     "why": "Perplexity is $\\exp$ of the cross-entropy in nats: $e^{2} \\approx 7.39$, as if the model were choosing uniformly among about 7.4 tokens. $2^2 = 4$ would be right only if the 2.0 were in bits."
+    },
+    {
+     "q": "You fit a single Gaussian $q$ to a bimodal distribution $p$. How do minimising forward KL $D_{\\mathrm{KL}}(p \\,\\|\\, q)$ and reverse KL $D_{\\mathrm{KL}}(q \\,\\|\\, p)$ differ?",
+     "options": [
+      "They give the same $q$, because KL is a distance.",
+      "Forward KL locks onto one mode; reverse KL spreads $q$ across both.",
+      "Forward KL spreads $q$ to cover both modes (putting mass between them); reverse KL lets $q$ settle on one mode.",
+      "Forward KL is infinite for every Gaussian $q$, so only reverse KL can be minimised."
+     ],
+     "answer": 2,
+     "why": "Forward KL averages $\\log(p/q)$ under $p$, so $q$ must be large wherever $p$ is, which forces it to cover both modes. Reverse KL averages under $q$, so it penalises mass where $p$ is small, and sitting on one mode is cheapest."
+    }
+   ]
+  },
+  {
+   "module": "16",
+   "title": "Graph theory for ML",
+   "questions": [
+    {
+     "q": "The Laplacian $L = D - A$ of a 10-node undirected graph has eigenvalue 0 with multiplicity 3. What can you conclude?",
+     "options": [
+      "The graph has exactly 3 isolated nodes.",
+      "The graph has exactly 3 connected components.",
+      "The graph is connected, and 3 is its number of cycles.",
+      "$L$ is not positive semi-definite, so some edge weights must be negative."
+     ],
+     "answer": 1,
+     "why": "The multiplicity of eigenvalue 0 equals the number of connected components: each component's indicator vector $x$ gives $x^\\top L x = \\sum_{(i,j) \\in E} (x_i - x_j)^2 = 0$. The components need not be single nodes."
+    },
+    {
+     "q": "In the triangle graph (3 nodes, every pair joined), what is $(A^3)_{12}$?",
+     "options": [
+      "1",
+      "2",
+      "6",
+      "3"
+     ],
+     "answer": 3,
+     "why": "$(A^3)_{12}$ counts walks of length 3 from node 1 to node 2: $1 \\to 2 \\to 1 \\to 2$, $1 \\to 2 \\to 3 \\to 2$ and $1 \\to 3 \\to 1 \\to 2$. In matrix form, $A = J - I$ gives $A^3 = 3J - I$."
+    },
+    {
+     "q": "You stack 32 GCN layers $H' = \\sigma(\\hat A H W)$ to capture long-range structure, and node-classification accuracy collapses. What is the most likely cause?",
+     "options": [
+      "Over-smoothing: $\\hat A$ is a low-pass filter, and applying it 32 times pushes node states in a connected component toward the same direction, so classes become indistinguishable.",
+      "The receptive field shrinks with depth, so deep layers see only the node itself.",
+      "$\\hat A$ has eigenvalues above 1, so repeated application makes the activations explode.",
+      "Message passing cannot reach nodes more than 2 hops away, whatever the depth."
+     ],
+     "answer": 0,
+     "why": "Each layer averages a node with its neighbours, so $L$ layers reach $L$ hops, but repeated averaging converges toward the top eigenvector of $\\hat A$ and washes out node-specific features. The normalised $\\hat A$ has eigenvalues in $(-1, 1]$, so it does not explode."
+    }
+   ]
+  }
+ ]
+}
