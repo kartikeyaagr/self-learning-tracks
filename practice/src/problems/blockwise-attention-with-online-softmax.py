@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Blockwise attention with online softmax in lax.scan', tags=['Attention', 'JAX', 'Inference'],
-            diff='Hard', runtime='jax', lessons=['ieng:14.02', 'aieng:06.03'],
+            diff='Hard', runtime='jax', lessons=['ieng:14.02', 'ieng:14.03'],
             related=['scaled-dot-product-attention', 'batched-attention-with-vmap', 'paged-kv-cache-gather'], tol=[1e-4, 1e-5])
 
 STATEMENT = r"""

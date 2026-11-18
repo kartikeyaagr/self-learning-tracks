@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Attention with learned sink logits', tags=['Attention'], diff='Medium', runtime='numpy',
-            lessons=['aieng:04.02', 'aieng:07.02'],
+            lessons=['aieng:04.02', 'aieng:04.04'],
             related=['scaled-dot-product-attention', 'causal-grouped-query-attention', 'softmax-numerical-stability-and-log-sum-exp'])
 
 STATEMENT = r"""

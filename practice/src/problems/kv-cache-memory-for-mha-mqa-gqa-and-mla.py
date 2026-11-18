@@ -1,5 +1,5 @@
 META = dict(title='KV cache size for MHA, MQA, GQA and MLA', tags=['Inference', 'Attention'], diff='Easy', runtime='python',
-            lessons=['ieng:03.06', 'aieng:06.04'],
+            lessons=['ieng:03.06'],
             related=['multi-query-attention-mqa', 'multi-head-latent-attention-mla', 'estimate-model-memory-and-minimum-gpu-count'])
 
 STATEMENT = r"""

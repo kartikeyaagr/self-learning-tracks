@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Blockwise online softmax with masked blocks', tags=['GPU Programming', 'Attention'], diff='Hard',
-            runtime='numpy', lessons=['ieng:14.02', 'aieng:06.03'],
+            runtime='numpy', lessons=['ieng:14.02', 'ieng:14.03'],
             related=['online-softmax', 'flashattention-with-online-softmax', 'softmax-numerical-stability-and-log-sum-exp'])
 
 STATEMENT = r"""

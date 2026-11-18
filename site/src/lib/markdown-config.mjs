@@ -3,6 +3,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import remarkDiagrams from '../plugins/remark-diagrams.mjs';
 import rehypeTables from '../plugins/rehype-tables.mjs';
-export const remarkPlugins = [remarkMath, remarkDiagrams];
+import remarkLessonLinks from '../plugins/remark-lesson-links.mjs';
+export const remarkPlugins = [remarkMath, remarkDiagrams, remarkLessonLinks];
 export const rehypePlugins = [[rehypeKatex, {throwOnError: false}], rehypeTables];
 export const shikiConfig = {themes: {light: 'github-light-high-contrast', dark: 'github-dark-high-contrast'}};

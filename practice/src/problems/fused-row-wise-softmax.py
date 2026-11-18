@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Fused row-wise softmax', tags=['GPU Programming', 'Attention'], diff='Medium', runtime='triton',
-            tol=[1e-5, 1e-6], lessons=['ieng:13.05', 'aieng:06.03'],
+            tol=[1e-5, 1e-6], lessons=['ieng:13.05', 'ieng:14.03'],
             related=['online-softmax', 'row-wise-logsumexp', 'softmax-rows'])
 
 STATEMENT = r"""

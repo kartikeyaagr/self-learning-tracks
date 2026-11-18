@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Auxiliary-loss-free MoE routing with bias balancing', tags=['Transformers', 'Inference'], diff='Medium',
-            runtime='numpy', lessons=['aieng:06.02', 'ieng:19.04'],
+            runtime='numpy', lessons=['aieng:06.06', 'ieng:19.04'],
             related=['top-k-moe-router-with-load-statistics', 'sparse-moe-top-k-expert-routing', 'moe-token-dispatch-and-expert-aggregation'])
 
 STATEMENT = r"""

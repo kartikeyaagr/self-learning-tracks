@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='DeepSeek-V3 block: latent attention plus a shared-expert MoE', tags=['Transformers', 'Attention'],
-            diff='Hard', runtime='numpy', lessons=['aieng:06.02', 'ieng:19.02'],
+            diff='Hard', runtime='numpy', lessons=['aieng:06.06', 'ieng:19.02'],
             related=['multi-head-latent-attention-mla', 'aux-loss-free-moe-routing', 'moe-token-dispatch-and-expert-aggregation',
                      'kv-cache-memory-for-mha-mqa-gqa-and-mla'])
 

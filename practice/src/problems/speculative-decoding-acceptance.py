@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Speculative decoding: accept, reject and resample', tags=['Inference', 'Language Models', 'JAX'],
-            diff='Hard', runtime='jax', lessons=['ieng:16.03', 'aieng:07.04'],
+            diff='Hard', runtime='jax', lessons=['ieng:16.03'],
             related=['top-k-and-top-p-sampling', 'greedy-decode-loop-with-scan', 'beam-search-step'], tol=[1e-6, 1e-7])
 
 STATEMENT = r"""

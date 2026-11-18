@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Dense prefix layers, then MoE layers (GLM-4.5 style)', tags=['Transformers', 'Language Models'], diff='Hard',
-            runtime='numpy', lessons=['aieng:06.02', 'aieng:04.03'],
+            runtime='numpy', lessons=['aieng:06.06', 'aieng:04.03'],
             related=['aux-loss-free-moe-routing', 'rotary-query-and-key-embeddings', 'qk-norm-vs-logit-softcap',
                      'causal-grouped-query-attention'])
 

@@ -3,26 +3,36 @@
  "title": "AI Engineering",
  "brand": "AI Engineering <b>101</b>",
  "logo": "<svg width=\"26\" height=\"26\" viewBox=\"0 0 26 26\" aria-hidden=\"true\"><path d=\"M5 17C5 8 21 8 21 17\" fill=\"none\" stroke=\"var(--accent)\" stroke-width=\"1.6\"/><path d=\"M5 17C5 12 13 12 13 17\" fill=\"none\" stroke=\"var(--ink)\" stroke-width=\"1.4\" opacity=\".55\"/><rect x=\"2\" y=\"16\" width=\"6\" height=\"6\" rx=\"1.8\" fill=\"var(--ink)\"/><rect x=\"10\" y=\"16\" width=\"6\" height=\"6\" rx=\"1.8\" fill=\"var(--ink)\"/><rect x=\"18\" y=\"16\" width=\"6\" height=\"6\" rx=\"1.8\" fill=\"var(--accent)\"/></svg>",
- "description": "A self-paced AI engineering course: embeddings, retrieval, LLM internals, inference optimization, reasoning and agents.",
+ "description": "A self-paced AI engineering course: model calls and tokens, embeddings and retrieval, prompting, LLM internals, fine-tuning, reasoning and agents, evals, and running LLM apps in production.",
  "hero": "How modern AI systems work, <span class=\"px\">one lesson at a time.</span>",
  "parts": [
   {
-   "t": "Foundations and retrieval",
+   "t": "The job and the model call",
    "m": [
-    "01",
+    "01"
+   ]
+  },
+  {
+   "t": "Embeddings and vector search",
+   "m": [
     "02"
    ]
   },
   {
-   "t": "How LLMs work",
+   "t": "LLMs and how to steer them",
    "m": [
-    "03",
+    "03"
+   ]
+  },
+  {
+   "t": "Inside the transformer",
+   "m": [
     "04",
     "05"
    ]
   },
   {
-   "t": "Making models fast and small",
+   "t": "Inference and fine-tuning for app engineers",
    "m": [
     "06",
     "07"
@@ -33,6 +43,14 @@
    "m": [
     "08",
     "09"
+   ]
+  },
+  {
+   "t": "Shipping LLM products",
+   "m": [
+    "10",
+    "11",
+    "12"
    ]
   }
  ],
@@ -64,55 +82,73 @@
    "n": "01",
    "name": "Start here: the AI engineering map",
    "slug": "start-here-the-ai-engineering-map",
-   "desc": ""
+   "desc": "What the job is, the stack, one model call end to end, tokens, and choosing a model."
   },
   {
    "n": "02",
    "name": "Embeddings and retrieval",
    "slug": "embeddings-and-retrieval",
-   "desc": ""
+   "desc": "Embeddings, vector compression, ANN indexes, and choosing or fine-tuning an embedding model."
   },
   {
    "n": "03",
    "name": "LLM foundations",
    "slug": "llm-foundations",
-   "desc": ""
+   "desc": "How LLMs learn and generate, sampling, prompting, RAG and multimodal inputs."
   },
   {
    "n": "04",
    "name": "LLM internals",
    "slug": "llm-internals",
-   "desc": ""
+   "desc": "Positional embeddings, attention, the decoder block and the KV cache."
   },
   {
    "n": "05",
    "name": "Transformer walkthrough",
    "slug": "transformer-walkthrough",
-   "desc": ""
+   "desc": "Masked and multi-head attention, and the shapes through a transformer."
   },
   {
    "n": "06",
-   "name": "LLM optimizations",
-   "slug": "llm-optimizations",
-   "desc": ""
+   "name": "Inference from the outside",
+   "slug": "inference-from-the-outside",
+   "desc": "What your provider optimises and how it shows up in price, latency and quality."
   },
   {
    "n": "07",
-   "name": "Model tradeoffs",
-   "slug": "model-tradeoffs",
-   "desc": ""
+   "name": "Fine-tuning for app engineers",
+   "slug": "fine-tuning-for-app-engineers",
+   "desc": "When to fine-tune, LoRA and QLoRA, data and distillation, preference tuning."
   },
   {
    "n": "08",
    "name": "Reasoning and verification",
    "slug": "reasoning-and-verification",
-   "desc": ""
+   "desc": "Reasoning models, chain of thought, tool calling and verification."
   },
   {
    "n": "09",
    "name": "MCP and agents",
    "slug": "mcp-and-agents",
-   "desc": ""
+   "desc": "Context engineering, the agent loop, MCP, memory, multi-agent systems and agent security."
+  },
+  {
+   "n": "10",
+   "name": "Evals",
+   "slug": "evals",
+   "desc": "Eval sets, graders and judges, RAG and agent evals, and regression testing in CI."
+  },
+  {
+   "n": "11",
+   "name": "Retrieval in depth",
+   "slug": "retrieval-in-depth",
+   "desc": "BM25, hybrid search, reranking, chunking, query transformation and keeping an index correct."
+  },
+  {
+   "n": "12",
+   "name": "LLM apps in production",
+   "slug": "llm-apps-in-production",
+   "desc": "Structured outputs, guardrails, prompt injection, cost, latency, reliability and observability."
   }
  ]
 }

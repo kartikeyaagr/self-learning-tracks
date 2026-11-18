@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Switch Transformer layer: top-1 routing, expert capacity and the balance loss', tags=['Transformers', 'Language Models'],
-            diff='Hard', runtime='numpy', lessons=['aieng:06.02', 'ieng:19.02'],
+            diff='Hard', runtime='numpy', lessons=['aieng:06.06', 'ieng:19.02'],
             related=['top-k-moe-router-with-load-statistics', 'moe-token-dispatch-and-expert-aggregation', 'sparse-moe-top-k-expert-routing'])
 
 STATEMENT = r"""

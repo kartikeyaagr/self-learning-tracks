@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Interleaved local and global attention layers (Gemma 3 style)', tags=['Transformers', 'Attention'],
-            diff='Hard', runtime='numpy', lessons=['aieng:07.02', 'aieng:04.03'],
+            diff='Hard', runtime='numpy', lessons=['aieng:04.04', 'aieng:04.03'],
             related=['qk-norm-vs-logit-softcap', 'causal-grouped-query-attention', 'rotary-position-embedding-rope',
                      'norm-gated-linear-transform'])
 

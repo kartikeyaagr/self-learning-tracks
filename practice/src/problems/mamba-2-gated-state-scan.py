@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='Mamba-2 style selective state scan', tags=['Language Models', 'Attention'], diff='Medium', runtime='numpy',
-            lessons=['aieng:07.02', 'air-fanout-v1:08.04'],
+            lessons=['aieng:04.04', 'air-fanout-v1:08.04'],
             related=['parallel-and-recurrent-linear-attention', 'gated-deltanet-state-update', 'exponential-moving-average-with-scan'])
 
 STATEMENT = r"""

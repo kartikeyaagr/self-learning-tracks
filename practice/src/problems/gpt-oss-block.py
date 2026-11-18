@@ -1,7 +1,7 @@
 import numpy as np
 
 META = dict(title='gpt-oss block: sinks, banded attention and a clamped-SwiGLU MoE', tags=['Transformers', 'Attention'],
-            diff='Hard', runtime='numpy', lessons=['aieng:06.02', 'aieng:07.02'],
+            diff='Hard', runtime='numpy', lessons=['aieng:06.06', 'aieng:04.04'],
             related=['attention-with-sink-logits', 'causal-grouped-query-attention', 'sparse-moe-top-k-expert-routing', 'mxfp4-dequantize'])
 
 STATEMENT = r"""
